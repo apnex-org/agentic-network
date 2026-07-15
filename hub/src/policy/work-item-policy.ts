@@ -1017,23 +1017,36 @@ async function legalMoves(args: Record<string, unknown>, ctx: IPolicyContext): P
 async function listWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
-  // The org-state snapshot (stint-4 R1 / idea-357-pt3): ALL matching items, NOT a claimable
-  // projection. Lease + dependency-blocked state are COLUMNS, not filters — the deps/WIP
-  // readiness gate is list_ready_work's job (bug-181); list_work is the observability surface
-  // (shows blocked/leased/done items too). Filters AND across status/role/holder. The lease
-  // column rides on each flat item (holder/expiry/state) — the get_work shape, for many.
-  const { items, truncated } = await store.listWorkItems({
-    status: args.status as WorkItemPhase | undefined,
-    role: args.role as string | undefined,
+  // bug-269 verb-semantics split (load-bearing): list_ready_work is the agent arrival /
+  // next-action queue (claimability + runbook/reference/WIP/quarantine semantics). list_work is
+  // the org-state/control-plane inspection surface. Therefore a casual zero-arg list_work call
+  // must not dump all history; it gets a safe, role-scoped ready snapshot. Broad all-status /
+  // all-role org-state remains available only by explicit filters or scope:"all". Lease +
+  // dependency-blocked state are COLUMNS when callers opt into non-default filters.
+  const caller = await resolveCreatedBy(ctx);
+  const hasExplicitFilter = args.status !== undefined || args.role !== undefined || args.holder !== undefined;
+  const broadOptIn = args.scope === "all";
+  const safeDefaultApplied = !hasExplicitFilter && !broadOptIn;
+  const filters = {
+    status: (safeDefaultApplied ? "ready" : args.status) as WorkItemPhase | undefined,
+    role: (safeDefaultApplied ? caller.role : args.role) as string | undefined,
     holder: args.holder as string | undefined,
-  });
+  };
+  const { items, truncated } = await store.listWorkItems(filters);
   const page = paginate(items, args);
   // truncation-HONEST (A4): `truncated` = the 500-row substrate scan was capped (there
   // may be MORE matches we never saw) — distinct from pagination (limit/offset over what we DID see).
   const truncationNote = truncated
     ? { truncationNote: `the WorkItem scan hit the ${MAX_LIST_LIMIT}-row cap — result is INCOMPLETE; narrow by status/role/holder (or treat as a backlog-pressure signal)` }
     : {};
-  return ok({ ...page, truncated, ...truncationNote });
+  const defaultScope = safeDefaultApplied
+    ? {
+        defaultScopeApplied: true,
+        defaultScopeMessage: `list_work defaults to status=ready and role=${caller.role}; pass explicit filters or scope:"all" for broad org-state/history.`,
+        ...(page.total === 0 ? { emptyReason: "safe_default_no_ready_items" } : {}),
+      }
+    : { defaultScopeApplied: false };
+  return ok({ ...page, truncated, ...truncationNote, ...defaultScope });
 }
 
 // ── Schemas ─────────────────────────────────────────────────────────────────
@@ -1261,7 +1274,7 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_ready_work",
-    "[Any] THE COLD-START 'what do I do next' SURFACE (work-94 spine): the next WorkItem(s) you can claim, each already carrying its node-contract — runbook (the just-in-time how-to) + references (the inputs to read) — so a process-naive agent is self-sufficient with NO prior context. Lists ready WorkItems claimable by a role (empty roleEligibility = any-role, OR'd in); defaults to the caller's role, pass `role` to view another queue. Pass `scopeToCaller:true` for the CALLER-CLAIMABLE projection — applies claim_work's FULL eligibility predicate (deps + role + WIP-cap + quarantine), so the count never over-reports what you can actually claim (the idea-353 re-engagement digest). NON-DARK: an empty result carries `emptyReason` + `emptyReasonMessage` (wip_capped | no_claimable_ready | quarantined) — never a silent zero, so you always know the next move. truncation-HONEST: a capped scan sets `truncated` + a note (never a silent cap).",
+    "[Any] THE COLD-START 'what do I do next' SURFACE (work-94 spine): the AGENT ARRIVAL / NEXT-ACTION QUEUE — the next WorkItem(s) you can claim, each already carrying its node-contract — runbook (the just-in-time how-to) + references (the inputs to read) — so a process-naive agent is self-sufficient with NO prior context. Lists ready WorkItems claimable by a role (empty roleEligibility = any-role, OR'd in); defaults to the caller's role, pass `role` to view another queue. Pass `scopeToCaller:true` for the CALLER-CLAIMABLE projection — applies claim_work's FULL eligibility predicate (deps + role + WIP-cap + quarantine), so the count never over-reports what you can actually claim (the idea-353 re-engagement digest). NON-DARK: an empty result carries `emptyReason` + `emptyReasonMessage` (wip_capped | no_claimable_ready | quarantined) — never a silent zero, so you always know the next move. truncation-HONEST: a capped scan sets `truncated` + a note (never a silent cap). NOT an org-state/audit surface; use list_work with explicit filters or scope:'all' for control-plane inspection.",
     {
       role: z.string().optional().describe("Role to project for (default: the caller's role)"),
       limit: z.number().int().positive().max(MAX_LIST_LIMIT).optional().describe(`Max items (default ${DEFAULT_LIST_LIMIT}, cap ${MAX_LIST_LIMIT})`),
@@ -1272,11 +1285,12 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_work",
-    "[Any] Query WorkItems by status/role/holder — the org-state SNAPSHOT (the controller's ground-truth view, today hand-stitched from list_ready_work × roles × get_work). Returns FLAT items incl. the LEASE column (holder / expiry / state) for observability, UNFILTERED by claim-readiness: shows ALL matching items incl. dependency-blocked + leased + done (lease/blocked are COLUMNS, not filters — the deps/WIP readiness gate is list_ready_work's job, bug-181). Filters AND across status/role/holder. Paginated (limit/offset); truncation-HONEST — a 500-row scan-cap sets `truncated` + a note, never a silent cap (A4). idea-357-pt3.",
+    "[Any] ORG-STATE / CONTROL-PLANE SNAPSHOT with SAFE DEFAULTS. Purpose split (bug-269): list_ready_work is the agent arrival/next-action queue; list_work is for inspection/audit/debug of WorkItems as state rows. A zero-arg call is bounded to status=ready + the caller's role so broad all-status/all-role/all-history dumps are never accidental. Pass explicit status/role/holder filters for targeted observability, or scope:'all' to opt into the full org-state SNAPSHOT. Returns FLAT items incl. the LEASE column (holder / expiry / state) for observability; lease/blocked are COLUMNS, not claimability filters — list_ready_work is the claimability surface. Paginated (limit/offset); truncation-HONEST — a 500-row scan-cap sets `truncated` + a note, never a silent cap (A4).",
     {
       status: WORK_PHASE.optional().describe("Filter by FSM phase (ready|claimed|in_progress|blocked|paused|review|done|abandoned). `paused` items are digest-EXCLUDED (drop out of list_ready_work), so this snapshot is the way to surface them — status=\"paused\" is the find-my-dormant-work query."),
       role: z.string().optional().describe("Filter by role-eligibility ($contains membership; empty-eligibility 'any-role' items won't match a specific role)"),
       holder: z.string().optional().describe("Filter by current lease holder (agentId) — items this agent holds a lease on"),
+      scope: z.enum(["safe", "all"]).optional().describe("Default/safe = zero-arg calls are bounded to status=ready + caller role. Use scope='all' to explicitly request the broad all-status/all-role org-state snapshot."),
       ...LIST_PAGINATION_SCHEMA,
     },
     listWork,
