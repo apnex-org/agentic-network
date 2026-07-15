@@ -132,7 +132,7 @@ describe("WorkItemRepositorySubstrate (real-pg, full envelope path)", () => {
     await substrate.put("WorkItem", {
       id: "work-edge-lease", type: "task", priority: "normal", roleEligibility: ["engineer"],
       dependsOn: [], evidenceRequirements: [], targetRef: null, status: "claimed",
-      lease, evidence: [], blockedOn: null, leaseExpiryCount: 2,
+      lease, evidence: [], frictionReflections: [], blockedOn: null, leaseExpiryCount: 2,
       createdAt: "2026-06-22T00:00:00.000Z", updatedAt: "2026-06-22T00:00:00.000Z",
     });
     const got = await repo.getWorkItem("work-edge-lease");
@@ -185,7 +185,7 @@ describe("WorkItemRepositorySubstrate (real-pg, full envelope path)", () => {
     await substrate.put("WorkItem", {
       id: "work-edge-done", type: "task", priority: "normal", roleEligibility: ["engineer"],
       dependsOn: [], evidenceRequirements: [], targetRef: null, status: "done",
-      lease: null, evidence: [], blockedOn: null, leaseExpiryCount: 0,
+      lease: null, evidence: [], frictionReflections: [], blockedOn: null, leaseExpiryCount: 0,
       createdAt: "2026-06-22T00:00:00.000Z", updatedAt: "2026-06-22T00:00:00.000Z",
     });
     const readyEng = await repo.createWorkItem({ type: "task", roleEligibility: ["engineer"] });
@@ -220,7 +220,7 @@ describe("WorkItemRepositorySubstrate (real-pg, full envelope path)", () => {
     await substrate.put("WorkItem", {
       id: "work-181-dep-done", type: "task", priority: "normal", roleEligibility: ["engineer"],
       dependsOn: [], evidenceRequirements: [], targetRef: null, status: "done",
-      lease: null, evidence: [], blockedOn: null, leaseExpiryCount: 0,
+      lease: null, evidence: [], frictionReflections: [], blockedOn: null, leaseExpiryCount: 0,
       createdAt: "2026-06-22T00:00:00.000Z", updatedAt: "2026-06-22T00:00:00.000Z",
     });
     // A NOT-done dependency (stays `ready`) — its dependents are not yet claimable.

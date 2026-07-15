@@ -48,7 +48,7 @@ const sampleItem = (over: Partial<WorkItem> = {}): WorkItem => ({
   id: "work-1", type: "task", priority: "normal", roleEligibility: [], dependsOn: [], completionDependsOn: [],
   evidenceRequirements: [], targetRef: null, status: "claimed",
   lease: { holder: "anonymous-engineer", token: "tok-abc", claimedAt: "t", expiresAt: "t", heartbeatAt: "t" },
-  evidence: [], blockedOn: null, leaseExpiryCount: 0,
+  evidence: [], frictionReflections: [], blockedOn: null, leaseExpiryCount: 0,
   enteredCurrentStateAt: "t", stateDurations: { ready: 0, claimed: 0, in_progress: 0, blocked: 0, paused: 0, review: 0 },
   attestationHistory: [], attestations: {}, executorHistory: [],
   createdAt: "t", updatedAt: "t", ...over,
@@ -222,7 +222,7 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     await router.handle("complete_work", { workId: "work-1", leaseToken: "tok-abc", evidence }, ctxFor(okStub, "engineer"));
     // calls[0] is the work-54 from_status pre-read (getWorkItem); the verb call follows.
     const verbCall = okStub.calls.find((c) => c.method === "completeWork")!;
-    expect(verbCall.args).toEqual(["work-1", "anonymous-engineer", "tok-abc", evidence]);
+    expect(verbCall.args).toEqual(["work-1", "anonymous-engineer", "tok-abc", evidence, undefined]);
 
     const failStub = makeStub({ completeWork: () => { throw new EvidencePredicateFailed("requirement r1 uncovered"); } });
     const r = await router.handle("complete_work", { workId: "work-1", leaseToken: "tok-abc", evidence: [] }, ctxFor(failStub, "engineer"));

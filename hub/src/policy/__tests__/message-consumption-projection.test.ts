@@ -25,6 +25,7 @@ function work(overrides: Partial<WorkItem> = {}): WorkItem {
     status: "ready",
     lease: null,
     evidence: [],
+    frictionReflections: [],
     blockedOn: null,
     leaseExpiryCount: 0,
     enteredCurrentStateAt: "2026-07-08T00:00:00.000Z",

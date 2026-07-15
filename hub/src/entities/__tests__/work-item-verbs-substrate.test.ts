@@ -270,7 +270,7 @@ describe("WorkItem verbs (real-pg: claim / lease / FSM)", () => {
       id: "work-renew-expired", type: "task", priority: "normal", roleEligibility: [], dependsOn: [],
       evidenceRequirements: [], targetRef: null, status: "claimed",
       lease: { holder: "agent-re", token: "tok-re", claimedAt: "2020-01-01T00:00:00.000Z", expiresAt: "2020-01-01T00:05:00.000Z", heartbeatAt: "2020-01-01T00:00:00.000Z" },
-      evidence: [], blockedOn: null, leaseExpiryCount: 0, createdAt: "2020-01-01T00:00:00.000Z", updatedAt: "2020-01-01T00:00:00.000Z",
+      evidence: [], frictionReflections: [], blockedOn: null, leaseExpiryCount: 0, createdAt: "2020-01-01T00:00:00.000Z", updatedAt: "2020-01-01T00:00:00.000Z",
     });
     await expect(repo.renewLease("work-renew-expired", "agent-re", "tok-re")).rejects.toThrow(/already expired/);
   }, OP_TIMEOUT);
@@ -291,7 +291,7 @@ describe("WorkItem verbs (real-pg: claim / lease / FSM)", () => {
         id, type: "task", priority: "normal", roleEligibility: [], dependsOn: [], completionDependsOn,
         evidenceRequirements: [], targetRef: null, status: "in_progress",
         lease: { holder: lease.holder, token: lease.token, claimedAt: FROZEN, expiresAt: lease.expiresAt, heartbeatAt: FROZEN },
-        evidence: [], blockedOn: null, leaseExpiryCount: 0, createdAt: FROZEN, updatedAt: FROZEN,
+        evidence: [], frictionReflections: [], blockedOn: null, leaseExpiryCount: 0, createdAt: FROZEN, updatedAt: FROZEN,
       });
     }
     const soon = () => new Date(Date.now() + 60_000).toISOString(); // a live arc ~about to lapse (+60s)

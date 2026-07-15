@@ -27,6 +27,9 @@ import type {
   WorkItemBlockedOn,
   EvidenceRequirement,
   EvidenceItem,
+  FrictionReflectionInput,
+  FrictionReflectionRecord,
+  FrictionRollup,
   EvidenceKind,
   WorkItemReference,
   ReadyEmptyReason,
@@ -240,6 +243,48 @@ function mergeEvidence(existing: EvidenceItem[], supplied: EvidenceItem[]): Evid
   return out;
 }
 
+function normalizeFrictionReflection(input: FrictionReflectionInput | undefined, agentId: string, producedAt: string): FrictionReflectionRecord {
+  if (!input) {
+    return {
+      producedAt,
+      producedBy: agentId,
+      sourceVerb: "complete_work",
+      observed: false,
+      summary: "not provided by legacy client",
+      categories: ["other"],
+      suggestedFollowUp: { kind: "none" },
+      compatibility: "missing_legacy_client",
+    };
+  }
+  if (input.observed === true && (!input.summary || input.summary.trim() === "")) {
+    throw new EvidencePredicateFailed("frictionReflection.summary is required when observed=true");
+  }
+  const summary = input.summary?.trim() || (input.observed ? "" : "no friction observed");
+  return {
+    producedAt,
+    producedBy: agentId,
+    sourceVerb: "complete_work",
+    observed: input.observed,
+    summary,
+    categories: input.categories?.length ? input.categories : [],
+    ...(input.suggestedFollowUp ? { suggestedFollowUp: input.suggestedFollowUp } : {}),
+    compatibility: "explicit",
+  };
+}
+
+function emptyFrictionRollup(): FrictionRollup {
+  return { total: 0, observed: 0, missingLegacy: 0, categories: {} };
+}
+
+function addFrictionToRollup(acc: FrictionRollup, reflections: readonly FrictionReflectionRecord[] | undefined): void {
+  for (const r of reflections ?? []) {
+    acc.total += 1;
+    if (r.observed) acc.observed += 1;
+    if (r.compatibility === "missing_legacy_client") acc.missingLegacy += 1;
+    for (const c of r.categories ?? []) acc.categories[c] = (acc.categories[c] ?? 0) + 1;
+  }
+}
+
 /**
  * The anti-gameability evidence predicate (audit-4082 evidence contract). PURE +
  * synchronous (so it runs inside the CAS transform); OIS-internal ref existence-checks
@@ -357,6 +402,7 @@ function cloneWorkItem(w: WorkItem): WorkItem {
   flat.evidenceRequirements = (flat.evidenceRequirements as EvidenceRequirement[] | undefined) ?? [];
   flat.references = (flat.references as unknown[] | undefined) ?? [];  // work-86: spec-partitioned, decoded by decodeEnvelopeToFlat
   flat.evidence = (flat.evidence as unknown[] | undefined) ?? [];
+  flat.frictionReflections = (flat.frictionReflections as unknown[] | undefined) ?? [];
   flat.lease = flat.lease ?? null;
   flat.targetRef = flat.targetRef ?? null;
   flat.blockedOn = flat.blockedOn ?? null;
@@ -476,6 +522,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       status: "ready",
       lease: null,
       evidence: [],
+      frictionReflections: [],
       blockedOn: null,
       leaseExpiryCount: 0,
       // work-98 (idea-384 Part A): birth-stamp the timer — entered `ready` at createdAt, zero buckets.
@@ -621,6 +668,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       status: "ready",
       lease: null,
       evidence: [],
+      frictionReflections: [],
       blockedOn: null,
       leaseExpiryCount: 0,
       // work-98 (idea-384 Part A): birth-stamp the timer — entered `ready` at createdAt, zero buckets.
@@ -777,6 +825,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // parallelism measures concurrency vs the ACTIVE span, not vs total-elapsed; null when there
     // is no active span (no div-by-zero — honest null).
     const rolledUpDurations = await this.rollupLeafDurations(arc.id);
+    const friction = await this.rollupLeafFriction(arc.id);
     const ownActiveMs = arc.stateDurations.claimed + arc.stateDurations.in_progress + arc.stateDurations.blocked + arc.stateDurations.review;
     const parallelism = ownActiveMs > 0 ? rolledUpDurations.in_progress / ownActiveMs : null;
     return {
@@ -798,7 +847,32 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       rolledUpDurations,
       ownActiveMs,
       parallelism,
+      friction,
     };
+  }
+
+  /**
+   * A10 primitive-1: app-side recursive rollup of leaf friction reflections. Mirrors
+   * rollupLeafDurations: leaves-only + DAG-deduped, so an arc's friction denominator matches
+   * the work that actually completed under the subtree and never double-counts shared leaves.
+   */
+  private async rollupLeafFriction(arcId: string): Promise<FrictionRollup> {
+    const acc = emptyFrictionRollup();
+    const visited = new Set<string>();
+    const walk = async (id: string): Promise<void> => {
+      if (visited.has(id)) return;
+      visited.add(id);
+      const node = await this.substrate.get<WorkItem>(KIND, id);
+      if (!node) return;
+      const flat = cloneWorkItem(node);
+      if (flat.completionDependsOn.length === 0) {
+        addFrictionToRollup(acc, flat.frictionReflections);
+      } else {
+        for (const childId of flat.completionDependsOn) await walk(childId);
+      }
+    };
+    await walk(arcId);
+    return acc;
   }
 
   /**
@@ -1320,7 +1394,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * the synchronous CAS; requirements are immutable (spec), so the resolution is stable
    * across the CAS re-read. The CAS re-runs the sync predicate on the fresh row.
    */
-  async completeWork(workId: string, agentId: string, leaseToken: string, evidence: EvidenceItem[]): Promise<WorkItem | null> {
+  async completeWork(workId: string, agentId: string, leaseToken: string, evidence: EvidenceItem[], frictionReflection?: FrictionReflectionInput): Promise<WorkItem | null> {
     const pre = await this.substrate.get<WorkItem>(KIND, workId);
     if (!pre) return null;
     const item = cloneWorkItem(pre);
@@ -1420,6 +1494,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return this.tryCasUpdate(workId, (w) => {
       this.assertLease(w, agentId, leaseToken, "complete");
       if (!COMPLETABLE_PHASES.includes(w.status)) throw new TransitionRejected(`complete requires in_progress or review, was ${w.status}`);
+      const nowISO = this.clock.now().toISOString();
+      const frictionRecord = normalizeFrictionReflection(frictionReflection, agentId, nowISO);
       const merged = mergeEvidence(w.evidence, evidence);
       const { nextPhase: evidencePhase } = evaluateEvidence(w.evidenceRequirements, merged, w.lease, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey)));
       // SEAL (idea-444) dual-edge, edge #1 (complete_work): combine the executor-evidence phase
@@ -1428,8 +1504,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       // review→done, level-triggered. Only both-satisfied reaches done.
       const gate = evaluateCompletionGate(w);
       const nextPhase: WorkItemPhase = evidencePhase === "done" && gate.attestationReqsSatisfied ? "done" : "review";
-      const nowISO = this.clock.now().toISOString();
-      return { ...w, status: nextPhase, evidence: merged, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
+      return { ...w, status: nextPhase, evidence: merged, frictionReflections: [...w.frictionReflections, frictionRecord], ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
 
