@@ -368,6 +368,104 @@ pi_na_ensure() {
   _PI_NA_MP="$mp"
 }
 
+# pi_auth_bridge — bug-268: per-seat PI_CODING_AGENT_DIR must carry working auth.
+# pi's AuthStorage writes through auth.json with writeFileSync/chmodSync after taking a
+# proper-lockfile lock on the path (realpath:false). On Linux, a symlinked auth.json therefore
+# writes to the target file while the lock stays scoped to the per-seat symlink path. That is
+# the current Director/verifier-approved credential posture for this rollout: share the existing
+# global pi auth file by SYMLINK, never by copying secret contents. This helper makes that bridge
+# reproducible and fail-closed without changing policy:
+#   - source defaults to pi's global ~/.pi/agent/auth.json (override: OIS_PI_AUTH_SOURCE)
+#   - existing correct symlink is accepted
+#   - missing or empty/{} per-seat auth.json is replaced with the symlink
+#   - non-empty non-symlink per-seat auth.json is preserved by refusing to launch
+# Nothing prints auth contents.
+pi_auth_bridge() { # <agent> <per-seat-cdir>
+  local a="$1" cdir="$2" src dst
+  src="${OIS_PI_AUTH_SOURCE:-$HOME/.pi/agent/auth.json}"
+  dst="$cdir/auth.json"
+  src=$(expand "$src")
+  [[ -n "$cdir" ]] || fatal "pi auth bridge called without a per-seat config dir"
+  [[ "$src" != "$dst" ]] || return 0  # default/non-sovereign pi dir; no bridge needed
+  [[ -e "$src" ]] || fatal "pi auth source missing for '$a': $src (run pi login on the operator/global profile or set OIS_PI_AUTH_SOURCE)"
+  [[ -f "$src" ]] || fatal "pi auth source is not a regular file for '$a': $src"
+  [[ -s "$src" ]] || fatal "pi auth source is empty for '$a': $src"
+  jq -e 'type == "object" and length > 0' "$src" >/dev/null 2>&1 || fatal "pi auth source is not a non-empty JSON object for '$a': $src"
+
+  mkdir -p "$cdir" && chmod 700 "$cdir"
+  if [[ -L "$dst" ]]; then
+    local resolved_src resolved_dst
+    resolved_src=$(readlink -f "$src") || fatal "cannot resolve pi auth source symlink for '$a': $src"
+    resolved_dst=$(readlink -f "$dst") || fatal "pi auth symlink for '$a' is dangling: $dst"
+    [[ "$resolved_dst" == "$resolved_src" ]] || fatal "pi auth symlink for '$a' points at $resolved_dst, expected $resolved_src; refusing to rewrite credential policy"
+    echo "  seeding : pi auth bridge already linked ($dst -> $src)"
+    return 0
+  fi
+  if [[ -e "$dst" ]]; then
+    if [[ -f "$dst" ]] && jq -e 'type == "object" and length == 0' "$dst" >/dev/null 2>&1; then
+      rm -f "$dst"
+    elif [[ -f "$dst" && ! -s "$dst" ]]; then
+      rm -f "$dst"
+    else
+      fatal "pi auth target exists and is not an empty placeholder for '$a': $dst; refusing to overwrite/copy credentials"
+    fi
+  fi
+  ln -s "$src" "$dst"
+  echo "  seeding : pi auth bridge linked ($dst -> $src)"
+}
+
+pi_models_400k_valid() { # <models.json>
+  jq -e '.providers["openai-codex"].modelOverrides["gpt-5.5"].contextWindow == 400000' "$1" >/dev/null 2>&1
+}
+
+pi_json_equiv() { # <json-a> <json-b> — canonical semantic equality
+  diff -q <(jq -S . "$1") <(jq -S . "$2") >/dev/null 2>&1
+}
+
+render_pi_models() { # cell-json arg -> per-seat pi models.json on stdout
+  # bug-271: the 400k gpt-5.5 model policy is part of the OIS fleet declaration/render
+  # contract, not an implicit inheritance from ~/.pi/agent or a workspace .pi fallback, and
+  # not a default embedded in this command script. The source of truth is the merged cell's
+  # .piModels config (declared under config/, currently config/harnesses/pi.json).
+  jq -e -n --argjson c "$1" '$c.piModels'
+}
+
+# pi_models_seed — bug-271: per-seat PI_CODING_AGENT_DIR must receive an explicit,
+# fleet-rendered models.json. Existing valid symlink mitigations are accepted only as a
+# compatible predecessor state: launch replaces them with the rendered file so the seat no
+# longer relies on ~/.pi/agent. Wrong symlinks or non-matching non-empty files fail closed.
+pi_models_seed() { # <agent> <per-seat-cdir> <cell-json>
+  local a="$1" cdir="$2" c="$3" dst content tmp
+  dst="$cdir/models.json"
+  [[ -n "$cdir" ]] || fatal "pi models seed called without a per-seat config dir"
+  content=$(render_pi_models "$c")
+  tmp=$(mktemp)
+  printf '%s\n' "$content" > "$tmp"
+  pi_models_400k_valid "$tmp" || { rm -f "$tmp"; fatal "rendered pi models policy for '$a' lacks providers.openai-codex.modelOverrides.gpt-5.5.contextWindow == 400000"; }
+
+  mkdir -p "$cdir" && chmod 700 "$cdir"
+  if [[ -L "$dst" ]]; then
+    pi_models_400k_valid "$dst" || { rm -f "$tmp"; fatal "pi models symlink for '$a' does not resolve to required gpt-5.5 400k policy: $dst"; }
+    rm -f "$dst"
+  elif [[ -e "$dst" ]]; then
+    if [[ -f "$dst" && ! -s "$dst" ]]; then
+      rm -f "$dst"
+    elif [[ -f "$dst" ]] && pi_json_equiv "$dst" "$tmp"; then
+      rm -f "$dst"
+    else
+      rm -f "$tmp"
+      fatal "pi models target exists and is not exactly the rendered gpt-5.5 400k policy for '$a': $dst; refusing to overwrite model policy"
+    fi
+  fi
+  local old_umask
+  old_umask=$(umask)
+  umask 077
+  mv "$tmp" "$dst"
+  chmod 600 "$dst"
+  umask "$old_umask"
+  echo "  seeding : pi models policy rendered ($dst; openai-codex/gpt-5.5 contextWindow=400000)"
+}
+
 # pi_seed — mirror of claude_seed's HCAP skills-consumer tail for the pi harness. Same
 # generalized seed bin, same fail-closed discipline (no `|| true`, under set -e). pi-native
 # discovery = the materialized $PI_CODING_AGENT_DIR/skills (default ~/.pi/agent/skills) that
@@ -378,6 +476,8 @@ pi_seed() {
   a=$(jq -r '.cellAgent' <<<"$c")
   cdir=$(cell_configdir "$c")
   [[ -n "$cdir" ]] || fatal "pi cell '$a' has no configDirTemplate — cannot resolve a sovereign PI_CODING_AGENT_DIR (declare it in config/harnesses/pi.json, mirroring claude's '{agent}.claude'); refusing to seed to a bogus/shared path"
+  pi_auth_bridge "$a" "$cdir"
+  pi_models_seed "$a" "$cdir" "$c"
   pi_na_ensure
   na_bin="$_PI_NA_MP/dist/bin/seed-skills.js"
   [[ -f "$na_bin" ]] || na_bin="$(npm root -g)/@apnex/network-adapter/dist/bin/seed-skills.js"
