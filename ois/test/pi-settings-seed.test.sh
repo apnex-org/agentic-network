@@ -64,6 +64,14 @@ else
   fail_case "repo config/harnesses/pi.json does not declare required piSettings policy"
 fi
 
+DEPLOY_SH="$DIR/../deploy.sh"
+out=$(HOME="$TDIR/deploy-home" "$DEPLOY_SH" --diff 2>&1); rc=$?
+if [[ $rc -eq 0 && "$out" == *"config/harnesses/pi.json diff"* && "$out" != *"missing repo pi harness config"* ]]; then
+  ok_case "deploy --diff resolves repo-root config/harnesses/pi.json for co-ship guard"
+else
+  fail_case "deploy --diff did not resolve repo pi harness config correctly rc=$rc: $out"
+fi
+
 out=$(pi_settings_seed greg "$SEAT" "$NO_SETTINGS_CELL" 2>&1); rc=$?
 [[ $rc -ne 0 ]] && ok_case "missing fleet piSettings declaration rejected fail-closed" || fail_case "missing fleet piSettings declaration was accepted"
 

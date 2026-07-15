@@ -18,7 +18,7 @@ RESOLVER_SRC="$(dirname "$SRC")/../../deploy/adapter-image/prompt-resolve.sh"
 HANDLERS_SRC="$(dirname "$SRC")/../../deploy/adapter-image/prompt-handlers.json"
 RESOLVER_DEST="$HOME/.config/apnex-agents/bin/prompt-resolve.sh"
 HANDLERS_DEST="$HOME/.config/apnex-agents/config/prompt-handlers.json"
-PI_HARNESS_CONFIG_SRC="$(dirname "$SRC")/../config/harnesses/pi.json"
+PI_HARNESS_CONFIG_SRC="$(dirname "$SRC")/../../config/harnesses/pi.json"
 PI_HARNESS_CONFIG_DEST="$HOME/.config/apnex-agents/config/harnesses/pi.json"
 
 [[ -f "$SRC" ]] || { echo "error: canonical source not found at $SRC" >&2; exit 1; }
