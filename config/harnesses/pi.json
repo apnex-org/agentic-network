@@ -11,7 +11,7 @@
     "{piModel}",
     "--continue"
   ],
-  "piPluginSpec": "npm:@apnex/pi-plugin@0.1.6",
+  "piPluginSpec": "npm:@apnex/pi-plugin@0.1.7",
   "piKeepRecentTokens": 24000,
   "envTemplate": {
     "OIS_EAGER_SESSION_CLAIM": "{eagerFlag}",

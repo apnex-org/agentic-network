@@ -17,7 +17,7 @@ As a pi package (see pi `packages.md`):
 ```jsonc
 // ~/.pi/agent/settings.json
 {
-  "packages": ["npm:@apnex/pi-plugin@0.1.0"]
+  "packages": ["npm:@apnex/pi-plugin@0.1.7"]
 }
 ```
 
@@ -32,12 +32,15 @@ Or point pi at a local checkout for development:
 ## Configure
 
 Identity + Hub connection use the shared kernel config (`loadConfig`,
-`readRequiredAgentName`). Minimum:
+`readRequiredAgentName`). The npm artifact includes `agent-adapter.manifest.json`,
+which OIS uses to declare the pi-native raw tool-name binding (`toolPrefix: ""`).
+Minimum runtime inputs:
 
 | Setting | Source | Default |
 |---|---|---|
 | agent name | required (name IS identity) | — |
 | `hubUrl` | `OIS_HUB_URL` / config | the relay Hub |
+| Hub token | `OIS_HUB_TOKEN` / config | — |
 | `role` | `OIS_HUB_ROLE` / config | `architect` |
 | `HUB_LLM_MODEL` | env | (optional) |
 
