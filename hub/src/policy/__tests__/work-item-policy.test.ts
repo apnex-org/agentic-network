@@ -89,6 +89,19 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     }
   });
 
+  it("bug-269 verb docs preserve the purpose split: arrival queue vs org-state/control-plane snapshot", () => {
+    const ready = router.getToolRegistration("list_ready_work")!.description;
+    const work = router.getToolRegistration("list_work")!.description;
+    expect(ready).toMatch(/AGENT ARRIVAL \/ NEXT-ACTION QUEUE/);
+    expect(ready).toMatch(/runbook/);
+    expect(ready).toMatch(/WIP-cap \+ quarantine/);
+    expect(ready).toMatch(/NOT an org-state\/audit surface/);
+    expect(work).toMatch(/ORG-STATE \/ CONTROL-PLANE SNAPSHOT/);
+    expect(work).toMatch(/inspection\/audit\/debug/);
+    expect(work).toMatch(/scope:'all'/);
+    expect(work).toMatch(/list_ready_work is the claimability surface/);
+  });
+
   // ── S3 (idea-454) — pause_work / unpause_work + the paused query surface ──
   // The repo owns the creator/Director authz + FSM gate (proven in entities/__tests__/paused-state.test.ts);
   // these prove the POLICY SURFACE the operational verb rides on: registered + reachable, server-stamped
@@ -362,6 +375,48 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     // the three filters are AND'd through to the store verbatim (status/role/holder)
     expect(stub.calls[0].method).toBe("listWorkItems");
     expect(stub.calls[0].args[0]).toEqual({ status: "blocked", role: "engineer", holder: "anonymous-engineer" });
+  });
+
+  it("list_work: zero-arg default is safe/bounded — status=ready + caller role, with a non-dark scope note (bug-269)", async () => {
+    const ready = sampleItem({ id: "work-ready", status: "ready", lease: null });
+    const stub = makeStub({ listWorkItems: () => ({ items: [ready], truncated: false }) });
+    const b = body(await router.handle("list_work", {}, ctxFor(stub, "engineer")));
+    expect((b.items as WorkItem[]).map((w) => w.id)).toEqual(["work-ready"]);
+    expect(b.defaultScopeApplied).toBe(true);
+    expect(b.defaultScopeMessage).toMatch(/status=ready and role=engineer/);
+    expect(stub.calls[0].args[0]).toEqual({ status: "ready", role: "engineer", holder: undefined });
+  });
+
+  it("list_work: zero-arg default does not even REQUEST dormant/history rows (bug-269 anti-context-flood)", async () => {
+    const stub = makeStub({ listWorkItems: () => ({ items: [], truncated: false }) });
+    await router.handle("list_work", {}, ctxFor(stub, "engineer"));
+    // The safety property is the store query itself: dormant/history phases (paused/done/etc.)
+    // are outside the requested scope, rather than fetched and hidden after the context cost.
+    expect(stub.calls[0].args[0]).toEqual({ status: "ready", role: "engineer", holder: undefined });
+  });
+
+  it("list_work: zero-result safe default explains the empty reason, not a silent empty list (bug-269)", async () => {
+    const stub = makeStub({ listWorkItems: () => ({ items: [], truncated: false }) });
+    const b = body(await router.handle("list_work", {}, ctxFor(stub, "engineer")));
+    expect(b.total).toBe(0);
+    expect(b.defaultScopeApplied).toBe(true);
+    expect(b.emptyReason).toBe("safe_default_no_ready_items");
+  });
+
+  it("list_work: broad org-state snapshot is explicit opt-in via scope=all (bug-269)", async () => {
+    const done = sampleItem({ id: "work-done", status: "done", lease: null });
+    const blocked = sampleItem({ id: "work-blocked", status: "blocked" });
+    const stub = makeStub({ listWorkItems: () => ({ items: [done, blocked], truncated: false }) });
+    const b = body(await router.handle("list_work", { scope: "all" }, ctxFor(stub, "engineer")));
+    expect((b.items as WorkItem[]).map((w) => w.id)).toEqual(["work-done", "work-blocked"]);
+    expect(b.defaultScopeApplied).toBe(false);
+    expect(stub.calls[0].args[0]).toEqual({ status: undefined, role: undefined, holder: undefined });
+  });
+
+  it("list_work: scope=safe is the same bounded zero-arg mode; only scope=all is broad no-filter opt-in", async () => {
+    const stub = makeStub({ listWorkItems: () => ({ items: [], truncated: false }) });
+    await router.handle("list_work", { scope: "safe" }, ctxFor(stub, "engineer"));
+    expect(stub.calls[0].args[0]).toEqual({ status: "ready", role: "engineer", holder: undefined });
   });
 
   it("list_work: surfaces truncation HONESTLY — a capped scan sets truncated + a note, never silent (tele-4)", async () => {
