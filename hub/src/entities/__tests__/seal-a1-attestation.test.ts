@@ -50,6 +50,7 @@ function flatItem(over: Partial<WorkItem> = {}): Record<string, unknown> {
     status: "in_progress",
     lease: null,
     evidence: [],
+    frictionReflections: [],
     blockedOn: null,
     leaseExpiryCount: 0,
     enteredCurrentStateAt: "2026-01-01T00:00:00.000Z",

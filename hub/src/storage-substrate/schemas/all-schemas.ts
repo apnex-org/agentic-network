@@ -587,6 +587,7 @@ const WorkItem: SchemaDef = {
     status: "status.phase",
     lease: "status.lease",
     evidence: "status.evidence",
+    frictionReflections: "status.frictionReflections",
     blockedOn: "status.blockedOn",
     leaseExpiryCount: "status.leaseExpiryCount",
     // idea-384 Part A (work-98): per-FSM-state wall-clock timers — status (lifecycle),

@@ -34,6 +34,7 @@ import type {
   WorkItem,
   WorkItemBlockedOn,
   EvidenceItem,
+  FrictionReflectionInput,
   EvidenceKind,
   EvidenceRequirement,
   WorkItemReference,
@@ -253,10 +254,11 @@ async function completeWork(args: Record<string, unknown>, ctx: IPolicyContext):
   if (!store) return err("not_wired", "WorkItem store is not available");
   const caller = await resolveCreatedBy(ctx);
   const evidence = (args.evidence as EvidenceItem[] | undefined) ?? [];
+  const frictionReflection = args.frictionReflection as FrictionReflectionInput | undefined;
   // complete can come from in_progress|review — pre-read for the event's from_status.
   const before = await store.getWorkItem(args.workId as string);
   try {
-    const w = await store.completeWork(args.workId as string, caller.agentId, args.leaseToken as string, evidence);
+    const w = await store.completeWork(args.workId as string, caller.agentId, args.leaseToken as string, evidence, frictionReflection);
     if (!w) return notFound(args.workId as string);
     await emitWorkTransition(ctx, { item: w, verb: "complete_work", fromStatus: before?.status ?? null, actor: caller });
     // idea-357 pt-2 keystone: a →done may clear a dependent's LAST unmet dependency —
@@ -1080,6 +1082,15 @@ const evidenceItemSchema = z.object({
   note: z.string().optional(),
   producedBy: z.string().optional().describe("Authoring agent id — REQUIRED for review-kind evidence (must resolve to a verifier-role agent before review→done)"),
 }).strict();
+const frictionReflectionSchema = z.object({
+  observed: z.boolean().describe("Whether this completion observed workflow/governance/tooling friction; false is a valid explicit answer"),
+  summary: z.string().optional().describe("Required non-empty when observed=true; for observed=false may be 'no friction observed'"),
+  categories: z.array(z.enum(["tool_affordance", "runbook_confusion", "evidence_pain", "coordination_drag", "lease_or_liveness", "authority_or_seal", "stale_context", "manual_step", "scope_drift", "other"])).optional(),
+  suggestedFollowUp: z.object({
+    kind: z.enum(["none", "idea", "bug", "work", "skill_update", "doc_update"]),
+    text: z.string().optional(),
+  }).strict().optional(),
+}).strict().refine((v) => !v.observed || !!v.summary?.trim(), { message: "summary is required when observed=true" });
 const blockedOnSchema = z.object({
   blockerKind: z.string().describe("Blocker category, e.g. WorkItem | Task | external | dependency"),
   blockerIds: z.array(z.string()).optional().describe("Referenced blocker entity ids"),
@@ -1363,8 +1374,8 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "complete_work",
-    "[Any] Complete work ({in_progress|review} → review|done), gated by the anti-gameability evidence predicate (coverage-by-binding, kind-match, freshness, refResolvable, no-double-count, empty-req floor). Parks in `review` while a review requirement is unmet; reaches `done` once all are covered. Requires the lease-holder + matching leaseToken.",
-    { workId: z.string(), leaseToken: z.string(), evidence: z.array(evidenceItemSchema).describe("Supplied evidence, bound to requirements by requirementId") },
+    "[Any] Complete work ({in_progress|review} → review|done), gated by the anti-gameability evidence predicate (coverage-by-binding, kind-match, freshness, refResolvable, no-double-count, empty-req floor). A10 Phase 1 also captures an optional frictionReflection; missing legacy clients are accepted but marked compatibility=missing_legacy_client. Parks in `review` while a review requirement is unmet; reaches `done` once all are covered. Requires the lease-holder + matching leaseToken.",
+    { workId: z.string(), leaseToken: z.string(), evidence: z.array(evidenceItemSchema).describe("Supplied evidence, bound to requirements by requirementId"), frictionReflection: frictionReflectionSchema.optional().describe("A10 friction reflection for this completion; observed=false is a valid explicit answer") },
     completeWork,
   );
 

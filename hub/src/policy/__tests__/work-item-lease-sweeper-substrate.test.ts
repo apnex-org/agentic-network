@@ -172,7 +172,7 @@ describe("WorkItemLeaseSweeper (real-pg)", () => {
     const expiredLease = { holder: "a", token: "t", claimedAt: "2020-01-01T00:00:00.000Z", expiresAt: "2020-01-01T00:05:00.000Z", heartbeatAt: "2020-01-01T00:00:00.000Z" };
     const mk = (id: string, status: string, extra: Record<string, unknown> = {}) => substrate.put("WorkItem", {
       id, type: "task", priority: "normal", roleEligibility: [], dependsOn: [], evidenceRequirements: [],
-      targetRef: null, status, lease: expiredLease, evidence: [], blockedOn: null,
+      targetRef: null, status, lease: expiredLease, evidence: [], frictionReflections: [], blockedOn: null,
       leaseExpiryCount: 3, createdAt: "2020-01-01T00:00:00.000Z", updatedAt: "2020-01-01T00:00:00.000Z", ...extra,
     });
     await mk("work-h3-review", "review", { evidence: [{ requirementId: "r", kind: "freeform", producedAt: "2020-01-01T00:01:00.000Z" }] });

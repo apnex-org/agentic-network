@@ -52,6 +52,13 @@ export interface StintChild {
    *  recursive subtree rollup is Arc-A slice 2.) */
   stateDurations: StateDurations;
 }
+export interface FrictionRollup {
+  total: number;
+  observed: number;
+  missingLegacy: number;
+  categories: Record<string, number>;
+}
+
 export interface StintProjection {
   arcId: string;
   arcStatus: WorkItemPhase;
@@ -79,6 +86,8 @@ export interface StintProjection {
   /** idea-384 Part B: parallelism/utilization = rolledUpDurations.in_progress / ownActiveMs.
    *  >1 ⇒ subtree concurrency achieved; <1 ⇒ serial/idle gaps. null when ownActiveMs=0. */
   parallelism: number | null;
+  /** A10 primitive-1: subtree friction-reflection rollup over reachable leaves. */
+  friction: FrictionRollup;
 }
 
 /** W2 (idea-451 / work-182): the graph-projected NEXT ACTION for an arc-node — the
@@ -238,6 +247,41 @@ export interface EvidenceItem {
   producedBy?: string;
 }
 
+export type FrictionCategory =
+  | "tool_affordance"
+  | "runbook_confusion"
+  | "evidence_pain"
+  | "coordination_drag"
+  | "lease_or_liveness"
+  | "authority_or_seal"
+  | "stale_context"
+  | "manual_step"
+  | "scope_drift"
+  | "other";
+
+export interface FrictionSuggestedFollowUp {
+  kind: "none" | "idea" | "bug" | "work" | "skill_update" | "doc_update";
+  text?: string;
+}
+
+export interface FrictionReflectionInput {
+  observed: boolean;
+  summary?: string;
+  categories?: FrictionCategory[];
+  suggestedFollowUp?: FrictionSuggestedFollowUp;
+}
+
+export interface FrictionReflectionRecord {
+  producedAt: string;
+  producedBy: string;
+  sourceVerb: "complete_work";
+  observed: boolean;
+  summary: string;
+  categories: FrictionCategory[];
+  suggestedFollowUp?: FrictionSuggestedFollowUp;
+  compatibility: "explicit" | "missing_legacy_client";
+}
+
 /** The claim lease (status). Cohesive object; `holder`/`expiresAt` are the hot
  *  filterable sub-fields (queried via the bucket-prefixed dotted path).
  *
@@ -345,6 +389,8 @@ export interface WorkItem {
   status: WorkItemPhase;
   lease: WorkItemLease | null;
   evidence: EvidenceItem[];
+  /** A10 primitive-1: append-only friction reflections captured on accepted complete_work transitions. */
+  frictionReflections: FrictionReflectionRecord[];
   blockedOn: WorkItemBlockedOn | null;
   /** Per-ITEM poison counter — incremented on each lease-expiry re-queue; at the
    *  cap the sweeper terminal-abandons the item (distinct from per-AGENT thrash). */
@@ -621,5 +667,5 @@ export interface IWorkItemStore {
    *  row is unchanged. Parks in `review` when a review requirement is present + unmet;
    *  reaches `done` once all requirements are covered. NEVER requires a passing verdict
    *  (review evidence satisfies by EXISTING). Holder + matching token. */
-  completeWork(workId: string, agentId: string, leaseToken: string, evidence: EvidenceItem[]): Promise<WorkItem | null>;
+  completeWork(workId: string, agentId: string, leaseToken: string, evidence: EvidenceItem[], frictionReflection?: FrictionReflectionInput): Promise<WorkItem | null>;
 }
