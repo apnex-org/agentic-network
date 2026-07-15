@@ -2,6 +2,25 @@
 
 All notable changes to the pi host extension are documented here.
 
+## 0.1.7 — P3 package-integrity and publish-lag isolation
+
+### Added
+- Adds a pi `package-integrity` regression suite mirroring the Claude package
+  hygiene guard at the pi-native distribution seam: package `files[]`, scripts,
+  facade-clean deps/peers, manifest validity, publish-family wiring,
+  `version-rewrite` coverage, quickstart/changelog anchors, and `npm pack` dry-run
+  contents are now pinned.
+
+### Release boundary
+- Version bump is intentionally narrow to republish `@apnex/pi-plugin` from current
+  main after the pi uplift/cutover fixes, separating real capability deltas from
+  earlier publish-lag observations.
+- Full pi npm-distribution convergence remains deferred: unlike Claude's
+  marketplace `install.sh` stack, pi is launched by OIS with an explicit
+  `npm:@apnex/pi-plugin@...` package spec and per-seat config rendering. Any
+  broader install/distribution redesign is deferred to follow-up `idea-535` instead
+  of being folded into this reversible P3 hygiene slice.
+
 ## 0.1.5 — Publish idea-465 retry-gap hardening (HCAP Slice-1.x)
 
 ### Fixed
