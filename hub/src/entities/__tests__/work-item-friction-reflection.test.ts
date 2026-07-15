@@ -44,19 +44,25 @@ describe("A10 friction reflection capture", () => {
     ]);
   });
 
-  it("accepts missing legacy clients but marks the stored reflection", async () => {
+  it("blocks FSM advancement without frictionReflection while persisting valid evidence", async () => {
     const { repo } = await setup();
     const { workId, token } = await started(repo);
 
-    const done = await repo.completeWork(workId, "agent-eng", token, evidence());
+    const blocked = await repo.completeWork(workId, "agent-eng", token, evidence());
 
-    expect(done!.status).toBe("done");
-    expect(done!.frictionReflections[0]).toEqual(expect.objectContaining({
-      observed: false,
-      summary: "not provided by legacy client",
-      categories: ["other"],
-      compatibility: "missing_legacy_client",
-    }));
+    expect(blocked!.status).toBe("in_progress");
+    expect(blocked!.completionBlocked).toBe("friction_reflection_required");
+    expect(blocked!.evidence).toHaveLength(1);
+    expect(blocked!.frictionReflections).toEqual([]);
+  });
+
+  it("rejects invalid evidence without persisting evidence when frictionReflection is also missing", async () => {
+    const { repo } = await setup();
+    const { workId, token } = await started(repo);
+
+    await expect(repo.completeWork(workId, "agent-eng", token, [{ requirementId: "wrong", kind: "commit", ref: "abc123", producedAt: new Date().toISOString() }]))
+      .rejects.toThrow(EvidencePredicateFailed);
+    expect((await repo.getWorkItem(workId))!.evidence).toEqual([]);
   });
 
   it("rejects observed=true without a non-empty summary", async () => {

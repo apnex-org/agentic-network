@@ -1,3 +1,6 @@
+
+const NO_FRICTION = { observed: false, summary: "no friction observed" } as const;
+
 /**
  * mission-102 design §6 — CONTRACT TEST 5 (G2-BINDING): verdict-spoof rejects.
  * (B8-R2 / work-129, from steve's audit-10226: the guards existed — bug-204 /
@@ -70,7 +73,7 @@ describe("CONTRACT TEST 5 (G2-BINDING): verdict-spoof rejects — design §6, B8
   it("5a: an audit with the WRONG Hub-stamped actor (engineer self-verdict) REJECTS — producedBy claims count for nothing", async () => {
     const w = await started("agent-5a");
     await mkAudit("audit-5a", w.id, "engineer"); // related + fresh, but a worker self-close
-    await expect(repo.completeWork(w.id, "agent-5a", w.token, [verdictEv("audit-5a")]))
+    await expect(repo.completeWork(w.id, "agent-5a", w.token, [verdictEv("audit-5a")], NO_FRICTION))
       .rejects.toThrow(/was not authored by a verifier/);
     // ...and the caller-supplied producedBy naming a real verifier changed nothing
     // (the evidence above already claimed the verifier's agentId).
@@ -79,28 +82,28 @@ describe("CONTRACT TEST 5 (G2-BINDING): verdict-spoof rejects — design §6, B8
   it("5b: a GENUINE verifier audit about a DIFFERENT entity REJECTS (relate — existence is not relevance)", async () => {
     const w = await started("agent-5b");
     await mkAudit("audit-5b", "work-99999", "verifier"); // verifier-authored, wrong subject
-    await expect(repo.completeWork(w.id, "agent-5b", w.token, [verdictEv("audit-5b")]))
+    await expect(repo.completeWork(w.id, "agent-5b", w.token, [verdictEv("audit-5b")], NO_FRICTION))
       .rejects.toThrow(/does not RELATE/);
   });
 
   it("5c: a verdict with STALE producedAt (before the current lease claimedAt) REJECTS (freshness)", async () => {
     const w = await started("agent-5c");
     await mkAudit("audit-5c", w.id, "verifier"); // perfectly valid audit row...
-    await expect(repo.completeWork(w.id, "agent-5c", w.token, [verdictEv("audit-5c", STALE)])) // ...bound with a pre-claim stamp
+    await expect(repo.completeWork(w.id, "agent-5c", w.token, [verdictEv("audit-5c", STALE)], NO_FRICTION)) // ...bound with a pre-claim stamp
       .rejects.toThrow(/failed freshness/);
   });
 
   it("5d: an ACTORLESS audit fails closed (no Hub stamp = no verdict)", async () => {
     const w = await started("agent-5d");
     await mkAudit("audit-5d", w.id); // no metadata.actor
-    await expect(repo.completeWork(w.id, "agent-5d", w.token, [verdictEv("audit-5d")]))
+    await expect(repo.completeWork(w.id, "agent-5d", w.token, [verdictEv("audit-5d")], NO_FRICTION))
       .rejects.toThrow(/was not authored by a verifier/);
   });
 
   it("5e CONTROL: a verifier-authored, item-related, post-claim verdict audit closes the requirement", async () => {
     const w = await started("agent-5e");
     await mkAudit("audit-5e", w.id, "verifier");
-    const done = await repo.completeWork(w.id, "agent-5e", w.token, [verdictEv("audit-5e")]);
+    const done = await repo.completeWork(w.id, "agent-5e", w.token, [verdictEv("audit-5e")], NO_FRICTION);
     expect(done!.status).toBe("done");
   });
 
@@ -109,7 +112,7 @@ describe("CONTRACT TEST 5 (G2-BINDING): verdict-spoof rejects — design §6, B8
     await mkAudit("audit-5f-eng", w.id, "engineer");
     await mkAudit("audit-5f-far", "work-88888", "verifier");
     for (const ev of [verdictEv("audit-5f-eng"), verdictEv("audit-5f-far"), verdictEv("audit-5f-eng", STALE)]) {
-      await expect(repo.completeWork(w.id, "agent-5f", w.token, [ev])).rejects.toThrow();
+      await expect(repo.completeWork(w.id, "agent-5f", w.token, [ev], NO_FRICTION)).rejects.toThrow();
     }
     const row = await repo.getWorkItem(w.id);
     expect(row!.status).toBe("in_progress");

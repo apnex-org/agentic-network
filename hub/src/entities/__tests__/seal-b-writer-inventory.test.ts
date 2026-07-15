@@ -1,3 +1,6 @@
+
+const NO_FRICTION = { observed: false, summary: "no friction observed" } as const;
+
 /**
  * SEAL B (idea-444, §5 writer inventory) — the MECHANICAL "no writer bypasses" proof.
  *
@@ -164,7 +167,7 @@ describe("SEAL B — writer inventory: EVERY writer preserves the attestation su
     const c = await repo.claimWorkItem(id, "agent-eng", "engineer");
     const t = c!.lease!.token;
     await repo.startWork(id, "agent-eng", t);
-    await repo.completeWork(id, "agent-eng", t, []); // only the verifier-attestation req, already pass → done
+    await repo.completeWork(id, "agent-eng", t, [], NO_FRICTION); // only the verifier-attestation req, already pass → done
     await expectSubtreeIntact(repo, id);
   });
 });

@@ -27,6 +27,7 @@ import type {
   WorkItemBlockedOn,
   EvidenceRequirement,
   EvidenceItem,
+  CompleteWorkResult,
   FrictionReflectionInput,
   FrictionReflectionRecord,
   FrictionRollup,
@@ -243,19 +244,7 @@ function mergeEvidence(existing: EvidenceItem[], supplied: EvidenceItem[]): Evid
   return out;
 }
 
-function normalizeFrictionReflection(input: FrictionReflectionInput | undefined, agentId: string, producedAt: string): FrictionReflectionRecord {
-  if (!input) {
-    return {
-      producedAt,
-      producedBy: agentId,
-      sourceVerb: "complete_work",
-      observed: false,
-      summary: "not provided by legacy client",
-      categories: ["other"],
-      suggestedFollowUp: { kind: "none" },
-      compatibility: "missing_legacy_client",
-    };
-  }
+function normalizeFrictionReflection(input: FrictionReflectionInput, agentId: string, producedAt: string): FrictionReflectionRecord {
   if (input.observed === true && (!input.summary || input.summary.trim() === "")) {
     throw new EvidencePredicateFailed("frictionReflection.summary is required when observed=true");
   }
@@ -1394,7 +1383,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * the synchronous CAS; requirements are immutable (spec), so the resolution is stable
    * across the CAS re-read. The CAS re-runs the sync predicate on the fresh row.
    */
-  async completeWork(workId: string, agentId: string, leaseToken: string, evidence: EvidenceItem[], frictionReflection?: FrictionReflectionInput): Promise<WorkItem | null> {
+  async completeWork(workId: string, agentId: string, leaseToken: string, evidence: EvidenceItem[], frictionReflection?: FrictionReflectionInput): Promise<CompleteWorkResult | null> {
     const pre = await this.substrate.get<WorkItem>(KIND, workId);
     if (!pre) return null;
     const item = cloneWorkItem(pre);
@@ -1490,14 +1479,18 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       }
     }
     // Authoritative CAS: re-check auth + phase + re-run the predicate on the FRESH row,
-    // then store the merged evidence + transition atomically.
-    return this.tryCasUpdate(workId, (w) => {
+    // then store the merged evidence + either block without advancing (missing friction)
+    // or transition atomically (explicit friction).
+    const updated = await this.tryCasUpdate(workId, (w) => {
       this.assertLease(w, agentId, leaseToken, "complete");
       if (!COMPLETABLE_PHASES.includes(w.status)) throw new TransitionRejected(`complete requires in_progress or review, was ${w.status}`);
       const nowISO = this.clock.now().toISOString();
-      const frictionRecord = normalizeFrictionReflection(frictionReflection, agentId, nowISO);
       const merged = mergeEvidence(w.evidence, evidence);
       const { nextPhase: evidencePhase } = evaluateEvidence(w.evidenceRequirements, merged, w.lease, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey)));
+      if (!frictionReflection) {
+        return { ...w, evidence: merged, updatedAt: nowISO };
+      }
+      const frictionRecord = normalizeFrictionReflection(frictionReflection, agentId, nowISO);
       // SEAL (idea-444) dual-edge, edge #1 (complete_work): combine the executor-evidence phase
       // with the attestation gate. A pending verifier-attestation requirement parks the item in
       // `review` until a verifier attests pass — the attest_evidence tail (edge #2) then advances
@@ -1506,6 +1499,16 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       const nextPhase: WorkItemPhase = evidencePhase === "done" && gate.attestationReqsSatisfied ? "done" : "review";
       return { ...w, status: nextPhase, evidence: merged, frictionReflections: [...w.frictionReflections, frictionRecord], ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
+    if (!updated) return null;
+    if (!frictionReflection) {
+      return {
+        ...updated,
+        workItem: updated,
+        completionBlocked: "friction_reflection_required",
+        message: "complete_work accepted valid evidence but did not advance the FSM because frictionReflection is required",
+      };
+    }
+    return { ...updated, workItem: updated };
   }
 
   // ── SEAL (idea-444) — attest_evidence + verify_attestation ────────────────

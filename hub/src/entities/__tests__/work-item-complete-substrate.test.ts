@@ -1,3 +1,6 @@
+
+const NO_FRICTION = { observed: false, summary: "no friction observed" } as const;
+
 /**
  * C1-R2 (mission-94) sub-PR-3a-ii — complete_work + the anti-gameability evidence
  * predicate (real-pg). Covers Lily's evidence contract (audit-4082) end-to-end:
@@ -89,47 +92,47 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
   async function driveDone(id: string, agent: string): Promise<void> {
     const c = await repo.claimWorkItem(id, agent);
     await repo.startWork(id, agent, c!.lease!.token);
-    await repo.completeWork(id, agent, c!.lease!.token, [{ requirementId: "x", kind: "freeform", producedAt: new Date().toISOString() }]);
+    await repo.completeWork(id, agent, c!.lease!.token, [{ requirementId: "x", kind: "freeform", producedAt: new Date().toISOString() }], NO_FRICTION);
   }
 
   it("#6 floor: no requirements + a freeform evidence → done", async () => {
     const { id, token } = await started([], "agent-c1");
-    const done = await repo.completeWork(id, "agent-c1", token, [ev({ requirementId: "x", kind: "freeform" })]);
+    const done = await repo.completeWork(id, "agent-c1", token, [ev({ requirementId: "x", kind: "freeform" })], NO_FRICTION);
     expect(done!.status).toBe("done");
   }, OP_TIMEOUT);
 
   it("#6 floor VIOLATION: no requirements + no freeform evidence → EvidencePredicateFailed", async () => {
     const { id, token } = await started([], "agent-c2");
-    await expect(repo.completeWork(id, "agent-c2", token, [])).rejects.toThrow(/>=1 freeform evidence/);
+    await expect(repo.completeWork(id, "agent-c2", token, [], NO_FRICTION)).rejects.toThrow(/>=1 freeform evidence/);
   }, OP_TIMEOUT);
 
   it("#1 coverage-by-binding: wrong requirementId → uncovered fail; correct binding → done", async () => {
     const reqs: EvidenceRequirement[] = [{ id: "r1", kind: "commit" }];
     const a = await started(reqs, "agent-c3a");
-    await expect(repo.completeWork(a.id, "agent-c3a", a.token, [ev({ requirementId: "WRONG", kind: "commit", ref: "abc" })]))
+    await expect(repo.completeWork(a.id, "agent-c3a", a.token, [ev({ requirementId: "WRONG", kind: "commit", ref: "abc" })], NO_FRICTION))
       .rejects.toThrow(/requirement 'r1'.*no bound evidence/);
     const b = await started(reqs, "agent-c3b");
-    const done = await repo.completeWork(b.id, "agent-c3b", b.token, [ev({ requirementId: "r1", kind: "commit", ref: "abc" })]);
+    const done = await repo.completeWork(b.id, "agent-c3b", b.token, [ev({ requirementId: "r1", kind: "commit", ref: "abc" })], NO_FRICTION);
     expect(done!.status).toBe("done");
   }, OP_TIMEOUT);
 
   it("#2 kind-match: bound by id but wrong kind → fail", async () => {
     const { id, token } = await started([{ id: "r1", kind: "commit" }], "agent-c4");
-    await expect(repo.completeWork(id, "agent-c4", token, [ev({ requirementId: "r1", kind: "pr", ref: "x" })]))
+    await expect(repo.completeWork(id, "agent-c4", token, [ev({ requirementId: "r1", kind: "pr", ref: "x" })], NO_FRICTION))
       .rejects.toThrow(/requirement 'r1' evidence kind mismatch/);
   }, OP_TIMEOUT);
 
   it("#3 freshness: stale producedAt → fail; allowPreClaim permits; fresh passes", async () => {
     const stale = await started([{ id: "r1", kind: "commit" }], "agent-c5a");
-    await expect(repo.completeWork(stale.id, "agent-c5a", stale.token, [{ requirementId: "r1", kind: "commit", ref: "x", producedAt: STALE }]))
+    await expect(repo.completeWork(stale.id, "agent-c5a", stale.token, [{ requirementId: "r1", kind: "commit", ref: "x", producedAt: STALE }], NO_FRICTION))
       .rejects.toThrow(/failed freshness/);
 
     const pre = await started([{ id: "r1", kind: "commit", allowPreClaim: true }], "agent-c5b");
-    const okPre = await repo.completeWork(pre.id, "agent-c5b", pre.token, [{ requirementId: "r1", kind: "commit", ref: "x", producedAt: STALE }]);
+    const okPre = await repo.completeWork(pre.id, "agent-c5b", pre.token, [{ requirementId: "r1", kind: "commit", ref: "x", producedAt: STALE }], NO_FRICTION);
     expect(okPre!.status).toBe("done"); // allowPreClaim waives freshness
 
     const fresh = await started([{ id: "r1", kind: "commit" }], "agent-c5c");
-    const okFresh = await repo.completeWork(fresh.id, "agent-c5c", fresh.token, [ev({ requirementId: "r1", kind: "commit", ref: "x" })]);
+    const okFresh = await repo.completeWork(fresh.id, "agent-c5c", fresh.token, [ev({ requirementId: "r1", kind: "commit", ref: "x" })], NO_FRICTION);
     expect(okFresh!.status).toBe("done");
   }, OP_TIMEOUT);
 
@@ -140,24 +143,24 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
     const mkGate = (targetId: string, creatorRole: string) =>
       repo.createWorkItem({ type: "verifier-gate", roleEligibility: [], targetRef: { kind: "WorkItem", id: targetId }, createdBy: { role: creatorRole, agentId: `${creatorRole}-1` } });
     // nonexistent ref → fail (existence)
-    await expect(repo.completeWork(good.id, "agent-c6b", good.token, [reviewEv("work-nonexistent")]))
+    await expect(repo.completeWork(good.id, "agent-c6b", good.token, [reviewEv("work-nonexistent")], NO_FRICTION))
       .rejects.toThrow(/does not resolve/);
     // a verifier-created, DONE gate that targets a DIFFERENT item → fail (#1 relevance; the
     // gate's Hub-stamped targetRef — not a caller payload — is checked)
     const unrelated = await mkGate("work-elsewhere", "verifier");
     await driveDone(unrelated.id, "agent-vg-u");
-    await expect(repo.completeWork(good.id, "agent-c6b", good.token, [reviewEv(unrelated.id)]))
+    await expect(repo.completeWork(good.id, "agent-c6b", good.token, [reviewEv(unrelated.id)], NO_FRICTION))
       .rejects.toThrow(/does not RELATE/);
     // a WORKER-created gate targeting THIS item + done → fail (#2 non-spoofable: the gate's
     // Hub-stamped createdBy is checked, not the caller's producedBy claim)
     const workerGate = await mkGate(good.id, "engineer");
     await driveDone(workerGate.id, "agent-vg-w");
-    await expect(repo.completeWork(good.id, "agent-c6b", good.token, [reviewEv(workerGate.id)]))
+    await expect(repo.completeWork(good.id, "agent-c6b", good.token, [reviewEv(workerGate.id)], NO_FRICTION))
       .rejects.toThrow(/not created by a verifier/);
     // a VERIFIER-created gate targeting THIS item + phase=done → done
     const gate = await mkGate(good.id, "verifier");
     await driveDone(gate.id, "agent-vg-g");
-    expect((await repo.completeWork(good.id, "agent-c6b", good.token, [reviewEv(gate.id)]))!.status).toBe("done");
+    expect((await repo.completeWork(good.id, "agent-c6b", good.token, [reviewEv(gate.id)], NO_FRICTION))!.status).toBe("done");
   }, OP_TIMEOUT);
 
   it("#1 audit relevance: an unrelated Audit → fail; an Audit about THIS item → pass", async () => {
@@ -166,11 +169,11 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
     const reqs: EvidenceRequirement[] = [{ id: "a1", kind: "audit", refResolvable: true }];
     const w = await started(reqs, "agent-au");
     // unrelated audit (exists, but relatedEntity points elsewhere) → relevance fail
-    await expect(repo.completeWork(w.id, "agent-au", w.token, [ev({ requirementId: "a1", kind: "audit", ref: "audit-unrel" })]))
+    await expect(repo.completeWork(w.id, "agent-au", w.token, [ev({ requirementId: "a1", kind: "audit", ref: "audit-unrel" })], NO_FRICTION))
       .rejects.toThrow(/does not RELATE/);
     // an audit whose relatedEntity IS this work-item → pass
     await pool.query("UPDATE entities SET data = jsonb_set(data, '{spec,relatedEntity}', to_jsonb($2::text)) WHERE kind='Audit' AND id=$1", ["audit-rel", w.id]);
-    const done = await repo.completeWork(w.id, "agent-au", w.token, [ev({ requirementId: "a1", kind: "audit", ref: "audit-rel" })]);
+    const done = await repo.completeWork(w.id, "agent-au", w.token, [ev({ requirementId: "a1", kind: "audit", ref: "audit-rel" })], NO_FRICTION);
     expect(done!.status).toBe("done");
   }, OP_TIMEOUT);
 
@@ -184,31 +187,31 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
   it("bug-204 (i) verifier-gate kind:audit req + verifier audit RELATED to the gate → done", async () => {
     const g = await startedGate([{ id: "ev_pack_verified", kind: "audit", refResolvable: true }], "agent-vg-a");
     await mkAudit("audit-vg-aud", g.id, "verifier"); // relatedEntity === the gate id
-    const done = await repo.completeWork(g.id, "agent-vg-a", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-aud" })]);
+    const done = await repo.completeWork(g.id, "agent-vg-a", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-aud" })], NO_FRICTION);
     expect(done!.status).toBe("done");
   }, OP_TIMEOUT);
 
   it("bug-204 (ii) back-compat: already-seeded kind:review req SATISFIED by a gate-related verifier audit → done", async () => {
     const g = await startedGate([{ id: "ev_pack_verified", kind: "review", refResolvable: true }], "agent-vg-r");
     await mkAudit("audit-vg-rev", g.id, "verifier");
-    const done = await repo.completeWork(g.id, "agent-vg-r", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-rev" })]);
+    const done = await repo.completeWork(g.id, "agent-vg-r", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-rev" })], NO_FRICTION);
     expect(done!.status).toBe("done");
   }, OP_TIMEOUT);
 
   it("bug-204 (iii) author-anchor (mutation-proof): a gate-related audit authored by a NON-verifier (engineer) → fail; actorless → fail", async () => {
     const g = await startedGate([{ id: "ev_pack_verified", kind: "review", refResolvable: true }], "agent-vg-e");
     await mkAudit("audit-vg-eng", g.id, "engineer"); // related to the gate, but a worker self-close
-    await expect(repo.completeWork(g.id, "agent-vg-e", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-eng" })]))
+    await expect(repo.completeWork(g.id, "agent-vg-e", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-eng" })], NO_FRICTION))
       .rejects.toThrow(/was not authored by a verifier/);
     await mkAudit("audit-vg-none", g.id); // related, but no metadata.actor → fail closed
-    await expect(repo.completeWork(g.id, "agent-vg-e", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-none" })]))
+    await expect(repo.completeWork(g.id, "agent-vg-e", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-none" })], NO_FRICTION))
       .rejects.toThrow(/was not authored by a verifier/);
   }, OP_TIMEOUT);
 
   it("bug-204 (v) existence-theatre (mutation-proof relate is NOT waived): a verifier audit NOT about this gate → does NOT bind", async () => {
     const g = await startedGate([{ id: "ev_pack_verified", kind: "audit", refResolvable: true }], "agent-vg-x");
     await mkAudit("audit-vg-elsewhere", "some-other-entity", "verifier"); // verifier-authored but about a DIFFERENT entity
-    await expect(repo.completeWork(g.id, "agent-vg-x", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-elsewhere" })]))
+    await expect(repo.completeWork(g.id, "agent-vg-x", g.token, [ev({ requirementId: "ev_pack_verified", kind: "audit", ref: "audit-vg-elsewhere" })], NO_FRICTION))
       .rejects.toThrow(/does not RELATE/);
   }, OP_TIMEOUT);
 
@@ -222,7 +225,7 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
   it("bug-220 (b) [supersedes bug-204 (iv)(a)]: a NORMAL item's kind:review req IS satisfied by a related verifier-authored audit → done", async () => {
     const wr = await started([{ id: "r1", kind: "review", refResolvable: true }], "agent-nt-r");
     await mkAudit("audit-nt-rel", wr.id, "verifier"); // related to the item + verifier-authored
-    const done = await repo.completeWork(wr.id, "agent-nt-r", wr.token, [ev({ requirementId: "r1", kind: "audit", ref: "audit-nt-rel" })]);
+    const done = await repo.completeWork(wr.id, "agent-nt-r", wr.token, [ev({ requirementId: "r1", kind: "audit", ref: "audit-nt-rel" })], NO_FRICTION);
     expect(done!.status).toBe("done");
   }, OP_TIMEOUT);
 
@@ -230,17 +233,17 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
     // author-anchor travels with the kind-relaxation: a worker can't self-close the review req.
     const we = await started([{ id: "r1", kind: "review", refResolvable: true }], "agent-b220-e");
     await mkAudit("audit-b220-eng", we.id, "engineer");
-    await expect(repo.completeWork(we.id, "agent-b220-e", we.token, [ev({ requirementId: "r1", kind: "audit", ref: "audit-b220-eng" })]))
+    await expect(repo.completeWork(we.id, "agent-b220-e", we.token, [ev({ requirementId: "r1", kind: "audit", ref: "audit-b220-eng" })], NO_FRICTION))
       .rejects.toThrow(/was not authored by a verifier/);
     // relate is NOT waived: a verifier audit about a DIFFERENT entity does not bind.
     const wu = await started([{ id: "r1", kind: "review", refResolvable: true }], "agent-b220-u");
     await mkAudit("audit-b220-unrel", "work-elsewhere2", "verifier");
-    await expect(repo.completeWork(wu.id, "agent-b220-u", wu.token, [ev({ requirementId: "r1", kind: "audit", ref: "audit-b220-unrel" })]))
+    await expect(repo.completeWork(wu.id, "agent-b220-u", wu.token, [ev({ requirementId: "r1", kind: "audit", ref: "audit-b220-unrel" })], NO_FRICTION))
       .rejects.toThrow(/does not RELATE/);
     // strictness preserved off the review kind: an audit cannot satisfy a commit requirement.
     const wc = await started([{ id: "code", kind: "commit" }], "agent-b220-c");
     await mkAudit("audit-b220-code", wc.id, "verifier");
-    await expect(repo.completeWork(wc.id, "agent-b220-c", wc.token, [ev({ requirementId: "code", kind: "audit", ref: "audit-b220-code" })]))
+    await expect(repo.completeWork(wc.id, "agent-b220-c", wc.token, [ev({ requirementId: "code", kind: "audit", ref: "audit-b220-code" })], NO_FRICTION))
       .rejects.toThrow(/evidence kind mismatch/);
   }, OP_TIMEOUT);
 
@@ -250,7 +253,7 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
     // would bypass them onto the spoofable producedBy fallback. Kind-match must reject it.
     const w = await started([{ id: "r1", kind: "review" }], "agent-b220-nrr"); // refResolvable ABSENT
     await mkAudit("audit-b220-nrr", w.id, "verifier"); // even verifier-authored + related
-    await expect(repo.completeWork(w.id, "agent-b220-nrr", w.token, [ev({ requirementId: "r1", kind: "audit", ref: "audit-b220-nrr" })]))
+    await expect(repo.completeWork(w.id, "agent-b220-nrr", w.token, [ev({ requirementId: "r1", kind: "audit", ref: "audit-b220-nrr" })], NO_FRICTION))
       .rejects.toThrow(/evidence kind mismatch/);
     // the existing review-kind/producedBy path for this class is pinned by the FSM review test.
   }, OP_TIMEOUT);
@@ -258,17 +261,17 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
   it("bug-204 (iv)(b) GUARD-NARROWNESS retained: a TASK's kind:audit req still enforces RELATE for an UNRELATED verifier audit", async () => {
     const wa = await started([{ id: "a1", kind: "audit", refResolvable: true }], "agent-nt-a");
     await mkAudit("audit-nt-unrel", "work-elsewhere", "verifier");
-    await expect(repo.completeWork(wa.id, "agent-nt-a", wa.token, [ev({ requirementId: "a1", kind: "audit", ref: "audit-nt-unrel" })]))
+    await expect(repo.completeWork(wa.id, "agent-nt-a", wa.token, [ev({ requirementId: "a1", kind: "audit", ref: "audit-nt-unrel" })], NO_FRICTION))
       .rejects.toThrow(/does not RELATE/);
   }, OP_TIMEOUT);
 
   it("#4 refResolvable external (commit): malformed (empty) ref → fail; well-formed nonexistent ref → pass (format-only)", async () => {
     const reqs: EvidenceRequirement[] = [{ id: "r1", kind: "commit", refResolvable: true }];
     const bad = await started(reqs, "agent-c7a");
-    await expect(repo.completeWork(bad.id, "agent-c7a", bad.token, [ev({ requirementId: "r1", kind: "commit", ref: "  " })]))
+    await expect(repo.completeWork(bad.id, "agent-c7a", bad.token, [ev({ requirementId: "r1", kind: "commit", ref: "  " })], NO_FRICTION))
       .rejects.toThrow(/malformed .* ref/);
     const ok = await started(reqs, "agent-c7b");
-    const done = await repo.completeWork(ok.id, "agent-c7b", ok.token, [ev({ requirementId: "r1", kind: "commit", ref: "deadbeef" })]);
+    const done = await repo.completeWork(ok.id, "agent-c7b", ok.token, [ev({ requirementId: "r1", kind: "commit", ref: "deadbeef" })], NO_FRICTION);
     expect(done!.status).toBe("done"); // external refs are NOT existence-checked
   }, OP_TIMEOUT);
 
@@ -278,14 +281,14 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
     const reqs: EvidenceRequirement[] = [{ id: "code", kind: "commit" }, { id: "rev", kind: "review" }];
     const { id, token } = await started(reqs, "agent-c8");
     // first complete: code covered, review unmet → parks in review (no fail).
-    const parked = await repo.completeWork(id, "agent-c8", token, [ev({ requirementId: "code", kind: "commit", ref: "abc" })]);
+    const parked = await repo.completeWork(id, "agent-c8", token, [ev({ requirementId: "code", kind: "commit", ref: "abc" })], NO_FRICTION);
     expect(parked!.status).toBe("review");
     // a SELF-authored (non-verifier) review evidence → rejected (audit-4103 #2)
-    await expect(repo.completeWork(id, "agent-c8", token, [ev({ requirementId: "rev", kind: "review", ref: "note", producedBy: "eng-c8" })]))
+    await expect(repo.completeWork(id, "agent-c8", token, [ev({ requirementId: "rev", kind: "review", ref: "note", producedBy: "eng-c8" })], NO_FRICTION))
       .rejects.toThrow(/is not a verifier/);
     expect((await repo.getWorkItem(id))!.status).toBe("review"); // unchanged — still parked
     // a verifier genuinely looked → review→done (no passing verdict required, just provenance).
-    const done = await repo.completeWork(id, "agent-c8", token, [ev({ requirementId: "rev", kind: "review", ref: "verdict-note", producedBy: "verifier-c8" })]);
+    const done = await repo.completeWork(id, "agent-c8", token, [ev({ requirementId: "rev", kind: "review", ref: "verdict-note", producedBy: "verifier-c8" })], NO_FRICTION);
     expect(done!.status).toBe("done");
   }, OP_TIMEOUT);
 
@@ -293,7 +296,7 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
     // park in review with a bound commit: the work-111 shape (review req unmet → parks).
     const reqs: EvidenceRequirement[] = [{ id: "code", kind: "commit" }, { id: "rev", kind: "review" }];
     const { id, token } = await started(reqs, "agent-b222");
-    const parked = await repo.completeWork(id, "agent-b222", token, [ev({ requirementId: "code", kind: "commit", ref: "sha-b222" })]);
+    const parked = await repo.completeWork(id, "agent-b222", token, [ev({ requirementId: "code", kind: "commit", ref: "sha-b222" })], NO_FRICTION);
     expect(parked!.status).toBe("review");
     // the sweeper reaps the parked item: review → ready, evidence preserved (audit-4103 #3).
     const future = new Date(Date.now() + 60 * 60_000).toISOString();
@@ -308,43 +311,43 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
     await repo.startWork(id, "agent-b222-2", re!.lease!.token);
     // re-complete with NO new evidence: the persisted binding is grandfathered → re-parks
     // in review (before bug-222 this threw 'failed freshness' — the work-111 trap).
-    const reparked = await repo.completeWork(id, "agent-b222-2", re!.lease!.token, []);
+    const reparked = await repo.completeWork(id, "agent-b222-2", re!.lease!.token, [], NO_FRICTION);
     expect(reparked!.status).toBe("review");
     // anti-gameability intact: NEWLY-SUPPLIED stale evidence (not persisted) still rejects.
-    await expect(repo.completeWork(id, "agent-b222-2", re!.lease!.token, [ev({ requirementId: "rev", kind: "review", ref: "note", producedBy: "verifier-c8", producedAt: STALE })]))
+    await expect(repo.completeWork(id, "agent-b222-2", re!.lease!.token, [ev({ requirementId: "rev", kind: "review", ref: "note", producedBy: "verifier-c8", producedAt: STALE })], NO_FRICTION))
       .rejects.toThrow(/failed freshness/);
   }, OP_TIMEOUT);
 
   it("complete from claimed (not started) → TransitionRejected", async () => {
     const w = await repo.createWorkItem({ type: "task", roleEligibility: [] });
     const claimed = await repo.claimWorkItem(w.id, "agent-c9");
-    await expect(repo.completeWork(w.id, "agent-c9", claimed!.lease!.token, [ev({ requirementId: "x", kind: "freeform" })]))
+    await expect(repo.completeWork(w.id, "agent-c9", claimed!.lease!.token, [ev({ requirementId: "x", kind: "freeform" })], NO_FRICTION))
       .rejects.toThrow(/complete requires in_progress or review/);
   }, OP_TIMEOUT);
 
   it("holder/token guard: non-holder + stale-token complete reject", async () => {
     const { id, token } = await started([], "agent-c10");
-    await expect(repo.completeWork(id, "agent-intruder", token, [ev({ requirementId: "x", kind: "freeform" })]))
+    await expect(repo.completeWork(id, "agent-intruder", token, [ev({ requirementId: "x", kind: "freeform" })], NO_FRICTION))
       .rejects.toThrow(/requires the lease-holder/);
-    await expect(repo.completeWork(id, "agent-c10", "stale-token", [ev({ requirementId: "x", kind: "freeform" })]))
+    await expect(repo.completeWork(id, "agent-c10", "stale-token", [ev({ requirementId: "x", kind: "freeform" })], NO_FRICTION))
       .rejects.toThrow(/stale lease token/);
   }, OP_TIMEOUT);
 
   it("idempotency: post-done re-complete rejects; duplicate evidence dedups (no double-append)", async () => {
     const { id, token } = await started([], "agent-c11");
     const dup = ev({ requirementId: "x", kind: "freeform", ref: "same" });
-    const done = await repo.completeWork(id, "agent-c11", token, [dup, { ...dup }]); // identical pair
+    const done = await repo.completeWork(id, "agent-c11", token, [dup, { ...dup }], NO_FRICTION); // identical pair
     expect(done!.status).toBe("done");
     expect(done!.evidence.length).toBe(1); // deduped
     // re-complete on a done item → terminal, rejects
-    await expect(repo.completeWork(id, "agent-c11", token, [ev({ requirementId: "x", kind: "freeform" })]))
+    await expect(repo.completeWork(id, "agent-c11", token, [ev({ requirementId: "x", kind: "freeform" })], NO_FRICTION))
       .rejects.toThrow(/complete requires in_progress or review/);
   }, OP_TIMEOUT);
 
   it("multi-requirement: all covered → done; one uncovered → fail (row unchanged, atomic)", async () => {
     const reqs: EvidenceRequirement[] = [{ id: "r1", kind: "commit" }, { id: "r2", kind: "pr" }];
     const miss = await started(reqs, "agent-c12a");
-    await expect(repo.completeWork(miss.id, "agent-c12a", miss.token, [ev({ requirementId: "r1", kind: "commit", ref: "a" })]))
+    await expect(repo.completeWork(miss.id, "agent-c12a", miss.token, [ev({ requirementId: "r1", kind: "commit", ref: "a" })], NO_FRICTION))
       .rejects.toThrow(/requirement 'r2'.*no bound evidence/);
     // atomic: the failed complete left the item in_progress with NO evidence stored.
     const after = await repo.getWorkItem(miss.id);
@@ -355,7 +358,7 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
     const done = await repo.completeWork(all.id, "agent-c12b", all.token, [
       ev({ requirementId: "r1", kind: "commit", ref: "a" }),
       ev({ requirementId: "r2", kind: "pr", ref: "b" }),
-    ]);
+    ], NO_FRICTION);
     expect(done!.status).toBe("done");
   }, OP_TIMEOUT);
 
@@ -369,7 +372,7 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
       const w = await repo.createWorkItem({ type: "task", roleEligibility: [] });
       const c = await repo.claimWorkItem(w.id, agent);
       await repo.startWork(w.id, agent, c!.lease!.token);
-      await repo.completeWork(w.id, agent, c!.lease!.token, [ev({ requirementId: "x", kind: "freeform" })]);
+      await repo.completeWork(w.id, agent, c!.lease!.token, [ev({ requirementId: "x", kind: "freeform" })], NO_FRICTION);
       return w.id;
     }
     /** create an arc (completionDependsOn) → claim → start; returns id + token. */
@@ -384,7 +387,7 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
       const notDone = (await repo.createWorkItem({ type: "task", roleEligibility: [] })).id;
       const arc = await startedArc([notDone], "agent-arc-a");
       let caught: unknown;
-      try { await repo.completeWork(arc.id, "agent-arc-a", arc.token, [ev({ requirementId: "x", kind: "freeform" })]); }
+      try { await repo.completeWork(arc.id, "agent-arc-a", arc.token, [ev({ requirementId: "x", kind: "freeform" })], NO_FRICTION); }
       catch (e) { caught = e; }
       expect(caught).toBeInstanceOf(CompletionGateRejected);
       expect(caught).toMatchObject({ done: 0, total: 1, pending: [notDone] });
@@ -399,7 +402,7 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
       const notDone = (await repo.createWorkItem({ type: "task", roleEligibility: [] })).id;
       const arc = await startedArc([done1, notDone], "agent-arc-b2");
       let caught: unknown;
-      try { await repo.completeWork(arc.id, "agent-arc-b2", arc.token, [ev({ requirementId: "x", kind: "freeform" })]); }
+      try { await repo.completeWork(arc.id, "agent-arc-b2", arc.token, [ev({ requirementId: "x", kind: "freeform" })], NO_FRICTION); }
       catch (e) { caught = e; }
       expect(caught).toBeInstanceOf(CompletionGateRejected);
       expect(caught).toMatchObject({ done: 1, total: 2, pending: [notDone] });
@@ -409,7 +412,7 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
       const c1 = await doneChild("agent-arc-c1");
       const c2 = await doneChild("agent-arc-c2");
       const arc = await startedArc([c1, c2], "agent-arc-c3");
-      const done = await repo.completeWork(arc.id, "agent-arc-c3", arc.token, [ev({ requirementId: "x", kind: "freeform" })]);
+      const done = await repo.completeWork(arc.id, "agent-arc-c3", arc.token, [ev({ requirementId: "x", kind: "freeform" })], NO_FRICTION);
       expect(done!.status).toBe("done");
     }, OP_TIMEOUT);
 
@@ -419,13 +422,13 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
       const c = await repo.claimWorkItem(w.id, "agent-arc-d");
       await repo.startWork(w.id, "agent-arc-d", c!.lease!.token);
       // Both the gate AND the (unsatisfied) evidence predicate would fail — assert it's the GATE.
-      await expect(repo.completeWork(w.id, "agent-arc-d", c!.lease!.token, []))
+      await expect(repo.completeWork(w.id, "agent-arc-d", c!.lease!.token, [], NO_FRICTION))
         .rejects.toThrow(/completion gate.*0\/1 downstream done/);
     }, OP_TIMEOUT);
 
     it("fail-closed: a VANISHED (never-existent) child blocks — it can never reach done", async () => {
       const arc = await startedArc(["work-ghost-99999"], "agent-arc-e");
-      await expect(repo.completeWork(arc.id, "agent-arc-e", arc.token, [ev({ requirementId: "x", kind: "freeform" })]))
+      await expect(repo.completeWork(arc.id, "agent-arc-e", arc.token, [ev({ requirementId: "x", kind: "freeform" })], NO_FRICTION))
         .rejects.toThrow(/completion gate.*work-ghost-99999/);
     }, OP_TIMEOUT);
 
@@ -435,13 +438,13 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
       await repo.abandonWork(w.id, "agent-arc-f", { leaseToken: c!.lease!.token });
       expect((await repo.getWorkItem(w.id))!.status).toBe("abandoned");
       const arc = await startedArc([w.id], "agent-arc-f2");
-      await expect(repo.completeWork(arc.id, "agent-arc-f2", arc.token, [ev({ requirementId: "x", kind: "freeform" })]))
+      await expect(repo.completeWork(arc.id, "agent-arc-f2", arc.token, [ev({ requirementId: "x", kind: "freeform" })], NO_FRICTION))
         .rejects.toThrow(/completion gate/);
     }, OP_TIMEOUT);
 
     it("leaf regression: an empty completionDependsOn node is unaffected — the gate is a no-op", async () => {
       const arc = await startedArc([], "agent-arc-g");
-      const done = await repo.completeWork(arc.id, "agent-arc-g", arc.token, [ev({ requirementId: "x", kind: "freeform" })]);
+      const done = await repo.completeWork(arc.id, "agent-arc-g", arc.token, [ev({ requirementId: "x", kind: "freeform" })], NO_FRICTION);
       expect(done!.status).toBe("done");
     }, OP_TIMEOUT);
 
@@ -511,7 +514,7 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
       const wRev = await repo.createWorkItem({ type: "task", roleEligibility: [], evidenceRequirements: [{ id: "code", kind: "commit" }, { id: "rev", kind: "review" }] });
       const rc = await repo.claimWorkItem(wRev.id, "agent-sp-rev");
       await repo.startWork(wRev.id, "agent-sp-rev", rc!.lease!.token);
-      await repo.completeWork(wRev.id, "agent-sp-rev", rc!.lease!.token, [ev({ requirementId: "code", kind: "commit", ref: "x" })]); // code satisfied, review unmet → parks in review
+      await repo.completeWork(wRev.id, "agent-sp-rev", rc!.lease!.token, [ev({ requirementId: "code", kind: "commit", ref: "x" })], NO_FRICTION); // code satisfied, review unmet → parks in review
       expect((await repo.getWorkItem(wRev.id))!.status).toBe("review");
 
       const arc = await repo.createWorkItem({ type: "task", roleEligibility: [], completionDependsOn: [wClaimed.id, wIp.id, wRev.id] });

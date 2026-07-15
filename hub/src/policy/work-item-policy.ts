@@ -258,14 +258,18 @@ async function completeWork(args: Record<string, unknown>, ctx: IPolicyContext):
   // complete can come from in_progress|review — pre-read for the event's from_status.
   const before = await store.getWorkItem(args.workId as string);
   try {
-    const w = await store.completeWork(args.workId as string, caller.agentId, args.leaseToken as string, evidence, frictionReflection);
-    if (!w) return notFound(args.workId as string);
-    await emitWorkTransition(ctx, { item: w, verb: "complete_work", fromStatus: before?.status ?? null, actor: caller });
+    const result = await store.completeWork(args.workId as string, caller.agentId, args.leaseToken as string, evidence, frictionReflection);
+    if (!result) return notFound(args.workId as string);
+    const w = result.workItem ?? result;
+    if (!result.completionBlocked) {
+      await emitWorkTransition(ctx, { item: w, verb: "complete_work", fromStatus: before?.status ?? null, actor: caller });
+    }
     // idea-357 pt-2 keystone: a →done may clear a dependent's LAST unmet dependency —
     // wake the eligible agents push-natively (the idea-353 digest stays as fallback).
-    if (w.status === "done") await emitDependencyUnblocks(ctx, w);
-    // 4b-ii: a successful complete (evidence attached → review|done) is demonstrated
-    // progress → reset the agent's claim-thrash counter (leaves quarantine to manual clear).
+    if (!result.completionBlocked && w.status === "done") await emitDependencyUnblocks(ctx, w);
+    // 4b-ii: a successful complete (evidence attached → review|done, or evidence-persisted
+    // friction-block) is demonstrated progress → reset the agent's claim-thrash counter
+    // (leaves quarantine to manual clear).
     const priorThrash = await ctx.stores.engineerRegistry.resetWorkItemThrash(caller.agentId);
     // audit-4133: audit a NON-NOOP reset (forensic symmetry with the quarantine SET + clear
     // paths; low-volume since most completes have thrashCount=0).
@@ -276,6 +280,9 @@ async function completeWork(args: Record<string, unknown>, ctx: IPolicyContext):
       } catch (auditErr) {
         console.warn(`[work-item-policy] thrash-reset audit write failed for ${caller.agentId}:`, auditErr);
       }
+    }
+    if (result.completionBlocked) {
+      return ok({ workItem: w, leaseToken: w.lease?.token ?? null, completionBlocked: result.completionBlocked, message: result.message });
     }
     return workItemResult(w);
   } catch (e) { return mapVerbError(e); }
@@ -1374,7 +1381,7 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "complete_work",
-    "[Any] Complete work ({in_progress|review} → review|done), gated by the anti-gameability evidence predicate (coverage-by-binding, kind-match, freshness, refResolvable, no-double-count, empty-req floor). A10 Phase 1 also captures an optional frictionReflection; missing legacy clients are accepted but marked compatibility=missing_legacy_client. Parks in `review` while a review requirement is unmet; reaches `done` once all are covered. Requires the lease-holder + matching leaseToken.",
+    "[Any] Complete work ({in_progress|review} → review|done), gated by the anti-gameability evidence predicate (coverage-by-binding, kind-match, freshness, refResolvable, no-double-count, empty-req floor). A10 requires an explicit frictionReflection for FSM advancement; observed=false is a valid no-friction answer. If frictionReflection is omitted but evidence is valid, evidence persists and the WorkItem remains in its current phase with completionBlocked='friction_reflection_required'. Parks in `review` while a review requirement is unmet; reaches `done` once all are covered. Requires the lease-holder + matching leaseToken.",
     { workId: z.string(), leaseToken: z.string(), evidence: z.array(evidenceItemSchema).describe("Supplied evidence, bound to requirements by requirementId"), frictionReflection: frictionReflectionSchema.optional().describe("A10 friction reflection for this completion; observed=false is a valid explicit answer") },
     completeWork,
   );

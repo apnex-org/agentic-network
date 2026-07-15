@@ -1,3 +1,6 @@
+
+const NO_FRICTION = { observed: false, summary: "no friction observed" } as const;
+
 /**
  * C1-R2 (mission-94) sub-PR-3a — WorkItem claim/lease/FSM verb tests (real-pg).
  *
@@ -132,7 +135,7 @@ describe("WorkItem verbs (real-pg: claim / lease / FSM)", () => {
     await expect(repo.blockWork(w.id, agent, token, BLOCK)).rejects.toThrow(TransitionRejected); // not in_progress
     await expect(repo.startWork(w.id, "intruder", token)).rejects.toThrow(TransitionRejected);   // non-holder
     await expect(repo.startWork(w.id, agent, "stale-token")).rejects.toThrow(TransitionRejected); // stale token
-    await expect(repo.completeWork(w.id, agent, token, [])).rejects.toThrow(TransitionRejected);  // not completable
+    await expect(repo.completeWork(w.id, agent, token, [], NO_FRICTION)).rejects.toThrow(TransitionRejected);  // not completable
     const after = await repo.getWorkItem(w.id);
     expect(after).toEqual(before); // byte-identical after every rejected verb — nothing wrote
   }, OP_TIMEOUT);

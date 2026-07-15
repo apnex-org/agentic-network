@@ -88,7 +88,7 @@ export const SPEC: Record<Phase, Record<SpecVerb, Move>> = {
   }),
   in_progress: row({
     block_work: { legal: true, to: "blocked" },
-    complete_work: { legal: true, to: "gate", note: "review|done per completion-gate + evidence" },
+    complete_work: { legal: true, to: "gate", note: "review|done per completion-gate + evidence + explicit frictionReflection; missing friction persists valid evidence but stays same" },
     release_work: { legal: true, to: "ready" },
     abandon_work: { legal: true, to: "abandoned" },
     renew_lease: { legal: true, to: "same" },
@@ -103,7 +103,7 @@ export const SPEC: Record<Phase, Record<SpecVerb, Move>> = {
     unpause_work: { legal: true, to: "ready" },
   }),
   review: row({
-    complete_work: { legal: true, to: "gate", note: "→done once the gate is satisfied" },
+    complete_work: { legal: true, to: "gate", note: "→done once the gate is satisfied and explicit frictionReflection is present; missing friction persists valid evidence but stays same" },
     attest_evidence: { legal: true, to: "done", note: "verifier dual-edge advances review→done" },
     renew_lease: { legal: true, to: "same" },
   }),

@@ -282,6 +282,12 @@ export interface FrictionReflectionRecord {
   compatibility: "explicit" | "missing_legacy_client";
 }
 
+export interface CompleteWorkResult extends WorkItem {
+  workItem: WorkItem;
+  completionBlocked?: "friction_reflection_required";
+  message?: string;
+}
+
 /** The claim lease (status). Cohesive object; `holder`/`expiresAt` are the hot
  *  filterable sub-fields (queried via the bucket-prefixed dotted path).
  *
@@ -664,8 +670,10 @@ export interface IWorkItemStore {
    *  validates the anti-gameability predicate (coverage-by-binding + kind-match +
    *  freshness + refResolvable + no-double-count + empty-req floor). Throws
    *  EvidencePredicateFailed (fail-loud, specific reason) on any unmet condition; the
-   *  row is unchanged. Parks in `review` when a review requirement is present + unmet;
+   *  row is unchanged. If frictionReflection is omitted, valid evidence persists but the
+   *  phase does NOT advance and completionBlocked=friction_reflection_required is returned.
+   *  With explicit friction: parks in `review` when a review requirement is present + unmet;
    *  reaches `done` once all requirements are covered. NEVER requires a passing verdict
    *  (review evidence satisfies by EXISTING). Holder + matching token. */
-  completeWork(workId: string, agentId: string, leaseToken: string, evidence: EvidenceItem[], frictionReflection?: FrictionReflectionInput): Promise<WorkItem | null>;
+  completeWork(workId: string, agentId: string, leaseToken: string, evidence: EvidenceItem[], frictionReflection?: FrictionReflectionInput): Promise<CompleteWorkResult | null>;
 }

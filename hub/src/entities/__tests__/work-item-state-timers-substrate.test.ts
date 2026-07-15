@@ -1,3 +1,6 @@
+
+const NO_FRICTION = { observed: false, summary: "no friction observed" } as const;
+
 /**
  * work-98 (idea-384 Part A) — per-FSM-state wall-clock timers (real-pg + pure-unit).
  *
@@ -152,7 +155,7 @@ describe("WorkItem state-timers (real-pg)", () => {
     const tok = await claimStart(w.id);
     await sleep(GAP);
     const code: EvidenceItem = { requirementId: "code", kind: "commit", ref: "abc123", producedAt: new Date().toISOString() };
-    const parked = await repo.completeWork(w.id, agentOf(w.id), tok, [code]);
+    const parked = await repo.completeWork(w.id, agentOf(w.id), tok, [code], NO_FRICTION);
     expect(parked!.status).toBe("review");
     expect(parked!.stateDurations.in_progress).toBeGreaterThanOrEqual(FLOOR);
   }, OP_TIMEOUT);
@@ -192,7 +195,7 @@ describe("WorkItem state-timers (real-pg)", () => {
     const w = await mk({ evidenceRequirements: reqs });
     const tok = await claimStart(w.id);
     const code: EvidenceItem = { requirementId: "code", kind: "commit", ref: "abc123", producedAt: new Date().toISOString() };
-    const parked = await repo.completeWork(w.id, agentOf(w.id), tok, [code]);
+    const parked = await repo.completeWork(w.id, agentOf(w.id), tok, [code], NO_FRICTION);
     expect(parked!.status).toBe("review");
     const nowISO = farFuture(parked!, 1_800_000); // 30m past expiry
     expect(await repo.expireLease(w.id, nowISO, 5)).toBe("requeued"); // review re-queues, no poison
@@ -221,7 +224,7 @@ describe("WorkItem state-timers (real-pg)", () => {
     await repo.startWork(w.id, agentOf(w.id), c!.lease!.token);
     await sleep(GAP);
     const freeform: EvidenceItem = { requirementId: "none", kind: "freeform", producedAt: new Date().toISOString(), note: "lifecycle done" };
-    const done = await repo.completeWork(w.id, agentOf(w.id), c!.lease!.token, [freeform]); // no reqs → straight to done (empty-req floor needs 1 freeform)
+    const done = await repo.completeWork(w.id, agentOf(w.id), c!.lease!.token, [freeform], NO_FRICTION); // no reqs → straight to done (empty-req floor needs 1 freeform)
     expect(done!.status).toBe("done");
     const sum = done!.stateDurations.ready + done!.stateDurations.claimed + done!.stateDurations.in_progress + done!.stateDurations.blocked + done!.stateDurations.review;
     const wallClock = Date.parse(done!.updatedAt) - Date.parse(done!.createdAt);
@@ -245,11 +248,11 @@ describe("WorkItem state-timers (real-pg)", () => {
     await repo.startWork(w.id, a, c!.lease!.token);
     await sleep(GAP);
     const parked = await repo.completeWork(w.id, a, c!.lease!.token,
-      [{ requirementId: "code", kind: "commit", ref: "abc", producedAt: new Date().toISOString() }]); // → review (in_progress accrues)
+      [{ requirementId: "code", kind: "commit", ref: "abc", producedAt: new Date().toISOString() }], NO_FRICTION); // → review (in_progress accrues)
     expect(parked!.status).toBe("review");
     await sleep(GAP);
     const done = await repo.completeWork(w.id, a, c!.lease!.token,
-      [{ requirementId: "rev", kind: "review", ref: "note", producedBy: "verifier-gap1", producedAt: new Date().toISOString() }]); // review→done (review accrues)
+      [{ requirementId: "rev", kind: "review", ref: "note", producedBy: "verifier-gap1", producedAt: new Date().toISOString() }], NO_FRICTION); // review→done (review accrues)
     expect(done!.status).toBe("done");
     expect(done!.stateDurations.review).toBeGreaterThan(0); // the verifier-wait dwell was captured
     expect(sumB(done!.stateDurations)).toBe(Date.parse(done!.updatedAt) - Date.parse(done!.createdAt));
@@ -274,7 +277,7 @@ describe("WorkItem state-timers (real-pg)", () => {
     await repo.startWork(w.id, a, c2!.lease!.token);
     await sleep(GAP);
     const done = await repo.completeWork(w.id, a, c2!.lease!.token,
-      [{ requirementId: "none", kind: "freeform", producedAt: new Date().toISOString(), note: "done" }]);
+      [{ requirementId: "none", kind: "freeform", producedAt: new Date().toISOString(), note: "done" }], NO_FRICTION);
     expect(done!.status).toBe("done");
     expect(done!.stateDurations.ready).toBeGreaterThanOrEqual(2 * FLOOR); // two ready stints summed
     expect(sumB(done!.stateDurations)).toBe(Date.parse(done!.updatedAt) - Date.parse(done!.createdAt));
