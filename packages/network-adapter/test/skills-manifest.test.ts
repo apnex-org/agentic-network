@@ -13,28 +13,30 @@ import {
 // mirrors ois/manifests/skill-sync/wanted-bundles.yaml (comments + blank line + inline []).
 const REAL = `# wanted-bundles.yaml — claude/ois skill-sync manifest.
 source_repo: https://github.com/apnex/mission-kit.git
-source_ref: a93e71114b7e21e6bf6bac25b227537ca78817b9
+source_ref: 9b032949aa6e6991ae910a35f6d74226eba04309
 
 bundles: []
 
 extra_skills:
-  - survey
-  - substrate-audit
-  - research-artefacts
   - arc-lifecycle
+  - survey
+  - workgraph-arc-closeout
+  - workgraph-arc-operator
+  - workgraph-arc-participant
 `;
 
 describe("parseWantedBundles", () => {
   it("parses the real manifest shape (scalars, empty inline list, block list, comments)", () => {
     const m = parseWantedBundles(REAL);
     expect(m.sourceRepo).toBe("https://github.com/apnex/mission-kit.git");
-    expect(m.sourceRef).toBe("a93e71114b7e21e6bf6bac25b227537ca78817b9");
+    expect(m.sourceRef).toBe("9b032949aa6e6991ae910a35f6d74226eba04309");
     expect(m.bundles).toEqual([]);
     expect(m.extraSkills).toEqual([
-      "survey",
-      "substrate-audit",
-      "research-artefacts",
       "arc-lifecycle",
+      "survey",
+      "workgraph-arc-closeout",
+      "workgraph-arc-operator",
+      "workgraph-arc-participant",
     ]);
   });
 
@@ -72,9 +74,10 @@ describe("expandWantedBundles — mechanical bundle-expand", () => {
     });
     expect(got).toEqual([
       "arc-lifecycle",
-      "research-artefacts",
-      "substrate-audit",
       "survey",
+      "workgraph-arc-closeout",
+      "workgraph-arc-operator",
+      "workgraph-arc-participant",
     ]);
   });
 });
