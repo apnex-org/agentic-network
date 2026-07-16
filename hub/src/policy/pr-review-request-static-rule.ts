@@ -1,17 +1,21 @@
 import {
+  PR_REVIEW_REQUEST_REMOVED_EVENT_TYPE,
   PR_REVIEW_REQUEST_RULE_ID,
   PR_REVIEW_REQUESTED_EVENT_TYPE,
   evaluatePrReviewBinding,
+  evaluatePrReviewRemovalPolicy,
+  evaluatePrReviewTargetPhase,
   type BoundWorkProjection,
   type NormalizedPrReviewRequestEvent,
   type PrReviewBindingDecision,
+  type PrReviewGraphPhaseDecision,
+  type PrReviewRemovalPolicyDecision,
   type PrWorkGraphBindingProof,
   type ReviewerResolutionProof,
 } from "./pr-review-workitem-event-contract.js";
 
 export type PrReviewRequestRuleAction =
-  | "materialize_review_obligation"
-  | "fallback_candidate_note";
+  "materialize_review_obligation" | "fallback_candidate_note";
 
 export interface PrReviewObligationDraft {
   type: "review";
@@ -46,6 +50,8 @@ export interface PrReviewRequestRuleResult {
   eventIdempotencyKey: string;
   action: PrReviewRequestRuleAction;
   bindingDecision: PrReviewBindingDecision;
+  phaseDecision: PrReviewGraphPhaseDecision;
+  removalDecision?: PrReviewRemovalPolicyDecision;
   obligationDraft?: PrReviewObligationDraft;
   fallback: {
     reason: string;
@@ -87,7 +93,8 @@ function buildObligationDraft(
       {
         id: "github_review",
         kind: "review",
-        description: "GitHub review URL/id or equivalent explicit reviewer evidence for the bound PR.",
+        description:
+          "GitHub review URL/id or equivalent explicit reviewer evidence for the bound PR.",
       },
     ],
   };
@@ -98,7 +105,15 @@ export function evaluatePrReviewRequestRule(args: {
   binding?: PrWorkGraphBindingProof | null;
   target?: BoundWorkProjection | null;
   reviewer: ReviewerResolutionProof;
+  existingObligation?: BoundWorkProjection | null;
 }): PrReviewRequestRuleResult {
+  const phaseDecision = evaluatePrReviewTargetPhase(args.target);
+  const removalDecision =
+    args.event.type === PR_REVIEW_REQUEST_REMOVED_EVENT_TYPE
+      ? evaluatePrReviewRemovalPolicy({
+          existingObligation: args.existingObligation,
+        })
+      : undefined;
   const bindingDecision = evaluatePrReviewBinding(args);
   if (!bindingDecision.ok) {
     return {
@@ -107,6 +122,8 @@ export function evaluatePrReviewRequestRule(args: {
       eventIdempotencyKey: args.event.idempotencyKey,
       action: "fallback_candidate_note",
       bindingDecision,
+      phaseDecision,
+      removalDecision,
       fallback: {
         reason: bindingDecision.reason,
         sourceMessageId: args.event.sourceMessageId,
@@ -121,6 +138,8 @@ export function evaluatePrReviewRequestRule(args: {
     eventIdempotencyKey: args.event.idempotencyKey,
     action: "materialize_review_obligation",
     bindingDecision,
+    phaseDecision,
+    removalDecision,
     obligationDraft: buildObligationDraft(args.event, bindingDecision),
     fallback: {
       reason: "not_applicable",

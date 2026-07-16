@@ -2,14 +2,15 @@ import { createHash } from "node:crypto";
 import type { WorkItemPhase } from "../entities/work-item.js";
 import type { AgentRole } from "../state.js";
 
-export const PR_REVIEW_REQUESTED_EVENT_TYPE = "github.pull_request.review_requested" as const;
+export const PR_REVIEW_REQUESTED_EVENT_TYPE =
+  "github.pull_request.review_requested" as const;
 export const PR_REVIEW_REQUEST_REMOVED_EVENT_TYPE =
   "github.pull_request.review_request_removed" as const;
-export const PR_REVIEW_REQUEST_RULE_ID = "pr_review_request_to_workitem_v0" as const;
+export const PR_REVIEW_REQUEST_RULE_ID =
+  "pr_review_request_to_workitem_v0" as const;
 
 export type PrReviewRequestLegacySubkind =
-  | "pr-review-requested"
-  | "pr-review-request-removed";
+  "pr-review-requested" | "pr-review-request-removed";
 
 export type PrReviewRequestEventType =
   | typeof PR_REVIEW_REQUESTED_EVENT_TYPE
@@ -109,7 +110,40 @@ export type PrReviewBindingDecision =
       fallbackOnly: true;
     };
 
+export type PrReviewGraphPhaseDecision =
+  | {
+      ok: true;
+      targetPhase: "ready";
+      graphAction: "project_review_obligation";
+    }
+  | {
+      ok: false;
+      reason: "target_missing" | "target_phase_unsafe";
+      targetPhase?: WorkItemPhase;
+      fallbackOnly: true;
+      mutatesGraph: false;
+    };
+
+export type PrReviewRemovalPolicyDecision = {
+  action:
+    | "fallback_candidate_note"
+    | "record_cancellation_metadata"
+    | "historical_cancellation_note";
+  reason:
+    | "removal_without_existing_obligation"
+    | "removal_records_metadata_only"
+    | "removal_after_terminal_obligation";
+  targetPhase?: WorkItemPhase;
+  /** Removal is cancellation metadata only: it never means review approval. */
+  completesReview: false;
+  /** Removal must never ungate implementation work. */
+  ungatesWork: false;
+  /** v0 never terminal-mutates review WorkItems from removal alone. */
+  terminalMutationAllowed: false;
+};
+
 const SAFE_START_GATE_PHASES: readonly WorkItemPhase[] = ["ready"];
+const TERMINAL_PHASES: readonly WorkItemPhase[] = ["done", "abandoned"];
 
 function nonEmpty(value: string | undefined): string {
   return value ?? "";
@@ -120,7 +154,8 @@ function sha256(input: string): string {
 }
 
 function reviewerKey(input: PrReviewRequestEventInput): string {
-  if (input.requestedReviewerLogin) return `user:${input.requestedReviewerLogin}`;
+  if (input.requestedReviewerLogin)
+    return `user:${input.requestedReviewerLogin}`;
   if (input.requestedTeamSlug) return `team:${input.requestedTeamSlug}`;
   if (input.requestedTeamName) return `team-name:${input.requestedTeamName}`;
   return "target:missing";
@@ -134,7 +169,9 @@ export function eventTypeForLegacySubkind(
     : PR_REVIEW_REQUESTED_EVENT_TYPE;
 }
 
-export function buildPrReviewEventIdempotencyKey(input: PrReviewRequestEventInput): string {
+export function buildPrReviewEventIdempotencyKey(
+  input: PrReviewRequestEventInput,
+): string {
   return sha256(
     [
       "pr-review-event-v0",
@@ -192,6 +229,66 @@ export function buildPrReviewProjectionKey(args: {
   );
 }
 
+export function evaluatePrReviewTargetPhase(
+  target?: BoundWorkProjection | null,
+): PrReviewGraphPhaseDecision {
+  if (!target) {
+    return {
+      ok: false,
+      reason: "target_missing",
+      fallbackOnly: true,
+      mutatesGraph: false,
+    };
+  }
+  if (SAFE_START_GATE_PHASES.includes(target.status)) {
+    return {
+      ok: true,
+      targetPhase: "ready",
+      graphAction: "project_review_obligation",
+    };
+  }
+  return {
+    ok: false,
+    reason: "target_phase_unsafe",
+    targetPhase: target.status,
+    fallbackOnly: true,
+    mutatesGraph: false,
+  };
+}
+
+export function evaluatePrReviewRemovalPolicy(args: {
+  existingObligation?: BoundWorkProjection | null;
+}): PrReviewRemovalPolicyDecision {
+  const obligation = args.existingObligation;
+  if (!obligation) {
+    return {
+      action: "fallback_candidate_note",
+      reason: "removal_without_existing_obligation",
+      completesReview: false,
+      ungatesWork: false,
+      terminalMutationAllowed: false,
+    };
+  }
+  if (TERMINAL_PHASES.includes(obligation.status)) {
+    return {
+      action: "historical_cancellation_note",
+      reason: "removal_after_terminal_obligation",
+      targetPhase: obligation.status,
+      completesReview: false,
+      ungatesWork: false,
+      terminalMutationAllowed: false,
+    };
+  }
+  return {
+    action: "record_cancellation_metadata",
+    reason: "removal_records_metadata_only",
+    targetPhase: obligation.status,
+    completesReview: false,
+    ungatesWork: false,
+    terminalMutationAllowed: false,
+  };
+}
+
 export function evaluatePrReviewBinding(args: {
   event: NormalizedPrReviewRequestEvent;
   binding?: PrWorkGraphBindingProof | null;
@@ -200,40 +297,105 @@ export function evaluatePrReviewBinding(args: {
 }): PrReviewBindingDecision {
   const { event, binding, target, reviewer } = args;
   if (event.type === PR_REVIEW_REQUEST_REMOVED_EVENT_TYPE) {
-    return { ok: false, ruleId: PR_REVIEW_REQUEST_RULE_ID, reason: "removal_is_cancellation_only", fallbackOnly: true };
+    return {
+      ok: false,
+      ruleId: PR_REVIEW_REQUEST_RULE_ID,
+      reason: "removal_is_cancellation_only",
+      fallbackOnly: true,
+    };
   }
   if (!binding) {
-    return { ok: false, ruleId: PR_REVIEW_REQUEST_RULE_ID, reason: "binding_missing", fallbackOnly: true };
+    return {
+      ok: false,
+      ruleId: PR_REVIEW_REQUEST_RULE_ID,
+      reason: "binding_missing",
+      fallbackOnly: true,
+    };
   }
   if (binding.provenance !== "hub") {
-    return { ok: false, ruleId: PR_REVIEW_REQUEST_RULE_ID, reason: "binding_not_hub_authored", fallbackOnly: true };
+    return {
+      ok: false,
+      ruleId: PR_REVIEW_REQUEST_RULE_ID,
+      reason: "binding_not_hub_authored",
+      fallbackOnly: true,
+    };
   }
   if (binding.repo !== event.payload.repo) {
-    return { ok: false, ruleId: PR_REVIEW_REQUEST_RULE_ID, reason: "binding_repo_mismatch", fallbackOnly: true };
+    return {
+      ok: false,
+      ruleId: PR_REVIEW_REQUEST_RULE_ID,
+      reason: "binding_repo_mismatch",
+      fallbackOnly: true,
+    };
   }
   if (binding.prNumber !== event.payload.prNumber) {
-    return { ok: false, ruleId: PR_REVIEW_REQUEST_RULE_ID, reason: "binding_pr_mismatch", fallbackOnly: true };
+    return {
+      ok: false,
+      ruleId: PR_REVIEW_REQUEST_RULE_ID,
+      reason: "binding_pr_mismatch",
+      fallbackOnly: true,
+    };
   }
-  if (!target) {
-    return { ok: false, ruleId: PR_REVIEW_REQUEST_RULE_ID, reason: "target_missing", fallbackOnly: true };
+  const phaseDecision = evaluatePrReviewTargetPhase(target);
+  if (!phaseDecision.ok) {
+    return {
+      ok: false,
+      ruleId: PR_REVIEW_REQUEST_RULE_ID,
+      reason: phaseDecision.reason,
+      fallbackOnly: true,
+    };
   }
-  if (target.id !== binding.targetWorkId) {
-    return { ok: false, ruleId: PR_REVIEW_REQUEST_RULE_ID, reason: "binding_target_mismatch", fallbackOnly: true };
+  if (target!.id !== binding.targetWorkId) {
+    return {
+      ok: false,
+      ruleId: PR_REVIEW_REQUEST_RULE_ID,
+      reason: "binding_target_mismatch",
+      fallbackOnly: true,
+    };
   }
-  if (!SAFE_START_GATE_PHASES.includes(target.status)) {
-    return { ok: false, ruleId: PR_REVIEW_REQUEST_RULE_ID, reason: "target_phase_unsafe", fallbackOnly: true };
+  if (
+    binding.headSha &&
+    event.payload.headSha &&
+    binding.headSha !== event.payload.headSha
+  ) {
+    return {
+      ok: false,
+      ruleId: PR_REVIEW_REQUEST_RULE_ID,
+      reason: "binding_head_mismatch",
+      fallbackOnly: true,
+    };
   }
-  if (binding.headSha && event.payload.headSha && binding.headSha !== event.payload.headSha) {
-    return { ok: false, ruleId: PR_REVIEW_REQUEST_RULE_ID, reason: "binding_head_mismatch", fallbackOnly: true };
+  if (
+    binding.baseSha &&
+    event.payload.baseSha &&
+    binding.baseSha !== event.payload.baseSha
+  ) {
+    return {
+      ok: false,
+      ruleId: PR_REVIEW_REQUEST_RULE_ID,
+      reason: "binding_base_mismatch",
+      fallbackOnly: true,
+    };
   }
-  if (binding.baseSha && event.payload.baseSha && binding.baseSha !== event.payload.baseSha) {
-    return { ok: false, ruleId: PR_REVIEW_REQUEST_RULE_ID, reason: "binding_base_mismatch", fallbackOnly: true };
-  }
-  if (event.payload.requestedTeamSlug || event.payload.requestedTeamName || reviewer.status === "team") {
-    return { ok: false, ruleId: PR_REVIEW_REQUEST_RULE_ID, reason: "team_request_requires_resolver", fallbackOnly: true };
+  if (
+    event.payload.requestedTeamSlug ||
+    event.payload.requestedTeamName ||
+    reviewer.status === "team"
+  ) {
+    return {
+      ok: false,
+      ruleId: PR_REVIEW_REQUEST_RULE_ID,
+      reason: "team_request_requires_resolver",
+      fallbackOnly: true,
+    };
   }
   if (reviewer.status !== "unique" || !reviewer.agentId || !reviewer.role) {
-    return { ok: false, ruleId: PR_REVIEW_REQUEST_RULE_ID, reason: "reviewer_not_unique", fallbackOnly: true };
+    return {
+      ok: false,
+      ruleId: PR_REVIEW_REQUEST_RULE_ID,
+      reason: "reviewer_not_unique",
+      fallbackOnly: true,
+    };
   }
   return {
     ok: true,
@@ -242,6 +404,10 @@ export function evaluatePrReviewBinding(args: {
     targetWorkId: binding.targetWorkId,
     reviewerAgentId: reviewer.agentId,
     reviewerRole: reviewer.role,
-    projectionKey: buildPrReviewProjectionKey({ event, binding, reviewerAgentId: reviewer.agentId }),
+    projectionKey: buildPrReviewProjectionKey({
+      event,
+      binding,
+      reviewerAgentId: reviewer.agentId,
+    }),
   };
 }
