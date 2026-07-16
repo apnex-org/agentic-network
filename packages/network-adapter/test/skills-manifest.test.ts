@@ -10,34 +10,32 @@ import {
   expandWantedBundles,
 } from "../src/skills/index.js";
 
-// mirrors ois/manifests/skill-sync/wanted-bundles.yaml (comments + blank line + inline []).
+// mirrors ois/manifests/skill-sync/wanted-bundles.yaml (comments + block bundle + inline []).
 const REAL = `# wanted-bundles.yaml — claude/ois skill-sync manifest.
 source_repo: https://github.com/apnex/mission-kit.git
-source_ref: 9b032949aa6e6991ae910a35f6d74226eba04309
+source_ref: ed67e9946bb12500948a1e23e07eb5a0d65ac2b0
 
-bundles: []
+bundles:
+  - workgraph-arc
 
-extra_skills:
-  - arc-lifecycle
-  - survey
-  - workgraph-arc-closeout
-  - workgraph-arc-operator
-  - workgraph-arc-participant
+extra_skills: []
 `;
 
+const WORKGRAPH_ARC_SKILLS = [
+  "arc-lifecycle",
+  "survey",
+  "workgraph-arc-closeout",
+  "workgraph-arc-operator",
+  "workgraph-arc-participant",
+];
+
 describe("parseWantedBundles", () => {
-  it("parses the real manifest shape (scalars, empty inline list, block list, comments)", () => {
+  it("parses the real manifest shape (scalars, block bundle list, inline empty extra_skills, comments)", () => {
     const m = parseWantedBundles(REAL);
     expect(m.sourceRepo).toBe("https://github.com/apnex/mission-kit.git");
-    expect(m.sourceRef).toBe("9b032949aa6e6991ae910a35f6d74226eba04309");
-    expect(m.bundles).toEqual([]);
-    expect(m.extraSkills).toEqual([
-      "arc-lifecycle",
-      "survey",
-      "workgraph-arc-closeout",
-      "workgraph-arc-operator",
-      "workgraph-arc-participant",
-    ]);
+    expect(m.sourceRef).toBe("ed67e9946bb12500948a1e23e07eb5a0d65ac2b0");
+    expect(m.bundles).toEqual(["workgraph-arc"]);
+    expect(m.extraSkills).toEqual([]);
   });
 
   it("parses a non-empty bundles block list", () => {
@@ -67,17 +65,15 @@ describe("expandWantedBundles — mechanical bundle-expand", () => {
     expect(got).toEqual(["c", "d", "x"]);
   });
 
-  it("extra_skills only when bundles is empty (the slice-1 manifest)", () => {
+  it("expands the real manifest through the workgraph-arc bundle", () => {
     const m = parseWantedBundles(REAL);
-    const got = expandWantedBundles(m, () => {
-      throw new Error("no bundle should be read");
+    const got = expandWantedBundles(m, (bundle) => {
+      expect(bundle).toBe("workgraph-arc");
+      return WORKGRAPH_ARC_SKILLS;
     });
-    expect(got).toEqual([
-      "arc-lifecycle",
-      "survey",
-      "workgraph-arc-closeout",
-      "workgraph-arc-operator",
-      "workgraph-arc-participant",
-    ]);
+    expect(got).toEqual(WORKGRAPH_ARC_SKILLS.slice().sort());
+    expect(got).toContain("workgraph-arc-participant");
+    expect(got).toContain("workgraph-arc-operator");
+    expect(got).toContain("workgraph-arc-closeout");
   });
 });
