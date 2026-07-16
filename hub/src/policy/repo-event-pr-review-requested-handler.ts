@@ -5,11 +5,11 @@ import type { MessageDispatch, RepoEventHandler } from "./repo-event-handlers.js
 import { resolveGhLoginAgent } from "./repo-event-author-lookup.js";
 import { extractRefField, isRecord } from "./repo-event-pr-handler-helpers.js";
 import {
-  evaluatePrReviewBinding,
   normalizePrReviewRequestEvent,
   type PrReviewRequestLegacySubkind,
   type ReviewerResolutionProof,
 } from "./pr-review-workitem-event-contract.js";
+import { evaluatePrReviewRequestRule } from "./pr-review-request-static-rule.js";
 
 interface PrReviewRequestPayload {
   repo: string;
@@ -152,7 +152,7 @@ function buildDispatch(
     headRef: payload.head?.ref,
     headSha: payload.head?.sha,
   });
-  const bindingDecision = evaluatePrReviewBinding({
+  const ruleDecision = evaluatePrReviewRequestRule({
     event: normalizedEvent,
     binding: null,
     target: null,
@@ -188,7 +188,8 @@ function buildDispatch(
       normalizedEventType: normalizedEvent.type,
       normalizedEventIdempotencyKey: normalizedEvent.idempotencyKey,
       ruleId: normalizedEvent.ruleId,
-      bindingDecision,
+      bindingDecision: ruleDecision.bindingDecision,
+      ruleDecision,
     },
   };
 }

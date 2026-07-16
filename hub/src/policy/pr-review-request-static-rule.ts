@@ -1,0 +1,129 @@
+import {
+  PR_REVIEW_REQUEST_RULE_ID,
+  PR_REVIEW_REQUESTED_EVENT_TYPE,
+  evaluatePrReviewBinding,
+  type BoundWorkProjection,
+  type NormalizedPrReviewRequestEvent,
+  type PrReviewBindingDecision,
+  type PrWorkGraphBindingProof,
+  type ReviewerResolutionProof,
+} from "./pr-review-workitem-event-contract.js";
+
+export type PrReviewRequestRuleAction =
+  | "materialize_review_obligation"
+  | "fallback_candidate_note";
+
+export interface PrReviewObligationDraft {
+  type: "review";
+  priority: "normal";
+  roleEligibility: string[];
+  targetRef: { kind: "pull_request"; id: string };
+  payload: {
+    ruleId: typeof PR_REVIEW_REQUEST_RULE_ID;
+    eventType: typeof PR_REVIEW_REQUESTED_EVENT_TYPE;
+    eventIdempotencyKey: string;
+    sourceMessageId: string;
+    bindingId: string;
+    boundTargetWorkId: string;
+    repo: string;
+    prNumber: number;
+    prUrl: string;
+    requestedReviewerLogin: string;
+    reviewerAgentId: string;
+  };
+  runbook: string;
+  evidenceRequirements: Array<{
+    id: "github_review";
+    kind: "review";
+    description: string;
+  }>;
+}
+
+export interface PrReviewRequestRuleResult {
+  ruleId: typeof PR_REVIEW_REQUEST_RULE_ID;
+  eventType: NormalizedPrReviewRequestEvent["type"];
+  eventIdempotencyKey: string;
+  action: PrReviewRequestRuleAction;
+  bindingDecision: PrReviewBindingDecision;
+  obligationDraft?: PrReviewObligationDraft;
+  fallback: {
+    reason: string;
+    sourceMessageId: string;
+    rawDrilldownRequired: true;
+  };
+}
+
+function prLocator(event: NormalizedPrReviewRequestEvent): string {
+  return `${event.payload.repo}#${event.payload.prNumber}`;
+}
+
+function buildObligationDraft(
+  event: NormalizedPrReviewRequestEvent,
+  decision: Extract<PrReviewBindingDecision, { ok: true }>,
+): PrReviewObligationDraft {
+  return {
+    type: "review",
+    priority: "normal",
+    roleEligibility: [decision.reviewerRole],
+    targetRef: { kind: "pull_request", id: prLocator(event) },
+    payload: {
+      ruleId: PR_REVIEW_REQUEST_RULE_ID,
+      eventType: PR_REVIEW_REQUESTED_EVENT_TYPE,
+      eventIdempotencyKey: event.idempotencyKey,
+      sourceMessageId: event.sourceMessageId,
+      bindingId: decision.bindingId,
+      boundTargetWorkId: decision.targetWorkId,
+      repo: event.payload.repo,
+      prNumber: event.payload.prNumber,
+      prUrl: event.payload.url,
+      requestedReviewerLogin: event.payload.requestedReviewerLogin,
+      reviewerAgentId: decision.reviewerAgentId,
+    },
+    runbook:
+      "Review the bound PR. Complete with explicit GitHub review evidence. Do not merge or enqueue unless separately authorized.",
+    evidenceRequirements: [
+      {
+        id: "github_review",
+        kind: "review",
+        description: "GitHub review URL/id or equivalent explicit reviewer evidence for the bound PR.",
+      },
+    ],
+  };
+}
+
+export function evaluatePrReviewRequestRule(args: {
+  event: NormalizedPrReviewRequestEvent;
+  binding?: PrWorkGraphBindingProof | null;
+  target?: BoundWorkProjection | null;
+  reviewer: ReviewerResolutionProof;
+}): PrReviewRequestRuleResult {
+  const bindingDecision = evaluatePrReviewBinding(args);
+  if (!bindingDecision.ok) {
+    return {
+      ruleId: PR_REVIEW_REQUEST_RULE_ID,
+      eventType: args.event.type,
+      eventIdempotencyKey: args.event.idempotencyKey,
+      action: "fallback_candidate_note",
+      bindingDecision,
+      fallback: {
+        reason: bindingDecision.reason,
+        sourceMessageId: args.event.sourceMessageId,
+        rawDrilldownRequired: true,
+      },
+    };
+  }
+
+  return {
+    ruleId: PR_REVIEW_REQUEST_RULE_ID,
+    eventType: args.event.type,
+    eventIdempotencyKey: args.event.idempotencyKey,
+    action: "materialize_review_obligation",
+    bindingDecision,
+    obligationDraft: buildObligationDraft(args.event, bindingDecision),
+    fallback: {
+      reason: "not_applicable",
+      sourceMessageId: args.event.sourceMessageId,
+      rawDrilldownRequired: true,
+    },
+  };
+}
