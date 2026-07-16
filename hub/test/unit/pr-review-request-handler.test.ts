@@ -120,6 +120,10 @@ describe("PR review request handler", () => {
     expect(payload.routingReason).toBe("requested_reviewer_unique");
     expect(payload.targetAgentId).toBe("agent-lily");
     expect(payload.sourceMessageId).toBe("01PRREVIEWREQUEST");
+    expect(payload.normalizedEventType).toBe("github.pull_request.review_requested");
+    expect(payload.ruleId).toBe("pr_review_request_to_workitem_v0");
+    expect(payload.normalizedEventIdempotencyKey).toMatch(/^[a-f0-9]{64}$/);
+    expect(payload.bindingDecision).toMatchObject({ ok: false, reason: "binding_missing", fallbackOnly: true });
     expect(payload.requestedReviewerLogin).toBe("apnex-lily");
     expect(payload.prNumber).toBe(624);
   });
@@ -188,6 +192,8 @@ describe("PR review request handler", () => {
     const payload = out[0].payload as Record<string, unknown>;
     expect(payload.reviewRequestAction).toBe("review_request_removed");
     expect(payload.subkind).toBe("pr-review-request-removed");
+    expect(payload.normalizedEventType).toBe("github.pull_request.review_request_removed");
+    expect(payload.bindingDecision).toMatchObject({ ok: false, reason: "removal_is_cancellation_only" });
     expect(String(payload.body)).toContain("review request removed");
   });
 });

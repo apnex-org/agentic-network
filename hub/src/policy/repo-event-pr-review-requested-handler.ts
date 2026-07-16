@@ -4,6 +4,12 @@ import type { AgentRole } from "../state.js";
 import type { MessageDispatch, RepoEventHandler } from "./repo-event-handlers.js";
 import { resolveGhLoginAgent } from "./repo-event-author-lookup.js";
 import { extractRefField, isRecord } from "./repo-event-pr-handler-helpers.js";
+import {
+  evaluatePrReviewBinding,
+  normalizePrReviewRequestEvent,
+  type PrReviewRequestLegacySubkind,
+  type ReviewerResolutionProof,
+} from "./pr-review-workitem-event-contract.js";
 
 interface PrReviewRequestPayload {
   repo: string;
@@ -111,9 +117,18 @@ function requestedSubject(payload: PrReviewRequestPayload): string {
   return "unresolved reviewer/team";
 }
 
+function reviewerProofFromResolution(resolution: ResolutionProjection): ReviewerResolutionProof {
+  return {
+    status: resolution.targetResolutionStatus,
+    agentId: resolution.targetAgentId,
+    role: resolution.targetRole,
+    matchedAgentIds: resolution.matchedAgentIds,
+  };
+}
+
 function buildDispatch(
   inbound: Message,
-  subkind: "pr-review-requested" | "pr-review-request-removed",
+  subkind: PrReviewRequestLegacySubkind,
   payload: PrReviewRequestPayload,
   resolution: ResolutionProjection,
 ): MessageDispatch {
@@ -121,6 +136,28 @@ function buildDispatch(
     subkind === "pr-review-request-removed"
       ? "pr-review-request-removed-notification"
       : "pr-review-requested-notification";
+  const normalizedEvent = normalizePrReviewRequestEvent({
+    legacySubkind: subkind,
+    sourceMessageId: inbound.id,
+    repo: payload.repo,
+    prNumber: payload.number,
+    title: payload.title,
+    url: payload.url,
+    authorLogin: payload.author,
+    requestedReviewerLogin: payload.requestedReviewerLogin,
+    requestedTeamSlug: payload.requestedTeamSlug,
+    requestedTeamName: payload.requestedTeamName,
+    baseRef: payload.base?.ref,
+    baseSha: payload.base?.sha,
+    headRef: payload.head?.ref,
+    headSha: payload.head?.sha,
+  });
+  const bindingDecision = evaluatePrReviewBinding({
+    event: normalizedEvent,
+    binding: null,
+    target: null,
+    reviewer: reviewerProofFromResolution(resolution),
+  });
   const body = `${actionNoun(payload)} for PR #${payload.number}: ${requestedSubject(payload)}`;
   return {
     kind: "note",
@@ -147,6 +184,11 @@ function buildDispatch(
       prBaseRef: payload.base?.ref ?? "",
       prHeadRef: payload.head?.ref ?? "",
       sourceMessageId: inbound.id,
+      normalizedEvent,
+      normalizedEventType: normalizedEvent.type,
+      normalizedEventIdempotencyKey: normalizedEvent.idempotencyKey,
+      ruleId: normalizedEvent.ruleId,
+      bindingDecision,
     },
   };
 }
@@ -154,7 +196,7 @@ function buildDispatch(
 async function handlePrReviewRequest(
   inbound: Message,
   ctx: IPolicyContext,
-  subkind: "pr-review-requested" | "pr-review-request-removed",
+  subkind: PrReviewRequestLegacySubkind,
 ): Promise<MessageDispatch[]> {
   const payload = extractInboundPayload(inbound);
   if (!payload) {
