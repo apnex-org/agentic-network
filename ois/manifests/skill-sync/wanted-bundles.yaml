@@ -28,7 +28,7 @@
 # `source_ref` to its SHA and re-stage (this is the reviewable diff). Env vars
 # SKILL_SYNC_REPO / SKILL_SYNC_REF override at runtime (testing only).
 source_repo: https://github.com/apnex/mission-kit.git
-source_ref: ed67e9946bb12500948a1e23e07eb5a0d65ac2b0
+source_ref: 7df329d351b942138e98fbfff326cb4e26db3338
 
 bundles:
   - workgraph-arc
