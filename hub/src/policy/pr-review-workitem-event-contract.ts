@@ -180,7 +180,6 @@ export function buildPrReviewEventIdempotencyKey(
       input.prNumber,
       reviewerKey(input),
       nonEmpty(input.headSha),
-      input.sourceMessageId,
     ].join("\u001f"),
   );
 }

@@ -53,7 +53,7 @@ describe("PR review WorkItem projection", () => {
       evidenceRequirements: [
         {
           id: "github_review",
-          kind: "review",
+          kind: "freeform",
           description: "GitHub review URL/id or equivalent explicit reviewer evidence for the bound PR.",
         },
       ],

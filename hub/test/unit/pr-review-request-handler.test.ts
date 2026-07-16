@@ -52,12 +52,13 @@ function makeAgent(id: string, role: AgentRole, ghLogin?: string): Agent {
   };
 }
 
-function makeCtx(agents: Agent[]): IPolicyContext {
+function makeCtx(agents: Agent[], workItem?: unknown): IPolicyContext {
   return {
     stores: {
       engineerRegistry: {
         listAgents: async () => agents,
       },
+      ...(workItem ? { workItem } : {}),
     },
     metrics: { increment: () => {} },
     emit: async () => {},
@@ -195,5 +196,74 @@ describe("PR review request handler", () => {
     expect(payload.normalizedEventType).toBe("github.pull_request.review_request_removed");
     expect(payload.bindingDecision).toMatchObject({ ok: false, reason: "removal_is_cancellation_only" });
     expect(String(payload.body)).toContain("review request removed");
+  });
+
+  it("uses the rule/projection seam to materialize safely bound review requests", async () => {
+    const createdNodes: unknown[] = [];
+    const updates: unknown[] = [];
+    const workItem = {
+      getWorkItem: async (id: string) =>
+        id === "work-target"
+          ? { id: "work-target", status: "ready", payload: {}, roleEligibility: ["engineer"] }
+          : null,
+      listWorkItems: async () => ({ items: [], truncated: false }),
+      createBlueprintNode: async (input: unknown) => {
+        createdNodes.push(input);
+        return { item: { id: "work-prrev-created", status: "ready", payload: (input as { payload?: unknown }).payload }, created: true };
+      },
+      updateWorkItem: async (id: string, actor: unknown, mutation: unknown) => {
+        updates.push({ id, actor, mutation });
+        return { before: { id }, after: { id } };
+      },
+    };
+    const ctx = makeCtx([makeAgent("agent-lily", "architect", "apnex-lily")], workItem);
+    const repoEvent = reviewRequestedEvent({ reviewer: "apnex-lily" }) as Record<string, unknown>;
+    repoEvent.payload = {
+      ...(repoEvent.payload as Record<string, unknown>),
+      workGraphBinding: {
+        id: "prbind-624",
+        repo: "apnex-org/agentic-network",
+        prNumber: 624,
+        targetWorkId: "work-target",
+        provenance: "hub",
+        headSha: "bbb",
+        version: "1",
+      },
+    };
+
+    const out = await PR_REVIEW_REQUESTED_HANDLER.handle(wrapAsMessage(repoEvent), ctx);
+
+    const payload = out[0].payload as Record<string, unknown>;
+    expect(payload.bindingDecision).toMatchObject({ ok: true, targetWorkId: "work-target" });
+    expect(payload.projectionDecision).toMatchObject({ action: "create_review_workitem" });
+    expect(payload.materialization).toMatchObject({ materialized: true, created: true, relation: "appendDependsOn" });
+    expect(createdNodes).toHaveLength(1);
+    expect(updates).toMatchObject([{ id: "work-target", mutation: { appendDependsOn: ["work-prrev-created"] } }]);
+  });
+
+  it("keeps projection-key idempotency stable across redelivery with different source message ids", async () => {
+    const first = reviewRequestedEvent({ reviewer: "apnex-lily" }) as Record<string, unknown>;
+    const second = reviewRequestedEvent({ reviewer: "apnex-lily" }) as Record<string, unknown>;
+    first.payload = { ...(first.payload as Record<string, unknown>), workGraphBinding: { id: "prbind-624", repo: "apnex-org/agentic-network", prNumber: 624, targetWorkId: "work-target", provenance: "hub", headSha: "bbb", version: "1" } };
+    second.payload = { ...(second.payload as Record<string, unknown>), workGraphBinding: { id: "prbind-624", repo: "apnex-org/agentic-network", prNumber: 624, targetWorkId: "work-target", provenance: "hub", headSha: "bbb", version: "1" } };
+    const workItem = {
+      getWorkItem: async () => ({ id: "work-target", status: "ready" }),
+      listWorkItems: async () => ({ items: [], truncated: false }),
+      createBlueprintNode: async (input: unknown) => ({ item: { id: "work-created", payload: (input as { payload?: unknown }).payload }, created: true }),
+      updateWorkItem: async (id: string) => ({ before: { id }, after: { id } }),
+    };
+    const ctx = makeCtx([makeAgent("agent-lily", "architect", "apnex-lily")], workItem);
+    const firstMsg = wrapAsMessage(first);
+    const secondMsg = { ...wrapAsMessage(second), id: "01SECOND" } as Message;
+
+    const firstOut = await PR_REVIEW_REQUESTED_HANDLER.handle(firstMsg, ctx);
+    const secondOut = await PR_REVIEW_REQUESTED_HANDLER.handle(secondMsg, ctx);
+    const firstProjection = ((firstOut[0].payload as Record<string, unknown>).bindingDecision as Record<string, unknown>).projectionKey;
+    const secondProjection = ((secondOut[0].payload as Record<string, unknown>).bindingDecision as Record<string, unknown>).projectionKey;
+    const firstEvent = (firstOut[0].payload as Record<string, unknown>).normalizedEventIdempotencyKey;
+    const secondEvent = (secondOut[0].payload as Record<string, unknown>).normalizedEventIdempotencyKey;
+
+    expect(firstProjection).toBe(secondProjection);
+    expect(firstEvent).toBe(secondEvent);
   });
 });

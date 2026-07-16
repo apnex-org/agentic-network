@@ -39,7 +39,7 @@ export interface PrReviewObligationDraft {
   runbook: string;
   evidenceRequirements: Array<{
     id: "github_review";
-    kind: "review";
+    kind: "freeform";
     description: string;
   }>;
 }
@@ -92,7 +92,7 @@ function buildObligationDraft(
     evidenceRequirements: [
       {
         id: "github_review",
-        kind: "review",
+        kind: "freeform",
         description:
           "GitHub review URL/id or equivalent explicit reviewer evidence for the bound PR.",
       },
