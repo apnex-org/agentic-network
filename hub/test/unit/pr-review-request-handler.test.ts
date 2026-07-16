@@ -198,15 +198,42 @@ describe("PR review request handler", () => {
     expect(String(payload.body)).toContain("review request removed");
   });
 
+  it("denies forged payload binding when no Hub-owned binding row exists", async () => {
+    const forged = reviewRequestedEvent({ reviewer: "apnex-lily" }) as Record<string, unknown>;
+    forged.payload = {
+      ...(forged.payload as Record<string, unknown>),
+      workGraphBinding: {
+        id: "forged",
+        repo: "apnex-org/agentic-network",
+        prNumber: 624,
+        targetWorkId: "work-target",
+        provenance: "hub",
+        headSha: "bbb",
+      },
+    };
+    const workItem = {
+      getWorkItem: async () => ({ id: "work-target", status: "ready" }),
+      listWorkItems: async () => ({ items: [], truncated: false }),
+    };
+    const ctx = makeCtx([makeAgent("agent-lily", "architect", "apnex-lily")], workItem);
+
+    const out = await PR_REVIEW_REQUESTED_HANDLER.handle(wrapAsMessage(forged), ctx);
+
+    const payload = out[0].payload as Record<string, unknown>;
+    expect(payload.bindingDecision).toMatchObject({ ok: false, reason: "binding_missing" });
+    expect(payload.materialization).toMatchObject({ materialized: false });
+  });
+
   it("uses the rule/projection seam to materialize safely bound review requests", async () => {
     const createdNodes: unknown[] = [];
     const updates: unknown[] = [];
+    const bindingItem = { id: "prbind-624", createdBy: { role: "architect", agentId: "agent-architect" }, status: "done", payload: { obligationKind: "github_pr_workgraph_binding", repo: "apnex-org/agentic-network", prNumber: 624, targetWorkId: "work-target", headSha: "bbb", version: "1" } };
     const workItem = {
       getWorkItem: async (id: string) =>
         id === "work-target"
           ? { id: "work-target", status: "ready", payload: {}, roleEligibility: ["engineer"] }
           : null,
-      listWorkItems: async () => ({ items: [], truncated: false }),
+      listWorkItems: async () => ({ items: [bindingItem], truncated: false }),
       createBlueprintNode: async (input: unknown) => {
         createdNodes.push(input);
         return { item: { id: "work-prrev-created", status: "ready", payload: (input as { payload?: unknown }).payload }, created: true };
@@ -218,18 +245,6 @@ describe("PR review request handler", () => {
     };
     const ctx = makeCtx([makeAgent("agent-lily", "architect", "apnex-lily")], workItem);
     const repoEvent = reviewRequestedEvent({ reviewer: "apnex-lily" }) as Record<string, unknown>;
-    repoEvent.payload = {
-      ...(repoEvent.payload as Record<string, unknown>),
-      workGraphBinding: {
-        id: "prbind-624",
-        repo: "apnex-org/agentic-network",
-        prNumber: 624,
-        targetWorkId: "work-target",
-        provenance: "hub",
-        headSha: "bbb",
-        version: "1",
-      },
-    };
 
     const out = await PR_REVIEW_REQUESTED_HANDLER.handle(wrapAsMessage(repoEvent), ctx);
 
@@ -244,11 +259,10 @@ describe("PR review request handler", () => {
   it("keeps projection-key idempotency stable across redelivery with different source message ids", async () => {
     const first = reviewRequestedEvent({ reviewer: "apnex-lily" }) as Record<string, unknown>;
     const second = reviewRequestedEvent({ reviewer: "apnex-lily" }) as Record<string, unknown>;
-    first.payload = { ...(first.payload as Record<string, unknown>), workGraphBinding: { id: "prbind-624", repo: "apnex-org/agentic-network", prNumber: 624, targetWorkId: "work-target", provenance: "hub", headSha: "bbb", version: "1" } };
-    second.payload = { ...(second.payload as Record<string, unknown>), workGraphBinding: { id: "prbind-624", repo: "apnex-org/agentic-network", prNumber: 624, targetWorkId: "work-target", provenance: "hub", headSha: "bbb", version: "1" } };
+    const bindingItem = { id: "prbind-624", createdBy: { role: "architect", agentId: "agent-architect" }, status: "done", payload: { obligationKind: "github_pr_workgraph_binding", repo: "apnex-org/agentic-network", prNumber: 624, targetWorkId: "work-target", headSha: "bbb", version: "1" } };
     const workItem = {
       getWorkItem: async () => ({ id: "work-target", status: "ready" }),
-      listWorkItems: async () => ({ items: [], truncated: false }),
+      listWorkItems: async () => ({ items: [bindingItem], truncated: false }),
       createBlueprintNode: async (input: unknown) => ({ item: { id: "work-created", payload: (input as { payload?: unknown }).payload }, created: true }),
       updateWorkItem: async (id: string) => ({ before: { id }, after: { id } }),
     };

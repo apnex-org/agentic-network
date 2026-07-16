@@ -54,7 +54,7 @@ describe("PR review WorkItem projection", () => {
         {
           id: "github_review",
           kind: "freeform",
-          description: "GitHub review URL/id or equivalent explicit reviewer evidence for the bound PR.",
+          description: "GitHub review evidence for the bound PR/head by the requested independent reviewer; must not be supplied by the PR author/holder/last-pusher. This is executor evidence, not verifier-attestation.",
         },
       ],
     });
@@ -80,6 +80,37 @@ describe("PR review WorkItem projection", () => {
       existingWorkId: "work-review-625-lily",
       existingStatus: "ready",
     });
+  });
+
+  it("compensates the review WorkItem when relation creation fails", async () => {
+    const deleted: string[] = [];
+    const projection = projectPrReviewWorkItem({ ruleResult: allowedRuleResult() });
+    if (projection.action !== "create_review_workitem") throw new Error("expected create");
+    const { reconcilePrReviewProjection } = await import("../../src/policy/pr-review-workitem-projection.js");
+    const result = await reconcilePrReviewProjection({
+      projection,
+      binding: {
+        id: "prbind-625",
+        repo: "apnex-org/agentic-network",
+        prNumber: 625,
+        targetWorkId: "work-123",
+        provenance: "hub",
+      },
+      sourceMessageId: "01SOURCE",
+      store: {
+        createBlueprintNode: async () => ({ item: { id: "work-created" }, created: true }),
+        updateWorkItem: async () => { throw new Error("edge rejected"); },
+        deleteWorkItem: async (id: string) => { deleted.push(id); },
+      } as never,
+    });
+
+    expect(result).toMatchObject({
+      materialized: false,
+      workId: "work-created",
+      compensated: true,
+      fallbackReason: "relation_failed:edge rejected",
+    });
+    expect(deleted).toEqual(["work-created"]);
   });
 
   it("keeps denied rule decisions fallback-only", () => {

@@ -35,6 +35,12 @@ export interface PrReviewObligationDraft {
     requestedReviewerLogin: string;
     reviewerAgentId: string;
     projectionKey: string;
+    completionPolicy: {
+      requiredReviewerLogin: string;
+      requiredHeadSha: string;
+      forbiddenReviewerLogins: string[];
+      verifierAuthorityRequired: false;
+    };
   };
   runbook: string;
   evidenceRequirements: Array<{
@@ -86,6 +92,12 @@ function buildObligationDraft(
       requestedReviewerLogin: event.payload.requestedReviewerLogin,
       reviewerAgentId: decision.reviewerAgentId,
       projectionKey: decision.projectionKey,
+      completionPolicy: {
+        requiredReviewerLogin: event.payload.requestedReviewerLogin,
+        requiredHeadSha: event.payload.headSha,
+        forbiddenReviewerLogins: [event.payload.authorLogin].filter(Boolean),
+        verifierAuthorityRequired: false,
+      },
     },
     runbook:
       "Review the bound PR. Complete with explicit GitHub review evidence. Do not merge or enqueue unless separately authorized.",
@@ -94,7 +106,7 @@ function buildObligationDraft(
         id: "github_review",
         kind: "freeform",
         description:
-          "GitHub review URL/id or equivalent explicit reviewer evidence for the bound PR.",
+          "GitHub review evidence for the bound PR/head by the requested independent reviewer; must not be supplied by the PR author/holder/last-pusher. This is executor evidence, not verifier-attestation.",
       },
     ],
   };

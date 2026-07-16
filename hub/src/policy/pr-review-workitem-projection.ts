@@ -1,3 +1,5 @@
+import type { EvidenceRequirement, IWorkItemStore, WorkItemReference } from "../entities/work-item.js";
+import type { PrWorkGraphBindingProof } from "./pr-review-workitem-event-contract.js";
 import type { PrReviewObligationDraft, PrReviewRequestRuleResult } from "./pr-review-request-static-rule.js";
 
 export type PrReviewProjectionAction =
@@ -61,6 +63,80 @@ export function toReviewWorkItemCreateSpec(args: {
     runbook: args.draft.runbook,
     evidenceRequirements: args.draft.evidenceRequirements,
   };
+}
+
+function reviewWorkId(projectionKey: string): string {
+  return `work-prrev-${projectionKey.slice(0, 24)}`;
+}
+
+function projectionReferences(args: {
+  sourceMessageId: string;
+  binding: PrWorkGraphBindingProof;
+  prUrl: string;
+}): WorkItemReference[] {
+  return [
+    { kind: "message", ref: args.sourceMessageId, storage: "entity", mode: "read", required: false },
+    { kind: "workitem", ref: args.binding.targetWorkId, storage: "entity", mode: "read", required: true },
+    { kind: "pr", ref: args.prUrl || `${args.binding.repo}#${args.binding.prNumber}`, storage: "inline", mode: "read", required: true },
+    { kind: "pr-binding", ref: args.binding.id, storage: "inline", mode: "read", required: true },
+  ];
+}
+
+export interface PrReviewProjectionReconcileResult {
+  materialized: boolean;
+  created?: boolean;
+  workId?: string;
+  relation?: "appendDependsOn" | "reused_existing";
+  compensated?: boolean;
+  fallbackReason?: string;
+}
+
+export async function reconcilePrReviewProjection(args: {
+  store?: IWorkItemStore;
+  projection: PrReviewProjectionResult;
+  binding?: PrWorkGraphBindingProof | null;
+  sourceMessageId: string;
+}): Promise<PrReviewProjectionReconcileResult> {
+  const { store, projection, binding } = args;
+  if (!store || !binding || projection.action === "fallback_only") {
+    return { materialized: false, fallbackReason: projection.action === "fallback_only" ? projection.reason : "missing_store_or_binding" };
+  }
+  if (projection.action === "reuse_existing_review_workitem") {
+    return { materialized: true, created: false, workId: projection.existingWorkId, relation: "reused_existing" };
+  }
+
+  const spec = projection.createSpec;
+  const created = await store.createBlueprintNode({
+    id: reviewWorkId(projection.projectionKey),
+    blueprintRunId: "pr_review_workitem0_projection",
+    type: spec.type,
+    priority: spec.priority,
+    roleEligibility: spec.roleEligibility,
+    targetRef: spec.targetRef,
+    payload: spec.payload,
+    runbook: spec.runbook,
+    references: projectionReferences({ sourceMessageId: args.sourceMessageId, binding, prUrl: spec.payload.prUrl }),
+    evidenceRequirements: spec.evidenceRequirements as EvidenceRequirement[],
+    createdBy: { role: "architect", agentId: "system-pr-review-rule" },
+  });
+
+  try {
+    await store.updateWorkItem(
+      binding.targetWorkId,
+      { role: "architect", agentId: "system-pr-review-rule" },
+      { appendDependsOn: [created.item.id] },
+    );
+    return { materialized: true, created: created.created, workId: created.item.id, relation: "appendDependsOn" };
+  } catch (err) {
+    if (created.created) await store.deleteWorkItem(created.item.id);
+    return {
+      materialized: false,
+      created: created.created,
+      workId: created.item.id,
+      compensated: created.created,
+      fallbackReason: `relation_failed:${(err as Error)?.message ?? String(err)}`,
+    };
+  }
 }
 
 export function projectPrReviewWorkItem(args: {

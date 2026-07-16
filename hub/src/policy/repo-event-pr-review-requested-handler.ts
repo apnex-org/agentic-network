@@ -1,5 +1,5 @@
 import type { Message } from "../entities/index.js";
-import type { EvidenceRequirement, WorkItem, WorkItemReference } from "../entities/work-item.js";
+import type { WorkItem } from "../entities/work-item.js";
 import type { IPolicyContext } from "./types.js";
 import type { AgentRole } from "../state.js";
 import type { MessageDispatch, RepoEventHandler } from "./repo-event-handlers.js";
@@ -12,7 +12,7 @@ import {
   type ReviewerResolutionProof,
 } from "./pr-review-workitem-event-contract.js";
 import { evaluatePrReviewRequestRule } from "./pr-review-request-static-rule.js";
-import { projectPrReviewWorkItem, type ExistingPrReviewProjection } from "./pr-review-workitem-projection.js";
+import { reconcilePrReviewProjection, projectPrReviewWorkItem, type ExistingPrReviewProjection } from "./pr-review-workitem-projection.js";
 
 interface PrReviewRequestPayload {
   repo: string;
@@ -129,29 +129,33 @@ function reviewerProofFromResolution(resolution: ResolutionProjection): Reviewer
   };
 }
 
-function extractBindingProof(raw: Record<string, unknown>): PrWorkGraphBindingProof | null {
-  const binding = raw.workGraphBinding;
-  if (!isRecord(binding)) return null;
-  const provenance = binding.provenance;
-  if (provenance !== "hub" && provenance !== "raw-body-marker" && provenance !== "external") return null;
-  if (
-    typeof binding.id !== "string" ||
-    typeof binding.repo !== "string" ||
-    typeof binding.prNumber !== "number" ||
-    typeof binding.targetWorkId !== "string"
-  ) {
-    return null;
-  }
+function bindingFromWorkItem(item: WorkItem, payload: PrReviewRequestPayload): PrWorkGraphBindingProof | null {
+  const p = item.payload;
+  if (!isRecord(p)) return null;
+  if (p.obligationKind !== "github_pr_workgraph_binding") return null;
+  if (p.repo !== payload.repo || p.prNumber !== payload.number) return null;
+  if (typeof p.targetWorkId !== "string") return null;
+  if (item.createdBy?.role !== "architect" && item.createdBy?.role !== "system") return null;
   return {
-    id: binding.id,
-    repo: binding.repo,
-    prNumber: binding.prNumber,
-    targetWorkId: binding.targetWorkId,
-    provenance,
-    headSha: typeof binding.headSha === "string" ? binding.headSha : undefined,
-    baseSha: typeof binding.baseSha === "string" ? binding.baseSha : undefined,
-    version: typeof binding.version === "string" ? binding.version : undefined,
+    id: item.id,
+    repo: payload.repo,
+    prNumber: payload.number,
+    targetWorkId: p.targetWorkId,
+    provenance: "hub",
+    headSha: typeof p.headSha === "string" ? p.headSha : undefined,
+    baseSha: typeof p.baseSha === "string" ? p.baseSha : undefined,
+    version: typeof p.version === "string" ? p.version : undefined,
   };
+}
+
+async function resolveHubBinding(ctx: IPolicyContext, payload: PrReviewRequestPayload): Promise<PrWorkGraphBindingProof | null> {
+  if (!ctx.stores.workItem) return null;
+  const listed = await ctx.stores.workItem.listWorkItems();
+  for (const item of listed.items) {
+    const binding = bindingFromWorkItem(item, payload);
+    if (binding) return binding;
+  }
+  return null;
 }
 
 async function findExistingProjection(
@@ -167,74 +171,10 @@ async function findExistingProjection(
   return found ? { projectionKey, workId: found.id, status: found.status } : null;
 }
 
-function reviewWorkId(projectionKey: string): string {
-  return `work-prrev-${projectionKey.slice(0, 24)}`;
-}
-
-function projectionReferences(args: {
-  sourceMessageId: string;
-  binding: PrWorkGraphBindingProof;
-  prUrl: string;
-}): WorkItemReference[] {
-  return [
-    { kind: "message", ref: args.sourceMessageId, storage: "entity", mode: "read", required: false },
-    { kind: "workitem", ref: args.binding.targetWorkId, storage: "entity", mode: "read", required: true },
-    { kind: "pr", ref: args.prUrl || `${args.binding.repo}#${args.binding.prNumber}`, storage: "inline", mode: "read", required: true },
-    { kind: "pr-binding", ref: JSON.stringify(args.binding), storage: "inline", mode: "read", required: true },
-  ];
-}
-
-async function materializeProjection(args: {
-  ctx: IPolicyContext;
-  projection: ReturnType<typeof projectPrReviewWorkItem>;
-  binding: PrWorkGraphBindingProof | null;
-  sourceMessageId: string;
-}): Promise<Record<string, unknown>> {
-  const store = args.ctx.stores.workItem;
-  if (!store || args.projection.action !== "create_review_workitem" || !args.binding) {
-    return { materialized: false };
-  }
-
-  const spec = args.projection.createSpec;
-  const created = await store.createBlueprintNode({
-    id: reviewWorkId(args.projection.projectionKey),
-    blueprintRunId: "pr_review_workitem0_projection",
-    type: spec.type,
-    priority: spec.priority,
-    roleEligibility: spec.roleEligibility,
-    targetRef: spec.targetRef,
-    payload: spec.payload,
-    runbook: spec.runbook,
-    references: projectionReferences({ sourceMessageId: args.sourceMessageId, binding: args.binding, prUrl: spec.payload.prUrl }),
-    evidenceRequirements: spec.evidenceRequirements as EvidenceRequirement[],
-    createdBy: { role: "architect", agentId: "system-pr-review-rule" },
-  });
-
-  let relation = "not_applicable";
-  try {
-    await store.updateWorkItem(
-      args.binding.targetWorkId,
-      { role: "architect", agentId: "system-pr-review-rule" },
-      { appendDependsOn: [created.item.id] },
-    );
-    relation = "appendDependsOn";
-  } catch (err) {
-    relation = `appendDependsOn_failed:${(err as Error)?.message ?? String(err)}`;
-  }
-
-  return {
-    materialized: true,
-    created: created.created,
-    workId: created.item.id,
-    relation,
-  };
-}
-
 async function buildDispatch(
   inbound: Message,
   subkind: PrReviewRequestLegacySubkind,
   payload: PrReviewRequestPayload,
-  rawPayload: Record<string, unknown>,
   ctx: IPolicyContext,
   resolution: ResolutionProjection,
 ): Promise<MessageDispatch> {
@@ -258,7 +198,7 @@ async function buildDispatch(
     headRef: payload.head?.ref,
     headSha: payload.head?.sha,
   });
-  const binding = extractBindingProof(rawPayload);
+  const binding = await resolveHubBinding(ctx, payload);
   const target = binding && ctx.stores.workItem
     ? await ctx.stores.workItem.getWorkItem(binding.targetWorkId)
     : null;
@@ -282,8 +222,8 @@ async function buildDispatch(
       : null,
   });
   const projectionDecision = projectPrReviewWorkItem({ ruleResult: ruleDecision, existingProjection });
-  const materialization = await materializeProjection({
-    ctx,
+  const materialization = await reconcilePrReviewProjection({
+    store: ctx.stores.workItem,
     projection: projectionDecision,
     binding,
     sourceMessageId: inbound.id,
@@ -338,10 +278,8 @@ async function handlePrReviewRequest(
     );
     return [];
   }
-  const repoEvent = inbound.payload as { payload?: unknown } | undefined;
-  const rawPayload = isRecord(repoEvent?.payload) ? repoEvent.payload : {};
   const resolution = await resolveTarget(payload, ctx);
-  return [await buildDispatch(inbound, subkind, payload, rawPayload, ctx, resolution)];
+  return [await buildDispatch(inbound, subkind, payload, ctx, resolution)];
 }
 
 export const PR_REVIEW_REQUESTED_HANDLER: RepoEventHandler = {

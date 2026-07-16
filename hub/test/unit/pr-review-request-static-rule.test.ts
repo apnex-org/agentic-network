@@ -73,7 +73,7 @@ describe("pr_review_request_to_workitem_v0 static rule", () => {
           id: "github_review",
           kind: "freeform",
           description:
-            "GitHub review URL/id or equivalent explicit reviewer evidence for the bound PR.",
+            "GitHub review evidence for the bound PR/head by the requested independent reviewer; must not be supplied by the PR author/holder/last-pusher. This is executor evidence, not verifier-attestation.",
         },
       ],
     });
