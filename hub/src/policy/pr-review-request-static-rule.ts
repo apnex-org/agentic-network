@@ -39,14 +39,15 @@ export interface PrReviewObligationDraft {
       requiredReviewerLogin: string;
       requiredHeadSha: string;
       forbiddenReviewerLogins: string[];
-      verifierAuthorityRequired: false;
+      verifierAuthorityRequired: boolean;
     };
   };
   runbook: string;
   evidenceRequirements: Array<{
-    id: "github_review";
-    kind: "freeform";
+    id: "independent_pr_review_validation";
+    kind: "review";
     description: string;
+    evidenceAuthority: "verifier-attestation";
   }>;
 }
 
@@ -96,17 +97,18 @@ function buildObligationDraft(
         requiredReviewerLogin: event.payload.requestedReviewerLogin,
         requiredHeadSha: event.payload.headSha,
         forbiddenReviewerLogins: [event.payload.authorLogin].filter(Boolean),
-        verifierAuthorityRequired: false,
+        verifierAuthorityRequired: true,
       },
     },
     runbook:
       "Review the bound PR. Complete with explicit GitHub review evidence. Do not merge or enqueue unless separately authorized.",
     evidenceRequirements: [
       {
-        id: "github_review",
-        kind: "freeform",
+        id: "independent_pr_review_validation",
+        kind: "review",
+        evidenceAuthority: "verifier-attestation",
         description:
-          "GitHub review evidence for the bound PR/head by the requested independent reviewer; must not be supplied by the PR author/holder/last-pusher. This is executor evidence, not verifier-attestation.",
+          "Verifier attestation that GitHub review evidence matches the requested reviewer, bound PR head, and independence policy. Arbitrary executor freeform evidence cannot satisfy this gate.",
       },
     ],
   };

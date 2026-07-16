@@ -49,12 +49,14 @@ describe("PR review WorkItem projection", () => {
         bindingId: "prbind-625",
         boundTargetWorkId: "work-123",
         reviewerAgentId: "agent-lily",
+        completionPolicy: { verifierAuthorityRequired: true },
       },
       evidenceRequirements: [
         {
-          id: "github_review",
-          kind: "freeform",
-          description: "GitHub review evidence for the bound PR/head by the requested independent reviewer; must not be supplied by the PR author/holder/last-pusher. This is executor evidence, not verifier-attestation.",
+          id: "independent_pr_review_validation",
+          kind: "review",
+          evidenceAuthority: "verifier-attestation",
+          description: "Verifier attestation that GitHub review evidence matches the requested reviewer, bound PR head, and independence policy. Arbitrary executor freeform evidence cannot satisfy this gate.",
         },
       ],
     });
