@@ -429,11 +429,21 @@ export function deriveRenderContext(
         `${author} pushed`;
       const prNumber = data.prNumber ?? data.pullNumber;
       const repoRef = str("repo") ?? "";
+      const ruleId = str("ruleId");
+      const bindingReason =
+        typeof data.bindingDecision === "object" && data.bindingDecision !== null &&
+        typeof (data.bindingDecision as { reason?: unknown }).reason === "string"
+          ? (data.bindingDecision as { reason: string }).reason
+          : undefined;
       const id = prNumber !== undefined ? `PR #${prNumber}` : (str("commit") ?? "commit");
+      const fallbackPreview = bindingReason
+        ? `fallback=${bindingReason}${ruleId ? ` via ${ruleId}` : ""}`
+        : undefined;
       return {
         sourceClass: "System-PR",
         actionVerb: verb,
         entityRef: { type: "PR", id, title: str("prTitle") ?? str("title") ?? repoRef },
+        bodyPreview: fallbackPreview,
         actionability: "emitted",
       };
     }
