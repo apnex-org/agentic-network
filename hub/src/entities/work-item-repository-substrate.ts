@@ -1025,6 +1025,32 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   }
 
   /**
+   * Narrow payload-key lookup for PR-review binding authority rows. The substrate stores
+   * WorkItem intent under spec.payload, so these filters bind explicit spec.payload.*
+   * paths rather than relying on a capped unfiltered scan.
+   */
+  async listPrReviewBindingWorkItems(repo: string, prNumber: number): Promise<{ items: WorkItem[]; truncated: boolean }> {
+    const { items } = await this.substrate.list<WorkItem>(KIND, {
+      filter: {
+        "spec.payload.obligationKind": "github_pr_workgraph_binding",
+        "spec.payload.repo": repo,
+        "spec.payload.prNumber": prNumber,
+      },
+      limit: LIST_CAP,
+    });
+    return { items: items.map(cloneWorkItem), truncated: items.length >= LIST_CAP };
+  }
+
+  /** Narrow payload-key lookup for existing PR-review projections. */
+  async listWorkItemsByProjectionKey(projectionKey: string): Promise<{ items: WorkItem[]; truncated: boolean }> {
+    const { items } = await this.substrate.list<WorkItem>(KIND, {
+      filter: { "spec.payload.projectionKey": projectionKey },
+      limit: LIST_CAP,
+    });
+    return { items: items.map(cloneWorkItem), truncated: items.length >= LIST_CAP };
+  }
+
+  /**
    * The list_ready_work projection (sub-PR-3b): ready items a `role` may claim, with
    * the empty-role OR-in (audit-4085 — an empty roleEligibility = any-role, claimable,
    * therefore listable for EVERY role). The substrate can't express "$contains role OR

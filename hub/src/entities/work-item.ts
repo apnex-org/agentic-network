@@ -599,6 +599,14 @@ export interface IWorkItemStore {
    *  incl. dependency-blocked); the deps/WIP readiness gate is list_ready_work's job. */
   listWorkItems(filter?: { status?: WorkItemPhase; role?: string; holder?: string }): Promise<{ items: WorkItem[]; truncated: boolean }>;
 
+  /** Narrow lookup for policy-owned PR-review binding rows. This is not an
+   *  arrival/queue surface; it exists so policies do not rely on capped unfiltered
+   *  WorkItem scans when looking up authority rows by stable payload keys. */
+  listPrReviewBindingWorkItems?(repo: string, prNumber: number): Promise<{ items: WorkItem[]; truncated: boolean }>;
+
+  /** Narrow lookup for policy-owned projection rows by stable projection key. */
+  listWorkItemsByProjectionKey?(projectionKey: string): Promise<{ items: WorkItem[]; truncated: boolean }>;
+
   /** W1 (idea-446 / work-181): sweeper-only direct write of the node-native pulse
    *  bookkeeping — mirrors the Mission `updatePulseBookkeeping`. CAS-safe (preserves
    *  the rest of the node), NOT authz-gated (the system PulseSweeper is the writer).
