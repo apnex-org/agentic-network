@@ -30,6 +30,7 @@ export interface PrReviewObligationDraft {
     prUrl: string;
     requestedReviewerLogin: string;
     reviewerAgentId: string;
+    projectionKey: string;
   };
   runbook: string;
   evidenceRequirements: Array<{
@@ -78,6 +79,7 @@ function buildObligationDraft(
       prUrl: event.payload.url,
       requestedReviewerLogin: event.payload.requestedReviewerLogin,
       reviewerAgentId: decision.reviewerAgentId,
+      projectionKey: decision.projectionKey,
     },
     runbook:
       "Review the bound PR. Complete with explicit GitHub review evidence. Do not merge or enqueue unless separately authorized.",
