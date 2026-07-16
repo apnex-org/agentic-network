@@ -165,6 +165,25 @@ describe("deriveRenderContext (§1.2 + §2.2 resolution table)", () => {
     expect(ctx?.actionability).toBe("emitted");
   });
 
+  it("maps review-request notifications with explicit actionability wording", () => {
+    const requested = deriveRenderContext("pr-review-requested-notification", {
+      prNumber: 624,
+      title: "manifest PR",
+      requestedReviewerLogin: "apnex-lily",
+    });
+    expect(requested?.sourceClass).toBe("System-PR");
+    expect(requested?.actionVerb).toBe("Review requested from apnex-lily");
+    expect(requested?.entityRef?.id).toBe("PR #624");
+    expect(requested?.actionability).toBe("emitted");
+
+    const removed = deriveRenderContext("pr-review-request-removed-notification", {
+      prNumber: 625,
+      requestedTeamSlug: "platform-reviewers",
+    });
+    expect(removed?.actionVerb).toBe("Review request removed for platform-reviewers");
+    expect(removed?.entityRef?.id).toBe("PR #625");
+  });
+
   it("maps pulse events → System-Pulse sourceClass", () => {
     const ctx = deriveRenderContext("engineerPulse", {
       missionId: "mission-1",
