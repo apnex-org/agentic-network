@@ -1,9 +1,18 @@
 import type { Message } from "../entities/index.js";
+import type { WorkItem } from "../entities/work-item.js";
 import type { IPolicyContext } from "./types.js";
 import type { AgentRole } from "../state.js";
 import type { MessageDispatch, RepoEventHandler } from "./repo-event-handlers.js";
 import { resolveGhLoginAgent } from "./repo-event-author-lookup.js";
 import { extractRefField, isRecord } from "./repo-event-pr-handler-helpers.js";
+import {
+  normalizePrReviewRequestEvent,
+  type PrReviewRequestLegacySubkind,
+  type PrWorkGraphBindingProof,
+  type ReviewerResolutionProof,
+} from "./pr-review-workitem-event-contract.js";
+import { evaluatePrReviewRequestRule } from "./pr-review-request-static-rule.js";
+import { reconcilePrReviewProjection, projectPrReviewWorkItem, type ExistingPrReviewProjection } from "./pr-review-workitem-projection.js";
 
 interface PrReviewRequestPayload {
   repo: string;
@@ -111,16 +120,114 @@ function requestedSubject(payload: PrReviewRequestPayload): string {
   return "unresolved reviewer/team";
 }
 
-function buildDispatch(
+function reviewerProofFromResolution(resolution: ResolutionProjection): ReviewerResolutionProof {
+  return {
+    status: resolution.targetResolutionStatus,
+    agentId: resolution.targetAgentId,
+    role: resolution.targetRole,
+    matchedAgentIds: resolution.matchedAgentIds,
+  };
+}
+
+function bindingFromWorkItem(item: WorkItem, payload: PrReviewRequestPayload): PrWorkGraphBindingProof | null {
+  const p = item.payload;
+  if (!isRecord(p)) return null;
+  if (p.obligationKind !== "github_pr_workgraph_binding") return null;
+  if (p.repo !== payload.repo || p.prNumber !== payload.number) return null;
+  if (typeof p.targetWorkId !== "string") return null;
+  if (item.createdBy?.role !== "architect" && item.createdBy?.role !== "system") return null;
+  return {
+    id: item.id,
+    repo: payload.repo,
+    prNumber: payload.number,
+    targetWorkId: p.targetWorkId,
+    provenance: "hub",
+    headSha: typeof p.headSha === "string" ? p.headSha : undefined,
+    baseSha: typeof p.baseSha === "string" ? p.baseSha : undefined,
+    version: typeof p.version === "string" ? p.version : undefined,
+  };
+}
+
+async function resolveHubBinding(ctx: IPolicyContext, payload: PrReviewRequestPayload): Promise<PrWorkGraphBindingProof | null> {
+  if (!ctx.stores.workItem) return null;
+  const listed = await ctx.stores.workItem.listWorkItems();
+  for (const item of listed.items) {
+    const binding = bindingFromWorkItem(item, payload);
+    if (binding) return binding;
+  }
+  return null;
+}
+
+async function findExistingProjection(
+  ctx: IPolicyContext,
+  projectionKey: string | null,
+): Promise<ExistingPrReviewProjection | null> {
+  if (!projectionKey || !ctx.stores.workItem) return null;
+  const listed = await ctx.stores.workItem.listWorkItems();
+  const found = listed.items.find((item) => {
+    const payload = item.payload;
+    return isRecord(payload) && payload.projectionKey === projectionKey;
+  });
+  return found ? { projectionKey, workId: found.id, status: found.status } : null;
+}
+
+async function buildDispatch(
   inbound: Message,
-  subkind: "pr-review-requested" | "pr-review-request-removed",
+  subkind: PrReviewRequestLegacySubkind,
   payload: PrReviewRequestPayload,
+  ctx: IPolicyContext,
   resolution: ResolutionProjection,
-): MessageDispatch {
+): Promise<MessageDispatch> {
   const intent =
     subkind === "pr-review-request-removed"
       ? "pr-review-request-removed-notification"
       : "pr-review-requested-notification";
+  const normalizedEvent = normalizePrReviewRequestEvent({
+    legacySubkind: subkind,
+    sourceMessageId: inbound.id,
+    repo: payload.repo,
+    prNumber: payload.number,
+    title: payload.title,
+    url: payload.url,
+    authorLogin: payload.author,
+    requestedReviewerLogin: payload.requestedReviewerLogin,
+    requestedTeamSlug: payload.requestedTeamSlug,
+    requestedTeamName: payload.requestedTeamName,
+    baseRef: payload.base?.ref,
+    baseSha: payload.base?.sha,
+    headRef: payload.head?.ref,
+    headSha: payload.head?.sha,
+  });
+  const binding = await resolveHubBinding(ctx, payload);
+  const target = binding && ctx.stores.workItem
+    ? await ctx.stores.workItem.getWorkItem(binding.targetWorkId)
+    : null;
+  const preliminaryRuleDecision = evaluatePrReviewRequestRule({
+    event: normalizedEvent,
+    binding,
+    target: target ? { id: target.id, status: target.status } : null,
+    reviewer: reviewerProofFromResolution(resolution),
+  });
+  const existingProjection = await findExistingProjection(
+    ctx,
+    preliminaryRuleDecision.bindingDecision.ok ? preliminaryRuleDecision.bindingDecision.projectionKey : null,
+  );
+  const ruleDecision = evaluatePrReviewRequestRule({
+    event: normalizedEvent,
+    binding,
+    target: target ? { id: target.id, status: target.status } : null,
+    reviewer: reviewerProofFromResolution(resolution),
+    existingObligation: existingProjection
+      ? { id: existingProjection.workId, status: existingProjection.status as WorkItem["status"] }
+      : null,
+  });
+  const projectionDecision = projectPrReviewWorkItem({ ruleResult: ruleDecision, existingProjection });
+  const materialization = await reconcilePrReviewProjection({
+    store: ctx.stores.workItem,
+    projection: projectionDecision,
+    binding,
+    sourceMessageId: inbound.id,
+  });
   const body = `${actionNoun(payload)} for PR #${payload.number}: ${requestedSubject(payload)}`;
   return {
     kind: "note",
@@ -147,6 +254,14 @@ function buildDispatch(
       prBaseRef: payload.base?.ref ?? "",
       prHeadRef: payload.head?.ref ?? "",
       sourceMessageId: inbound.id,
+      normalizedEvent,
+      normalizedEventType: normalizedEvent.type,
+      normalizedEventIdempotencyKey: normalizedEvent.idempotencyKey,
+      ruleId: normalizedEvent.ruleId,
+      bindingDecision: ruleDecision.bindingDecision,
+      ruleDecision,
+      projectionDecision,
+      materialization,
     },
   };
 }
@@ -154,7 +269,7 @@ function buildDispatch(
 async function handlePrReviewRequest(
   inbound: Message,
   ctx: IPolicyContext,
-  subkind: "pr-review-requested" | "pr-review-request-removed",
+  subkind: PrReviewRequestLegacySubkind,
 ): Promise<MessageDispatch[]> {
   const payload = extractInboundPayload(inbound);
   if (!payload) {
@@ -164,7 +279,7 @@ async function handlePrReviewRequest(
     return [];
   }
   const resolution = await resolveTarget(payload, ctx);
-  return [buildDispatch(inbound, subkind, payload, resolution)];
+  return [await buildDispatch(inbound, subkind, payload, ctx, resolution)];
 }
 
 export const PR_REVIEW_REQUESTED_HANDLER: RepoEventHandler = {

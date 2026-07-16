@@ -184,6 +184,19 @@ describe("deriveRenderContext (§1.2 + §2.2 resolution table)", () => {
     expect(removed?.entityRef?.id).toBe("PR #625");
   });
 
+  it("renders review-request fallback reason without making WorkGraph claims", () => {
+    const ctx = deriveRenderContext("pr-review-requested-notification", {
+      prNumber: 626,
+      requestedReviewerLogin: "apnex-lily",
+      ruleId: "pr_review_request_to_workitem_v0",
+      bindingDecision: { ok: false, reason: "binding_missing", fallbackOnly: true },
+    });
+    expect(ctx?.sourceClass).toBe("System-PR");
+    expect(ctx?.actionVerb).toBe("Review requested from apnex-lily");
+    expect(ctx?.bodyPreview).toBe("fallback=binding_missing via pr_review_request_to_workitem_v0");
+    expect(ctx?.actionability).toBe("emitted");
+  });
+
   it("maps pulse events → System-Pulse sourceClass", () => {
     const ctx = deriveRenderContext("engineerPulse", {
       missionId: "mission-1",
