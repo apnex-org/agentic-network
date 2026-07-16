@@ -3,13 +3,31 @@
 # ois/deploy.sh — install the canonical ois (ois/bin/ois, the source of truth)
 # to the Director's workstation live path, with a pre-overwrite backup.
 #
-#   ./ois/deploy.sh          install to ~/.config/apnex-agents/bin/ois
-#   ./ois/deploy.sh --diff   show canonical-vs-live diff, change nothing
+#   ./ois/deploy.sh                           install to ~/.config/apnex-agents/bin/ois
+#   ./ois/deploy.sh --diff                    show canonical-vs-live diff, change nothing
+#   ./ois/deploy.sh --diff --manifest-ref REF also compare deployed manifest to REF:ois/manifests/...
+#   ./ois/deploy.sh --promote-manifest-ref REF promote only REF:ois/manifests/... to the live manifest
 #
 set -euo pipefail
 
+MODE="deploy"
+INTENDED_MANIFEST_REF="${OIS_MANIFEST_REF:-}"
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --diff) MODE="diff"; shift ;;
+    --manifest-ref|--diff-ref)
+      [[ $# -ge 2 ]] || { echo "error: $1 requires a git ref" >&2; exit 1; }
+      INTENDED_MANIFEST_REF="$2"; shift 2 ;;
+    --promote-manifest-ref)
+      [[ $# -ge 2 ]] || { echo "error: --promote-manifest-ref requires a git ref" >&2; exit 1; }
+      MODE="promote_manifest"; INTENDED_MANIFEST_REF="$2"; shift 2 ;;
+    *) echo "error: unknown arg $1" >&2; exit 1 ;;
+  esac
+done
+
 SRC="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/bin/ois"
 DEST="$HOME/.config/apnex-agents/bin/ois"
+REPO_ROOT="$(git -C "$(dirname "$SRC")" rev-parse --show-toplevel 2>/dev/null || true)"
 
 # bug-247: the interactive-prompt resolver lib + its handler table are part of the staged
 # surface. They co-ship with any ois that references them (the resolver is sourced beside
@@ -20,6 +38,51 @@ RESOLVER_DEST="$HOME/.config/apnex-agents/bin/prompt-resolve.sh"
 HANDLERS_DEST="$HOME/.config/apnex-agents/config/prompt-handlers.json"
 PI_HARNESS_CONFIG_SRC="$(dirname "$SRC")/../../config/harnesses/pi.json"
 PI_HARNESS_CONFIG_DEST="$HOME/.config/apnex-agents/config/harnesses/pi.json"
+
+MANIFEST_REL="ois/manifests/skill-sync/wanted-bundles.yaml"
+MANIFEST_DEST="$HOME/.config/apnex-agents/manifests/skill-sync/wanted-bundles.yaml"
+
+manifest_from_ref() { # <git-ref> -> manifest content on stdout
+  local ref="$1"
+  [[ -n "$REPO_ROOT" ]] || { echo "error: --manifest-ref requires deploy.sh to run inside a git worktree" >&2; return 1; }
+  git -C "$REPO_ROOT" show "$ref:$MANIFEST_REL"
+}
+
+manifest_projection() { # stdin manifest yaml -> comparable source_repo/source_ref/bundles/extra_skills projection
+  awk '
+    function flush_list() {
+      if (mode != "") {
+        printf "%s=%s\n", mode, values;
+        mode=""; values="";
+      }
+    }
+    /^[[:space:]]*#/ || /^[[:space:]]*$/ { next }
+    /^source_repo:[[:space:]]*/ { flush_list(); sub(/^source_repo:[[:space:]]*/, ""); print "source_repo=" $0; next }
+    /^source_ref:[[:space:]]*/ { flush_list(); sub(/^source_ref:[[:space:]]*/, ""); print "source_ref=" $0; next }
+    /^bundles:[[:space:]]*\[\][[:space:]]*$/ { flush_list(); print "bundles="; next }
+    /^extra_skills:[[:space:]]*\[\][[:space:]]*$/ { flush_list(); print "extra_skills="; next }
+    /^bundles:[[:space:]]*$/ { flush_list(); mode="bundles"; values=""; next }
+    /^extra_skills:[[:space:]]*$/ { flush_list(); mode="extra_skills"; values=""; next }
+    /^[[:space:]]*-[[:space:]]*/ && mode != "" { sub(/^[[:space:]]*-[[:space:]]*/, ""); values = values (values == "" ? "" : ",") $0; next }
+    { flush_list() }
+    END { flush_list() }
+  '
+}
+
+backup_install_manifest() { # <source-file>
+  local src="$1" stamp bak n
+  mkdir -p "$(dirname "$MANIFEST_DEST")"
+  if [[ -f "$MANIFEST_DEST" ]]; then
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    bak="$MANIFEST_DEST.bak-$stamp"
+    n=1
+    while [[ -e "$bak" ]]; do bak="$MANIFEST_DEST.bak-$stamp.$n"; n=$((n+1)); done
+    cp -p -n "$MANIFEST_DEST" "$bak" && [[ -e "$bak" ]] || { echo "error: backup failed (refusing to overwrite live manifest without one)" >&2; return 1; }
+    echo "backed up live manifest -> $bak"
+  fi
+  install -m 0644 "$src" "$MANIFEST_DEST"
+  echo "deployed $src -> $MANIFEST_DEST"
+}
 
 [[ -f "$SRC" ]] || { echo "error: canonical source not found at $SRC" >&2; exit 1; }
 bash -n "$SRC" || { echo "error: canonical source fails bash -n; refusing to deploy" >&2; exit 1; }
@@ -46,16 +109,24 @@ if grep -q 'prompt-resolve.sh' "$SRC"; then
   jq empty "$HANDLERS_SRC" 2>/dev/null || { echo "error: prompt-handlers.json is not valid JSON; refusing to deploy" >&2; exit 1; }
 fi
 
-if [[ "${1:-}" == "--diff" ]]; then
+if [[ "$MODE" == "diff" ]]; then
   diff -u "$DEST" "$SRC" && echo "live bin/ois is identical to canonical" || true
   # work-179 (Arc-1 S4): the preflight must also cover the skill-sync manifest —
   # bin/ois alone is not the whole staged surface. Shows the manifest (incl. the
   # pinned source_ref) the Director is about to activate.
   MSRC="$(dirname "$SRC")/../manifests/skill-sync/wanted-bundles.yaml"
-  MDEST="$HOME/.config/apnex-agents/manifests/skill-sync/wanted-bundles.yaml"
   if [[ -f "$MSRC" ]]; then
-    echo "--- skill-sync manifest diff ---"
-    diff -u "$MDEST" "$MSRC" && echo "live skill-sync manifest is identical to canonical" || true
+    echo "--- skill-sync manifest diff (working tree canonical) ---"
+    diff -u "$MANIFEST_DEST" "$MSRC" && echo "live skill-sync manifest is identical to working tree canonical" || true
+  fi
+  if [[ -n "$INTENDED_MANIFEST_REF" ]]; then
+    tmp_manifest="$(mktemp)"
+    manifest_from_ref "$INTENDED_MANIFEST_REF" > "$tmp_manifest"
+    echo "--- skill-sync manifest diff (intended ref: $INTENDED_MANIFEST_REF) ---"
+    diff -u "$MANIFEST_DEST" "$tmp_manifest" && echo "live skill-sync manifest is identical to intended ref $INTENDED_MANIFEST_REF" || true
+    echo "--- skill-sync manifest field diff (source_repo/source_ref/bundles/extra_skills; intended ref: $INTENDED_MANIFEST_REF) ---"
+    diff -u <(manifest_projection < "$MANIFEST_DEST") <(manifest_projection < "$tmp_manifest") && echo "live skill-sync manifest fields match intended ref $INTENDED_MANIFEST_REF" || true
+    rm -f "$tmp_manifest"
   fi
   # bug-247: the resolver lib + handler table are part of the staged surface too.
   if [[ -f "$RESOLVER_SRC" ]]; then
@@ -68,6 +139,17 @@ if [[ "${1:-}" == "--diff" ]]; then
   fi
   echo "--- config/harnesses/pi.json diff ---"
   diff -u "$PI_HARNESS_CONFIG_DEST" "$PI_HARNESS_CONFIG_SRC" && echo "live pi harness config is identical to canonical" || true
+  exit 0
+fi
+
+if [[ "$MODE" == "promote_manifest" ]]; then
+  tmp_manifest="$(mktemp)"
+  manifest_from_ref "$INTENDED_MANIFEST_REF" > "$tmp_manifest"
+  echo "--- skill-sync manifest field diff before promotion (intended ref: $INTENDED_MANIFEST_REF) ---"
+  diff -u <(manifest_projection < "$MANIFEST_DEST") <(manifest_projection < "$tmp_manifest") || true
+  backup_install_manifest "$tmp_manifest"
+  rm -f "$tmp_manifest"
+  echo "verify: ./ois/deploy.sh --diff --manifest-ref $INTENDED_MANIFEST_REF"
   exit 0
 fi
 
@@ -90,11 +172,8 @@ echo "deployed $SRC -> $DEST"
 # The HCAP skills-consumer (claude_seed, fleetskills0/idea-505) reads
 # $ROOT/manifests/skill-sync/wanted-bundles.yaml; absent it no-ops. Non-fatal if absent.
 MANIFEST_SRC="$(dirname "$SRC")/../manifests/skill-sync/wanted-bundles.yaml"
-MANIFEST_DEST="$HOME/.config/apnex-agents/manifests/skill-sync/wanted-bundles.yaml"
 if [[ -f "$MANIFEST_SRC" ]]; then
-  mkdir -p "$(dirname "$MANIFEST_DEST")"
-  install -m 0644 "$MANIFEST_SRC" "$MANIFEST_DEST"
-  echo "deployed $MANIFEST_SRC -> $MANIFEST_DEST"
+  backup_install_manifest "$MANIFEST_SRC"
 else
   echo "note: no skill-sync manifest at $MANIFEST_SRC (skill-sync will no-op until present)"
 fi
