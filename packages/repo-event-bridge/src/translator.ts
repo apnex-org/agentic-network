@@ -17,6 +17,10 @@
  *       covers in-line review comments; `pr-review-submitted` covers
  *       the residual "changes_requested" / generic-comment review
  *       state.
+ *   - `pr-review-requested` / `pr-review-request-removed`
+ *       Review request assignment lifecycle. These are GitHub
+ *       `pull_request` actions (`review_requested` / `review_request_removed`),
+ *       not submitted review bodies and not branch-protection state.
  *   - `commit-pushed`
  *       Push event (one or more commits to a ref).
  *   - `unknown`
@@ -52,6 +56,8 @@ export const REPO_EVENT_SUBKINDS = [
   "pr-review-submitted",
   "pr-review-approved",
   "pr-review-comment",
+  "pr-review-requested",
+  "pr-review-request-removed",
   "commit-pushed",
   // idea-255 / M-Workflow-Run-Events-Hub-Integration v1.0 (sibling translator
   // in `./workflow-run-translator.ts` produces these subkinds; per-conclusion
@@ -135,6 +141,9 @@ export function normalizeGhEvent(
     case "pr-closed":
     case "pr-merged":
       return normalizePullRequest(payload, repo, actor);
+    case "pr-review-requested":
+    case "pr-review-request-removed":
+      return normalizePullRequestReviewRequest(payload, repo, actor);
     case "pr-review-submitted":
     case "pr-review-approved":
       return normalizePullRequestReview(payload, repo, actor);
@@ -176,6 +185,8 @@ function dispatchPullRequest(
   // (PR is alive again; may need triage). Both events-API and webhook shapes
   // emit action="reopened".
   if (action === "reopened") return "pr-opened";
+  if (action === "review_requested") return "pr-review-requested";
+  if (action === "review_request_removed") return "pr-review-request-removed";
   if (action === "closed") {
     const pr = isRecord(payload.pull_request) ? payload.pull_request : undefined;
     return pr?.merged === true ? "pr-merged" : "pr-closed";
@@ -242,6 +253,24 @@ function normalizePullRequest(
     merged: pr.merged === true,
     base: extractRef(pr.base),
     head: extractRef(pr.head),
+  };
+}
+
+function normalizePullRequestReviewRequest(
+  payload: Record<string, unknown>,
+  repo: string | undefined,
+  actor?: Record<string, unknown>,
+): Record<string, unknown> {
+  const base = normalizePullRequest(payload, repo, actor);
+  const requestedReviewer = isRecord(payload.requested_reviewer)
+    ? payload.requested_reviewer
+    : undefined;
+  const requestedTeam = isRecord(payload.requested_team) ? payload.requested_team : undefined;
+  return {
+    ...base,
+    requestedReviewerLogin: extractLogin(requestedReviewer),
+    requestedTeamSlug: typeof requestedTeam?.slug === "string" ? requestedTeam.slug : undefined,
+    requestedTeamName: typeof requestedTeam?.name === "string" ? requestedTeam.name : undefined,
   };
 }
 

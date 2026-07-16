@@ -28,11 +28,10 @@
  *     (non-fatal; substrate-grade isolation per `repo-event-handler.ts`
  *     failure-isolation contract).
  *
- * Path C scope (Director-ratified 2026-04-30): substrate ships ONE
- * handler this mission (commit-pushed); additional handlers
- * (pr-opened/closed/merged/review-requested/etc.) compose via idea-227
- * Hook Design or a dedicated cross-party-routing follow-on mission per
- * AG-4 anti-goal.
+ * Path C scope (Director-ratified 2026-04-30): substrate originally shipped
+ * ONE handler (commit-pushed). Later missions promoted selected PR and
+ * workflow-run subkinds into this registry; remaining unregistered subkinds
+ * continue to log-and-skip non-fatally.
  *
  * How to add a new handler:
  *   1. Author handler module (e.g., `pr-opened-handler.ts`) exporting
@@ -49,6 +48,10 @@ import { PR_OPENED_HANDLER } from "./repo-event-pr-opened-handler.js";
 import { PR_MERGED_HANDLER } from "./repo-event-pr-merged-handler.js";
 import { PR_REVIEW_SUBMITTED_HANDLER } from "./repo-event-pr-review-submitted-handler.js";
 import { PR_REVIEW_APPROVED_HANDLER } from "./repo-event-pr-review-approved-handler.js";
+import {
+  PR_REVIEW_REQUESTED_HANDLER,
+  PR_REVIEW_REQUEST_REMOVED_HANDLER,
+} from "./repo-event-pr-review-requested-handler.js";
 import {
   WORKFLOW_RUN_COMPLETED_HANDLER,
   WORKFLOW_RUN_DISPATCHED_HANDLER,
@@ -110,11 +113,11 @@ export interface RepoEventHandler {
  * explicit-surface on coord-thread (operational per mission-84 6-PR
  * cycle). See `docs/designs/m-commit-pushed-handler-retirement-design.md`.
  *
- * Net coverage: 4 of 8 RepoEventSubkind values post mission-85 retirement
- * (4 PR-event handlers + 3 workflow-run handlers). commit-pushed events
- * still flow through bridge but dispatch to no registered handler (silent
- * skip is intentional per retirement). 2 carved-out per idea-250 (pr-closed
- * + pr-review-comment) with documented promotion triggers. 1 unknown
+ * Net coverage: 6 PR-event handlers + 3 workflow-run handlers post
+ * mission-85 retirement and pr_review_request_event0. commit-pushed events
+ * still flow through bridge but dispatch to no registered handler (skip is
+ * intentional per retirement). pr-closed + pr-review-comment remain carved
+ * out per idea-250 with documented promotion triggers. unknown remains the
  * intentional fallback.
  */
 export const REPO_EVENT_HANDLERS: readonly RepoEventHandler[] = [
@@ -122,6 +125,8 @@ export const REPO_EVENT_HANDLERS: readonly RepoEventHandler[] = [
   PR_MERGED_HANDLER,
   PR_REVIEW_SUBMITTED_HANDLER,
   PR_REVIEW_APPROVED_HANDLER,
+  PR_REVIEW_REQUESTED_HANDLER,
+  PR_REVIEW_REQUEST_REMOVED_HANDLER,
   // idea-255 / M-Workflow-Run-Events-Hub-Integration v1.0 §1.3 F2 fold:
   // 3 entries — one per workflow-run-* subkind for filter-list granularity
   WORKFLOW_RUN_COMPLETED_HANDLER,

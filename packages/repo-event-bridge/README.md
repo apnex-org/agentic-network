@@ -62,10 +62,14 @@ const event: RepoEvent = translateGhEvent(ghEvent);
 | `pr-review-submitted` | `pull_request_review` event, `action='submitted'`, residual review states (`changes_requested`, etc.) |
 | `pr-review-approved` | `pull_request_review` event, `action='submitted'`, `state='approved'` |
 | `pr-review-comment` | `pull_request_review_comment` event OR review with `state='commented'` |
+| `pr-review-requested` | `pull_request` event, `action='review_requested'` |
+| `pr-review-request-removed` | `pull_request` event, `action='review_request_removed'` |
 | `commit-pushed` | `push` event |
 | `unknown` | Unrecognized event type or malformed shape (graceful-degrade fallback) |
 
 `kind` stays fixed at `"repo-event"` so sink-side dispatch can route on `kind`; per-type semantics live in `subkind`. `unknown` is the load-bearing fallback that keeps the surface forward-compatible — a new GH event type doesn't break ingestion, it lands as `unknown` until the translator is extended (Hub can log + alert on rising unknown-rate).
+
+Review-request subkinds are event/note feed inputs only. `pr-review-requested` means GitHub emitted an explicit review-request assignment event; `pr-review-request-removed` is cancellation metadata. Neither subkind is branch-protection truth, a WorkGraph obligation, CODEOWNERS/team membership expansion, merge actuation, or rules-engine promotion by itself.
 
 v1 payload normalization is deliberately minimal — enough to drive Hub-side dispatch (T3) without locking schemas downstream. Translator-schema-evolution is a tracked future-mission seed (mission-52 T5 closing audit).
 

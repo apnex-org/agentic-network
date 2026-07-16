@@ -98,6 +98,24 @@ describe("dispatchSubkind — pull request lifecycle", () => {
     ).toBe("pr-opened");
   });
 
+  it("review_requested action → pr-review-requested", () => {
+    expect(
+      dispatchSubkind({
+        type: "PullRequestEvent",
+        payload: { action: "review_requested", pull_request: { number: 1 } },
+      }),
+    ).toBe("pr-review-requested");
+  });
+
+  it("review_request_removed action → pr-review-request-removed", () => {
+    expect(
+      dispatchSubkind({
+        type: "PullRequestEvent",
+        payload: { action: "review_request_removed", pull_request: { number: 1 } },
+      }),
+    ).toBe("pr-review-request-removed");
+  });
+
   it("unrecognized PR action → unknown", () => {
     expect(
       dispatchSubkind({
@@ -299,6 +317,86 @@ describe("normalizeGhEvent — pr-merged payload", () => {
     expect(out.merged).toBe(true);
     expect(out.number).toBe(9);
     expect(out.author).toBe("bob");
+  });
+});
+
+describe("normalizeGhEvent — PR review request payload", () => {
+  it("normalizes user reviewer request fields", () => {
+    const ghEvent = {
+      type: "PullRequestEvent",
+      repo: { name: "owner/repo" },
+      payload: {
+        action: "review_requested",
+        pull_request: {
+          number: 12,
+          title: "Add review request event",
+          html_url: "https://github.com/owner/repo/pull/12",
+          user: { login: "apnex-greg" },
+          base: { ref: "main", sha: "aaa" },
+          head: { ref: "feature/review-request", sha: "bbb" },
+        },
+        requested_reviewer: { login: "apnex-lily" },
+      },
+    };
+    const out = normalizeGhEvent(ghEvent, "pr-review-requested");
+    expect(out.repo).toBe("owner/repo");
+    expect(out.action).toBe("review_requested");
+    expect(out.number).toBe(12);
+    expect(out.title).toBe("Add review request event");
+    expect(out.url).toBe("https://github.com/owner/repo/pull/12");
+    expect(out.author).toBe("apnex-greg");
+    expect(out.requestedReviewerLogin).toBe("apnex-lily");
+    expect(out.requestedTeamSlug).toBeUndefined();
+    expect(out.base).toEqual({ ref: "main", sha: "aaa" });
+    expect(out.head).toEqual({ ref: "feature/review-request", sha: "bbb" });
+  });
+
+  it("normalizes team reviewer request fields", () => {
+    const ghEvent = {
+      type: "PullRequestEvent",
+      repo: { name: "owner/repo" },
+      payload: {
+        action: "review_requested",
+        pull_request: {
+          number: 13,
+          title: "Team request",
+          html_url: "https://github.com/owner/repo/pull/13",
+          user: { login: "apnex-greg" },
+        },
+        requested_team: { slug: "platform-reviewers", name: "Platform Reviewers" },
+      },
+    };
+    const out = normalizeGhEvent(ghEvent, "pr-review-requested");
+    expect(out.number).toBe(13);
+    expect(out.requestedReviewerLogin).toBeUndefined();
+    expect(out.requestedTeamSlug).toBe("platform-reviewers");
+    expect(out.requestedTeamName).toBe("Platform Reviewers");
+  });
+
+  it("normalizes removal events with the same requested-user metadata", () => {
+    const ghEvent = {
+      type: "PullRequestEvent",
+      actor: { login: "apnex-greg" },
+      repo: { name: "owner/repo" },
+      payload: {
+        action: "review_request_removed",
+        pull_request: {
+          number: 14,
+          title: null,
+          html_url: null,
+          url: "https://api.github.com/repos/owner/repo/pulls/14",
+          user: null,
+        },
+        requested_reviewer: { login: "apnex-lily" },
+      },
+    };
+    const out = normalizeGhEvent(ghEvent, "pr-review-request-removed");
+    expect(out.action).toBe("review_request_removed");
+    expect(out.number).toBe(14);
+    expect(out.title).toBe("");
+    expect(out.url).toBe("https://github.com/owner/repo/pull/14");
+    expect(out.author).toBe("apnex-greg");
+    expect(out.requestedReviewerLogin).toBe("apnex-lily");
   });
 });
 

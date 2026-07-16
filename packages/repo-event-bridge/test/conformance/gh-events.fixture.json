@@ -191,6 +191,59 @@
       }
     },
     {
+      "name": "pr-review-requested-user",
+      "input": {
+        "type": "PullRequestEvent",
+        "repo": { "name": "apnex-org/agentic-network" },
+        "payload": {
+          "action": "review_requested",
+          "pull_request": {
+            "number": 104,
+            "title": "Add review-request event coverage",
+            "html_url": "https://github.com/apnex-org/agentic-network/pull/104",
+            "user": { "login": "engineer-greg" },
+            "base": { "ref": "main", "sha": "b453" },
+            "head": { "ref": "greg/pr-review-request-event0", "sha": "cafe" }
+          },
+          "requested_reviewer": { "login": "architect-lily" }
+        }
+      },
+      "expectedSubkind": "pr-review-requested",
+      "expectedPayload": {
+        "repo": "apnex-org/agentic-network",
+        "action": "review_requested",
+        "number": 104,
+        "author": "engineer-greg",
+        "requestedReviewerLogin": "architect-lily"
+      }
+    },
+    {
+      "name": "pr-review-request-removed-team",
+      "input": {
+        "type": "PullRequestEvent",
+        "repo": { "name": "apnex-org/agentic-network" },
+        "payload": {
+          "action": "review_request_removed",
+          "pull_request": {
+            "number": 105,
+            "title": "Team review removal",
+            "html_url": "https://github.com/apnex-org/agentic-network/pull/105",
+            "user": { "login": "engineer-greg" }
+          },
+          "requested_team": { "slug": "platform-reviewers", "name": "Platform Reviewers" }
+        }
+      },
+      "expectedSubkind": "pr-review-request-removed",
+      "expectedPayload": {
+        "repo": "apnex-org/agentic-network",
+        "action": "review_request_removed",
+        "number": 105,
+        "author": "engineer-greg",
+        "requestedTeamSlug": "platform-reviewers",
+        "requestedTeamName": "Platform Reviewers"
+      }
+    },
+    {
       "name": "commit-pushed",
       "input": {
         "type": "PushEvent",

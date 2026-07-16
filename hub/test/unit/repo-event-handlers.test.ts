@@ -3,10 +3,10 @@
  *
  * mission-85 retired COMMIT_PUSHED_HANDLER per CROSS-LAYER IDENTITY EXTRACTION
  * calibration (see `docs/designs/m-commit-pushed-handler-retirement-design.md`).
- * Post-retirement registry pinned to 7 handlers (4 PR-event + 3 workflow-run).
+ * Post-retirement registry pinned to 9 handlers (6 PR-event + 3 workflow-run).
  *
  * Pins:
- *   - REPO_EVENT_HANDLERS registry seed contains 7 post-mission-85 handlers
+ *   - REPO_EVENT_HANDLERS registry seed contains 9 post-mission-85 handlers
  *   - REPO_EVENT_HANDLERS registry seed does NOT contain commit-pushed (AG-4)
  *   - findRepoEventHandler resolves by subkind; returns null for missing
  *   - findRepoEventHandler returns null for commit-pushed (mission-85 retirement)
@@ -87,13 +87,15 @@ function makeCtx(agents: Agent[]): IPolicyContext {
 // ── Registry tests ────────────────────────────────────────────────────
 
 describe("REPO_EVENT_HANDLERS registry (mission-68 + mission-76 + idea-255 + mission-85 retirement)", () => {
-  it("post-mission-85 contains 7 handlers (4 PR-event + 3 workflow-run; commit-pushed RETIRED)", () => {
-    expect(REPO_EVENT_HANDLERS.length).toBe(7);
+  it("post-mission-85 contains 9 handlers (6 PR-event + 3 workflow-run; commit-pushed RETIRED)", () => {
+    expect(REPO_EVENT_HANDLERS.length).toBe(9);
     const subkinds = REPO_EVENT_HANDLERS.map((h) => h.subkind);
     expect(subkinds).toContain("pr-opened");
     expect(subkinds).toContain("pr-merged");
     expect(subkinds).toContain("pr-review-submitted");
     expect(subkinds).toContain("pr-review-approved");
+    expect(subkinds).toContain("pr-review-requested");
+    expect(subkinds).toContain("pr-review-request-removed");
     expect(subkinds).toContain("workflow-run-completed");
     expect(subkinds).toContain("workflow-run-dispatched");
     expect(subkinds).toContain("workflow-run-in-progress");

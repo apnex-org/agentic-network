@@ -414,13 +414,18 @@ export function deriveRenderContext(
     case "pr-merged-notification":
     case "pr-review-approved-notification":
     case "pr-review-submitted-notification":
+    case "pr-review-requested-notification":
+    case "pr-review-request-removed-notification":
     case "commit-pushed-notification": {
       const author = str("authorRole") ?? str("author") ?? "Agent";
+      const requested = str("requestedReviewerLogin") ?? str("requestedTeamSlug") ?? str("requestedTeamName");
       const verb =
         event === "pr-opened-notification" ? `${author} opened` :
         event === "pr-merged-notification" ? `${author} merged` :
         event === "pr-review-approved-notification" ? `${author} approved` :
         event === "pr-review-submitted-notification" ? `${author} reviewed` :
+        event === "pr-review-requested-notification" ? `Review requested${requested ? ` from ${requested}` : ""}` :
+        event === "pr-review-request-removed-notification" ? `Review request removed${requested ? ` for ${requested}` : ""}` :
         `${author} pushed`;
       const prNumber = data.prNumber ?? data.pullNumber;
       const repoRef = str("repo") ?? "";
