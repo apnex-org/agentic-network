@@ -148,14 +148,51 @@ function bindingFromWorkItem(item: WorkItem, payload: PrReviewRequestPayload): P
   };
 }
 
-async function resolveHubBinding(ctx: IPolicyContext, payload: PrReviewRequestPayload): Promise<PrWorkGraphBindingProof | null> {
-  if (!ctx.stores.workItem) return null;
-  const listed = await ctx.stores.workItem.listWorkItems();
-  for (const item of listed.items) {
-    const binding = bindingFromWorkItem(item, payload);
-    if (binding) return binding;
+async function listPrReviewBindingCandidates(
+  ctx: IPolicyContext,
+  payload: PrReviewRequestPayload,
+): Promise<{ items: WorkItem[]; truncated: boolean }> {
+  const store = ctx.stores.workItem;
+  if (!store) return { items: [], truncated: false };
+  if (typeof store.listPrReviewBindingWorkItems === "function") {
+    return store.listPrReviewBindingWorkItems(payload.repo, payload.number);
   }
-  return null;
+  // Back-compat for narrow test doubles/older stores: retain behavior, but production
+  // repositories implement the keyed path above so authority lookups are not hostage
+  // to an unfiltered cap.
+  return store.listWorkItems();
+}
+
+async function listProjectionCandidates(
+  ctx: IPolicyContext,
+  projectionKey: string,
+): Promise<{ items: WorkItem[]; truncated: boolean }> {
+  const store = ctx.stores.workItem;
+  if (!store) return { items: [], truncated: false };
+  if (typeof store.listWorkItemsByProjectionKey === "function") {
+    return store.listWorkItemsByProjectionKey(projectionKey);
+  }
+  return store.listWorkItems();
+}
+
+type HubBindingResolution =
+  | { binding: PrWorkGraphBindingProof; denialReason?: undefined }
+  | { binding: null; denialReason?: "binding_ambiguous" };
+
+async function resolveHubBinding(ctx: IPolicyContext, payload: PrReviewRequestPayload): Promise<HubBindingResolution> {
+  if (!ctx.stores.workItem) return { binding: null };
+  const listed = await listPrReviewBindingCandidates(ctx, payload);
+  if (listed.truncated) {
+    console.warn(
+      `[repo-event-pr-review-requested-handler] binding lookup for ${payload.repo}#${payload.number} hit payload-filter cap`,
+    );
+  }
+  const matches = listed.items
+    .map((item) => bindingFromWorkItem(item, payload))
+    .filter((binding): binding is PrWorkGraphBindingProof => binding !== null);
+  if (matches.length === 1) return { binding: matches[0] };
+  if (matches.length > 1) return { binding: null, denialReason: "binding_ambiguous" };
+  return { binding: null };
 }
 
 async function findExistingProjection(
@@ -163,7 +200,12 @@ async function findExistingProjection(
   projectionKey: string | null,
 ): Promise<ExistingPrReviewProjection | null> {
   if (!projectionKey || !ctx.stores.workItem) return null;
-  const listed = await ctx.stores.workItem.listWorkItems();
+  const listed = await listProjectionCandidates(ctx, projectionKey);
+  if (listed.truncated) {
+    console.warn(
+      `[repo-event-pr-review-requested-handler] projection lookup for ${projectionKey} hit payload-filter cap`,
+    );
+  }
   const found = listed.items.find((item) => {
     const payload = item.payload;
     return isRecord(payload) && payload.projectionKey === projectionKey;
@@ -198,13 +240,15 @@ async function buildDispatch(
     headRef: payload.head?.ref,
     headSha: payload.head?.sha,
   });
-  const binding = await resolveHubBinding(ctx, payload);
+  const bindingResolution = await resolveHubBinding(ctx, payload);
+  const binding = bindingResolution.binding;
   const target = binding && ctx.stores.workItem
     ? await ctx.stores.workItem.getWorkItem(binding.targetWorkId)
     : null;
   const preliminaryRuleDecision = evaluatePrReviewRequestRule({
     event: normalizedEvent,
     binding,
+    bindingDenialReason: bindingResolution.denialReason,
     target: target ? { id: target.id, status: target.status } : null,
     reviewer: reviewerProofFromResolution(resolution),
   });
@@ -215,6 +259,7 @@ async function buildDispatch(
   const ruleDecision = evaluatePrReviewRequestRule({
     event: normalizedEvent,
     binding,
+    bindingDenialReason: bindingResolution.denialReason,
     target: target ? { id: target.id, status: target.status } : null,
     reviewer: reviewerProofFromResolution(resolution),
     existingObligation: existingProjection

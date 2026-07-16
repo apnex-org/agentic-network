@@ -130,6 +130,7 @@ function buildObligationDraft(
 export function evaluatePrReviewRequestRule(args: {
   event: NormalizedPrReviewRequestEvent;
   binding?: PrWorkGraphBindingProof | null;
+  bindingDenialReason?: "binding_ambiguous";
   target?: BoundWorkProjection | null;
   reviewer: ReviewerResolutionProof;
   existingObligation?: BoundWorkProjection | null;

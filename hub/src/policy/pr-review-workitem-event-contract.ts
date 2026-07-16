@@ -87,6 +87,7 @@ export type PrReviewBindingDenialReason =
   | "binding_target_mismatch"
   | "binding_head_mismatch"
   | "binding_base_mismatch"
+  | "binding_ambiguous"
   | "target_missing"
   | "target_phase_unsafe"
   | "reviewer_not_unique"
@@ -291,6 +292,7 @@ export function evaluatePrReviewRemovalPolicy(args: {
 export function evaluatePrReviewBinding(args: {
   event: NormalizedPrReviewRequestEvent;
   binding?: PrWorkGraphBindingProof | null;
+  bindingDenialReason?: Extract<PrReviewBindingDenialReason, "binding_ambiguous">;
   target?: BoundWorkProjection | null;
   reviewer: ReviewerResolutionProof;
 }): PrReviewBindingDecision {
@@ -300,6 +302,14 @@ export function evaluatePrReviewBinding(args: {
       ok: false,
       ruleId: PR_REVIEW_REQUEST_RULE_ID,
       reason: "removal_is_cancellation_only",
+      fallbackOnly: true,
+    };
+  }
+  if (args.bindingDenialReason) {
+    return {
+      ok: false,
+      ruleId: PR_REVIEW_REQUEST_RULE_ID,
+      reason: args.bindingDenialReason,
       fallbackOnly: true,
     };
   }

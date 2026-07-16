@@ -224,6 +224,73 @@ describe("PR review request handler", () => {
     expect(payload.materialization).toMatchObject({ materialized: false });
   });
 
+  it("uses typed binding/projection lookups instead of capped unfiltered WorkItem scans", async () => {
+    const bindingItem = { id: "prbind-990626", createdBy: { role: "architect", agentId: "agent-architect" }, status: "ready", payload: { obligationKind: "github_pr_workgraph_binding", repo: "apnex-org/agentic-network", prNumber: 624, targetWorkId: "work-target", headSha: "bbb", version: "1" } };
+    const bindingQueries: Array<{ repo: string; prNumber: number }> = [];
+    const projectionQueries: string[] = [];
+    const workItem = {
+      getWorkItem: async (id: string) =>
+        id === "work-target"
+          ? { id: "work-target", status: "ready", payload: {}, roleEligibility: ["engineer"] }
+          : null,
+      listWorkItems: async () => ({
+        items: [{ id: "decoy", createdBy: { role: "architect", agentId: "agent-architect" }, status: "ready", payload: { obligationKind: "github_pr_workgraph_binding", repo: "elsewhere", prNumber: 1, targetWorkId: "work-other" } }],
+        truncated: true,
+      }),
+      listPrReviewBindingWorkItems: async (repo: string, prNumber: number) => {
+        bindingQueries.push({ repo, prNumber });
+        return { items: [bindingItem], truncated: false };
+      },
+      listWorkItemsByProjectionKey: async (projectionKey: string) => {
+        projectionQueries.push(projectionKey);
+        return { items: [], truncated: false };
+      },
+      createBlueprintNode: async (input: unknown) => ({ item: { id: "work-prrev-created", status: "ready", payload: (input as { payload?: unknown }).payload }, created: true }),
+      updateWorkItem: async (id: string) => ({ before: { id }, after: { id } }),
+    };
+    const ctx = makeCtx([makeAgent("agent-lily", "architect", "apnex-lily")], workItem);
+
+    const out = await PR_REVIEW_REQUESTED_HANDLER.handle(
+      wrapAsMessage(reviewRequestedEvent({ reviewer: "apnex-lily" })),
+      ctx,
+    );
+
+    const payload = out[0].payload as Record<string, unknown>;
+    expect(payload.bindingDecision).toMatchObject({ ok: true, bindingId: "prbind-990626", targetWorkId: "work-target" });
+    expect(payload.materialization).toMatchObject({ materialized: true, created: true, relation: "appendDependsOn" });
+    expect(bindingQueries).toEqual([{ repo: "apnex-org/agentic-network", prNumber: 624 }]);
+    expect(projectionQueries).toHaveLength(1);
+  });
+
+  it("fails closed when multiple Hub-authored binding rows match a PR", async () => {
+    const bindingPayload = { obligationKind: "github_pr_workgraph_binding", repo: "apnex-org/agentic-network", prNumber: 624, targetWorkId: "work-target", headSha: "bbb", version: "1" };
+    const workItem = {
+      getWorkItem: async () => ({ id: "work-target", status: "ready", payload: {}, roleEligibility: ["engineer"] }),
+      listWorkItems: async () => ({ items: [], truncated: false }),
+      listPrReviewBindingWorkItems: async () => ({
+        items: [
+          { id: "prbind-a", createdBy: { role: "architect", agentId: "agent-architect" }, status: "ready", payload: bindingPayload },
+          { id: "prbind-b", createdBy: { role: "architect", agentId: "agent-architect" }, status: "ready", payload: bindingPayload },
+        ],
+        truncated: false,
+      }),
+      listWorkItemsByProjectionKey: async () => ({ items: [], truncated: false }),
+      createBlueprintNode: async () => { throw new Error("must not materialize ambiguous binding"); },
+      updateWorkItem: async () => { throw new Error("must not append relation for ambiguous binding"); },
+    };
+    const ctx = makeCtx([makeAgent("agent-lily", "architect", "apnex-lily")], workItem);
+
+    const out = await PR_REVIEW_REQUESTED_HANDLER.handle(
+      wrapAsMessage(reviewRequestedEvent({ reviewer: "apnex-lily" })),
+      ctx,
+    );
+
+    const payload = out[0].payload as Record<string, unknown>;
+    expect(payload.bindingDecision).toMatchObject({ ok: false, reason: "binding_ambiguous", fallbackOnly: true });
+    expect(payload.projectionDecision).toMatchObject({ action: "fallback_only", reason: "binding_ambiguous" });
+    expect(payload.materialization).toMatchObject({ materialized: false, fallbackReason: "binding_ambiguous" });
+  });
+
   it("uses the rule/projection seam to materialize safely bound review requests", async () => {
     const createdNodes: unknown[] = [];
     const updates: unknown[] = [];
