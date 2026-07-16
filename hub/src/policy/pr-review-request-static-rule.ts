@@ -43,12 +43,19 @@ export interface PrReviewObligationDraft {
     };
   };
   runbook: string;
-  evidenceRequirements: Array<{
-    id: "independent_pr_review_validation";
-    kind: "review";
-    description: string;
-    evidenceAuthority: "verifier-attestation";
-  }>;
+  evidenceRequirements: Array<
+    | {
+        id: "github_review_artifact";
+        kind: "freeform";
+        description: string;
+      }
+    | {
+        id: "independent_pr_review_validation";
+        kind: "review";
+        description: string;
+        evidenceAuthority: "verifier-attestation";
+      }
+  >;
 }
 
 export interface PrReviewRequestRuleResult {
@@ -104,11 +111,17 @@ function buildObligationDraft(
       "Review the bound PR. Complete with explicit GitHub review evidence. Do not merge or enqueue unless separately authorized.",
     evidenceRequirements: [
       {
+        id: "github_review_artifact",
+        kind: "freeform",
+        description:
+          "Executor-submitted GitHub PR review artifact URL/id for the requested reviewer and bound head. This artifact is load-bearing input for verifier attestation but does not complete the review obligation alone.",
+      },
+      {
         id: "independent_pr_review_validation",
         kind: "review",
         evidenceAuthority: "verifier-attestation",
         description:
-          "Verifier attestation that GitHub review evidence matches the requested reviewer, bound PR head, and independence policy. Arbitrary executor freeform evidence cannot satisfy this gate.",
+          "Verifier attestation that the submitted GitHub review artifact matches the requested reviewer, bound PR head, and independence policy. External-only refs are not load-bearing; cite the submitted evidence ref.",
       },
     ],
   };

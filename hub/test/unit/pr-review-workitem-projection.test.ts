@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import { normalizePrReviewRequestEvent } from "../../src/policy/pr-review-workitem-event-contract.js";
 import { evaluatePrReviewRequestRule } from "../../src/policy/pr-review-request-static-rule.js";
 import { projectPrReviewWorkItem } from "../../src/policy/pr-review-workitem-projection.js";
+import { createMemoryStorageSubstrate } from "../../src/storage-substrate/memory-substrate.js";
+import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
+import { AttestationRejected, WorkItemRepositorySubstrate } from "../../src/entities/work-item-repository-substrate.js";
 
 function allowedRuleResult() {
   const event = normalizePrReviewRequestEvent({
@@ -53,10 +56,15 @@ describe("PR review WorkItem projection", () => {
       },
       evidenceRequirements: [
         {
+          id: "github_review_artifact",
+          kind: "freeform",
+          description: "Executor-submitted GitHub PR review artifact URL/id for the requested reviewer and bound head. This artifact is load-bearing input for verifier attestation but does not complete the review obligation alone.",
+        },
+        {
           id: "independent_pr_review_validation",
           kind: "review",
           evidenceAuthority: "verifier-attestation",
-          description: "Verifier attestation that GitHub review evidence matches the requested reviewer, bound PR head, and independence policy. Arbitrary executor freeform evidence cannot satisfy this gate.",
+          description: "Verifier attestation that the submitted GitHub review artifact matches the requested reviewer, bound PR head, and independence policy. External-only refs are not load-bearing; cite the submitted evidence ref.",
         },
       ],
     });
@@ -113,6 +121,40 @@ describe("PR review WorkItem projection", () => {
       fallbackReason: "relation_failed:edge rejected",
     });
     expect(deleted).toEqual(["work-created"]);
+  });
+
+  it("provides a load-bearing SEAL path: artifact evidence parks, verifier cites evidence ref, external-only rejects", async () => {
+    const projection = projectPrReviewWorkItem({ ruleResult: allowedRuleResult() });
+    if (projection.action !== "create_review_workitem") throw new Error("expected create");
+    const substrate = createMemoryStorageSubstrate();
+    await substrate.put("Agent", { id: "agent-arch", role: "architect" });
+    await substrate.put("Agent", { id: "agent-verifier", role: "verifier" });
+    const repo = new WorkItemRepositorySubstrate(substrate, new SubstrateCounter(substrate));
+    const item = await repo.createWorkItem({
+      type: projection.createSpec.type,
+      roleEligibility: projection.createSpec.roleEligibility,
+      targetRef: projection.createSpec.targetRef,
+      payload: projection.createSpec.payload,
+      runbook: projection.createSpec.runbook,
+      evidenceRequirements: projection.createSpec.evidenceRequirements,
+    });
+    const claimed = await repo.claimWorkItem(item.id, "agent-arch", "architect");
+    const token = claimed!.lease!.token;
+    await repo.startWork(item.id, "agent-arch", token);
+    const artifactRef = "https://github.com/apnex-org/agentic-network/pull/625#pullrequestreview-1";
+    const parked = await repo.completeWork(
+      item.id,
+      "agent-arch",
+      token,
+      [{ requirementId: "github_review_artifact", kind: "freeform", ref: artifactRef, producedAt: new Date().toISOString() }],
+      { observed: false, summary: "no friction observed" },
+    );
+
+    expect(parked!.status).toBe("review");
+    await expect(repo.attestEvidence(item.id, "independent_pr_review_validation", "agent-verifier", "pass", [{ kind: "external", ref: artifactRef }])).rejects.toThrow(AttestationRejected);
+    await expect(repo.attestEvidence(item.id, "independent_pr_review_validation", "agent-verifier", "pass", [{ kind: "evidence", ref: "missing" }])).rejects.toThrow(AttestationRejected);
+    const attested = await repo.attestEvidence(item.id, "independent_pr_review_validation", "agent-verifier", "pass", [{ kind: "evidence", ref: artifactRef }]);
+    expect(attested.item.status).toBe("done");
   });
 
   it("keeps denied rule decisions fallback-only", () => {
