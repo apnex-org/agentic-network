@@ -232,6 +232,34 @@ describe("DriverLivenessWatchdog pure evaluator", () => {
     expect(verdict.reason).toBe("progress_since_baseline");
     expect(verdict.progress).toMatchObject({ source: "event", kind: "role_lane_dispatch", childId: "child" });
   });
+
+  it("rejects prose-only / under-specified role-lane dispatch as progress", () => {
+    const child = workItem({ id: "child", status: "ready", enteredCurrentStateAt: BEFORE });
+    const d = driver();
+
+    const verdict = evaluateDriverLivenessWatchdog({
+      driver: d,
+      children: [child],
+      driverNextAction: projection(d.id, null),
+      roleLaneNextActions: [{ role: "engineer", projection: projection(d.id, child) }],
+      baseline: baselineFor([child], d),
+      now: NOW,
+      thresholdMs: THRESHOLD_MS,
+      progressEvents: [{
+        kind: "role_lane_dispatch",
+        arcId: d.id,
+        // Missing driverProgressKind/sourceDriverId/targetRole: this represents
+        // a generic prose note, not a typed persisted lane dispatch payload.
+        childId: child.id,
+        reason: "please pick this up",
+        occurredAt: AFTER,
+      }],
+    });
+
+    expect(verdict.status).toBe("warning");
+    expect(verdict.reason).toBe("no_progress_with_ready_action");
+    expect(verdict.action).toMatchObject({ kind: "role_lane_ready", role: "engineer", childId: "child" });
+  });
 });
 
 

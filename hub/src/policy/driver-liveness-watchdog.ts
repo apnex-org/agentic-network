@@ -42,6 +42,21 @@ export interface DriverProgressEvent {
   graphLocal?: boolean;
 }
 
+/**
+ * Typed persisted role-lane dispatch payload.  A prose-only note must never be
+ * treated as DriverProgress; every field below is load-bearing evidence that the
+ * controller routed a concrete legal lane.
+ */
+export interface DriverRoleLaneDispatchPayload {
+  driverProgressKind: "role_lane_dispatch";
+  arcId: string;
+  childId: string;
+  targetRole: string;
+  targetAgentId?: string | null;
+  sourceDriverId: string;
+  reason: string;
+}
+
 export interface DriverChildProgressFingerprint {
   status: WorkItemPhase | "missing";
   leaseHolder: string | null;
@@ -227,11 +242,7 @@ export function isDriverProgressEvent(event: DriverProgressEvent, input: DriverL
     case "workitem_transition":
       return Boolean(event.childId) && Boolean(event.fromStatus) && Boolean(event.toStatus) && event.fromStatus !== event.toStatus;
     case "role_lane_dispatch":
-      return event.driverProgressKind === "role_lane_dispatch"
-        && event.sourceDriverId === input.driver.id
-        && Boolean(event.childId)
-        && Boolean(event.targetRole)
-        && Boolean(event.reason?.trim());
+      return isTypedRoleLaneDispatchProgressEvent(event, input.driver.id);
     case "blocker_persisted":
       return Boolean(event.childId) && Boolean(event.blocker?.kind?.trim()) && Boolean(event.blocker?.reason?.trim());
     case "graph_no_action_proof":
@@ -242,6 +253,21 @@ export function isDriverProgressEvent(event: DriverProgressEvent, input: DriverL
     default:
       return false;
   }
+}
+
+export function isTypedRoleLaneDispatchProgressEvent(
+  event: DriverProgressEvent,
+  arcId: string,
+): event is DriverProgressEvent & DriverRoleLaneDispatchPayload {
+  return event.kind === "role_lane_dispatch"
+    && event.driverProgressKind === "role_lane_dispatch"
+    && event.arcId === arcId
+    && event.sourceDriverId === arcId
+    && Boolean(event.childId?.trim())
+    && Boolean(event.targetRole?.trim())
+    && Boolean(event.reason?.trim())
+    // targetAgentId is optional/null for a role lane, but if present it must be non-empty.
+    && (event.targetAgentId == null || event.targetAgentId.trim().length > 0);
 }
 
 export function fingerprintWorkItemForDriverProgress(item: WorkItem): DriverChildProgressFingerprint {
