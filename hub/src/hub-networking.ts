@@ -121,12 +121,14 @@ export function augmentDataWithRenderFields(
     entityRef: ctx.entityRef,
     bodyPreview: ctx.bodyPreview,
     actionability: ctx.actionability,
+    ...(ctx.workGraphActionabilityClass ? { workGraphActionabilityClass: ctx.workGraphActionabilityClass } : {}),
   });
   return {
     ...data,
     sourceClass: ctx.sourceClass,
     entityRef: ctx.entityRef,
     actionability: ctx.actionability,
+    ...(ctx.workGraphActionabilityClass ? { workGraphActionabilityClass: ctx.workGraphActionabilityClass } : {}),
     body,
   };
 }

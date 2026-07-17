@@ -19,12 +19,30 @@ import type { IPolicyContext } from "./types.js";
 export type MessageProjectionPresentation = "actionable" | "awareness" | "historical" | "degraded";
 export type MessageProjectionActionability = "your-turn" | "ack-only" | "inspect" | "none";
 
+/**
+ * driver_liveness_watchdog_impl0: canonical WorkGraph actionability class.
+ * This is the machine-readable contract; legacy presentation/actionability
+ * remain for compatibility and render hints. Raw event payloads remain the
+ * sovereign drill-down record.
+ */
+export type WorkGraphActionabilityClass =
+  | "CLAIMABLE_WORK"
+  | "ROLE_LANE_READY"
+  | "ACTION_REQUIRED"
+  | "IN_FLIGHT_AWARENESS"
+  | "STALE_HISTORICAL"
+  | "BLOCKED_OR_GATED"
+  | "FYI"
+  | "DEGRADED_MANUAL_CHECK";
+
 export interface MessageConsumptionProjection {
   observedAt: string;
   ruleId: string;
   ruleVersion: number;
   presentation: MessageProjectionPresentation;
   actionability: MessageProjectionActionability;
+  /** Canonical machine-readable WorkGraph actionability classification. */
+  workGraphActionabilityClass: WorkGraphActionabilityClass;
   reason: string;
   rawMessageId: string;
   entitySnapshot?: {
@@ -126,6 +144,7 @@ export interface EventPolicyAgentBasis {
 export interface EventPolicyDecision {
   presentation?: MessageProjectionPresentation;
   actionability?: MessageProjectionActionability;
+  workGraphActionabilityClass?: WorkGraphActionabilityClass;
   reason?: string;
   degradedReason?: string;
 }
@@ -257,6 +276,24 @@ function renderBodyPrefix(projection: Pick<MessageConsumptionProjection, "presen
   return "[Hub] Awareness";
 }
 
+function workGraphActionabilityClassFor(args: {
+  event?: string;
+  toStatus?: string;
+  snapshot?: EventPolicyWorkItemSnapshot;
+  presentation: MessageProjectionPresentation;
+  actionability: MessageProjectionActionability;
+  reason: string;
+}): WorkGraphActionabilityClass {
+  const { event, toStatus, snapshot, presentation, actionability, reason } = args;
+  if (presentation === "degraded") return "DEGRADED_MANUAL_CHECK";
+  if (presentation === "historical" || reason === "terminal-now" || reason === "superseded-by-status") return "STALE_HISTORICAL";
+  if (actionability === "your-turn") return "CLAIMABLE_WORK";
+  if (snapshot?.status === "blocked" || snapshot?.status === "paused" || reason.includes("blocked") || reason.includes("gated") || reason === "paused-now") return "BLOCKED_OR_GATED";
+  if (event === WORK_TRANSITION && toStatus === "review" && snapshot?.status === "review") return "ACTION_REQUIRED";
+  if (snapshot?.status === "claimed" || snapshot?.status === "in_progress" || snapshot?.status === "review" || reason === "held-by-recipient" || reason === "already-held-or-in-flight" || reason === "held-work-updated") return "IN_FLIGHT_AWARENESS";
+  return "FYI";
+}
+
 function reasonForNonClaimableSnapshot(snapshot: EventPolicyWorkItemSnapshot, role?: string): string {
   if (snapshot.status === "paused") return "paused-now";
   if (snapshot.status === "claimed" || snapshot.status === "in_progress" || snapshot.status === "blocked" || snapshot.status === "review") return "already-held-or-in-flight";
@@ -366,6 +403,7 @@ function conflictEvaluation(rawEvent: EventPolicyRawEventSummary, recipientBasis
     decision: {
       presentation: "degraded",
       actionability: "inspect",
+      workGraphActionabilityClass: "DEGRADED_MANUAL_CHECK",
       reason: "rule-conflict",
       degradedReason: "rule-conflict",
     },
@@ -395,6 +433,7 @@ function contextErrorEvaluation(
     decision: {
       presentation: "degraded",
       actionability: "inspect",
+      workGraphActionabilityClass: "DEGRADED_MANUAL_CHECK",
       reason,
       degradedReason: reason,
     },
@@ -447,8 +486,8 @@ export function evaluateWorkItemNotificationPolicy(
       actionability = "your-turn";
       reason = "claimable-now";
     } else {
-      presentation = isTerminal(item.status) || item.status !== "ready" ? "historical" : "awareness";
-      actionability = "ack-only";
+      presentation = isTerminal(item.status) ? "historical" : "awareness";
+      actionability = isTerminal(item.status) ? "none" : "ack-only";
       reason = claimabilityReason ?? "not-currently-claimable";
     }
   } else if (event === WORK_UPDATED) {
@@ -479,13 +518,22 @@ export function evaluateWorkItemNotificationPolicy(
     }
   }
 
+  const workGraphActionabilityClass = workGraphActionabilityClassFor({
+    event,
+    toStatus,
+    snapshot: item,
+    presentation,
+    actionability,
+    reason,
+  });
+
   return {
     ruleId: rule.ruleId,
     ruleVersion: rule.version,
     matched: true,
     productionEligible: rule.enabled,
     selectedBy,
-    decision: { presentation, actionability, reason },
+    decision: { presentation, actionability, workGraphActionabilityClass, reason },
     effects: [{ type: "message-projection", rawMessageId: context.rawEvent.rawMessageId }],
     audit: {
       rawMessageId: context.rawEvent.rawMessageId,
@@ -601,7 +649,7 @@ async function collectWorkItemContext(
 
 function projectionBody(
   snapshot: EventPolicyWorkItemSnapshot,
-  projection: Pick<MessageConsumptionProjection, "presentation" | "actionability" | "reason">,
+  projection: Pick<MessageConsumptionProjection, "presentation" | "actionability" | "workGraphActionabilityClass" | "reason">,
   rawEvent: EventPolicyRawEventSummary,
 ): string {
   const prefix = renderBodyPrefix(projection);
@@ -609,11 +657,11 @@ function projectionBody(
   const verb = rawEvent.verb ? ` (${rawEvent.verb})` : "";
   const eventTo = rawEvent.toStatus ? ` event→${rawEvent.toStatus}` : "";
   const holder = snapshot.holder ? ` holder=${snapshot.holder}` : "";
-  return `${prefix}: ${snapshot.id}${verb} ${event}${eventTo}; current=${snapshot.status ?? "unknown"}${holder}; reason=${projection.reason}. Raw event retained.`;
+  return `${prefix}: ${snapshot.id}${verb} ${event}${eventTo}; current=${snapshot.status ?? "unknown"}${holder}; class=${projection.workGraphActionabilityClass}; reason=${projection.reason}. Raw event retained.`;
 }
 
 function degradedBody(workId: string, messageId: string, reason: string): string {
-  return `${renderBodyPrefix({ presentation: "degraded", actionability: "inspect" })}: ${workId} notification could not be projected against current WorkGraph truth (${reason}). Inspect raw message ${messageId}.`;
+  return `${renderBodyPrefix({ presentation: "degraded", actionability: "inspect" })}: ${workId} notification could not be projected against current WorkGraph truth (${reason}); class=DEGRADED_MANUAL_CHECK. Inspect raw message ${messageId}.`;
 }
 
 function projectionFromEvaluation(
@@ -628,8 +676,16 @@ function projectionFromEvaluation(
   const reason = decision.reason ?? "unprojected-needs-check";
   const fallbackWorkId = context.rawEvent.workId ?? "unknown-workitem";
   const snapshot = context.workItem ?? { kind: "workitem" as const, id: fallbackWorkId };
+  const workGraphActionabilityClass = decision.workGraphActionabilityClass ?? workGraphActionabilityClassFor({
+    event: context.rawEvent.notificationEvent,
+    toStatus: context.rawEvent.toStatus,
+    snapshot: context.workItem,
+    presentation,
+    actionability,
+    reason,
+  });
   const renderBody = context.workItem
-    ? projectionBody(snapshot, { presentation, actionability, reason }, context.rawEvent)
+    ? projectionBody(snapshot, { presentation, actionability, workGraphActionabilityClass, reason }, context.rawEvent)
     : degradedBody(fallbackWorkId, message.id, reason);
 
   return {
@@ -638,11 +694,12 @@ function projectionFromEvaluation(
     ruleVersion: evaluation.ruleVersion ?? WORKITEM_NOTIFICATION_RULE.version,
     presentation,
     actionability,
+    workGraphActionabilityClass,
     reason,
     rawMessageId: message.id,
     entitySnapshot: snapshot,
     recipientBasis: context.recipientBasis,
-    recommendedActions: actionability === "none" ? [] : [actionability],
+    recommendedActions: actionability === "none" || workGraphActionabilityClass === "STALE_HISTORICAL" ? [] : [actionability],
     renderBody,
     ...(decision.degradedReason ? { degradedReason: decision.degradedReason } : {}),
   };
@@ -741,6 +798,7 @@ export function messageArrivalData(projected: ProjectedMessage): Record<string, 
     sourceClass: "workitem",
     entityRef: `workitem:${projection.entitySnapshot?.id ?? projection.rawMessageId}`,
     actionability: projection.actionability === "your-turn" ? "your-turn" : "FYI",
+    workGraphActionabilityClass: projection.workGraphActionabilityClass,
     body: projection.renderBody,
   };
 }
