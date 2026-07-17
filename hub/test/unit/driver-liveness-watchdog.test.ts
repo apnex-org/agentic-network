@@ -89,8 +89,10 @@ describe("DriverLivenessWatchdog pure evaluator", () => {
     const d = driver();
     const nonProgress: DriverProgressEvent[] = [
       { kind: "renew_lease", arcId: d.id, occurredAt: AFTER },
+      { kind: "message_claim", arcId: d.id, occurredAt: AFTER },
       { kind: "message_ack", arcId: d.id, occurredAt: AFTER },
       { kind: "state_read", arcId: d.id, occurredAt: AFTER },
+      { kind: "stale_notification", arcId: d.id, occurredAt: AFTER },
       { kind: "updated_at", arcId: d.id, occurredAt: AFTER },
     ];
 
