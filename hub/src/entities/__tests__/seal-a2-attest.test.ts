@@ -32,6 +32,8 @@ async function setup() {
   // the targetRef entity (for entity-ref relatedness) + an UNRELATED entity (existence-theatre test)
   await substrate.put("mission", { id: "m-1" });
   await substrate.put("bug", { id: "bug-99" });
+  await substrate.put("Bug", { id: "bug-289" });
+  await substrate.put("Bug", { id: "bug-404" });
   return { substrate, repo };
 }
 
@@ -39,8 +41,8 @@ const EXEC: EvidenceRequirement = { id: "exec", kind: "freeform" };
 const ATT: EvidenceRequirement = { id: "att", kind: "freeform", evidenceAuthority: "verifier-attestation" };
 
 /** Create → claim(agent-eng) → start → complete(exec evidence): parks in review awaiting attestation. */
-async function sealItemInReview(repo: WorkItemRepositorySubstrate, reqs: EvidenceRequirement[] = [EXEC, ATT]) {
-  const w = await repo.createWorkItem({ type: "task", roleEligibility: [], evidenceRequirements: reqs, targetRef: { kind: "mission", id: "m-1" } });
+async function sealItemInReview(repo: WorkItemRepositorySubstrate, reqs: EvidenceRequirement[] = [EXEC, ATT], targetRef = { kind: "mission", id: "m-1" }) {
+  const w = await repo.createWorkItem({ type: "task", roleEligibility: [], evidenceRequirements: reqs, targetRef });
   const claimed = await repo.claimWorkItem(w.id, "agent-eng", "engineer");
   const token = claimed!.lease!.token;
   await repo.startWork(w.id, "agent-eng", token);
@@ -119,6 +121,21 @@ describe("SEAL A2 — attest_evidence authority", () => {
     const { workId } = await sealItemInReview(repo);
     const via = await repo.attestEvidence(workId, "att", "agent-verifier", "pass", [{ kind: "entity", ref: "mission/m-1" }]);
     expect(via.item.status).toBe("done");
+  });
+
+  it("bug-290: canonical entity ref relates to lowercase targetRef kind", async () => {
+    const { repo } = await setup();
+    const { workId } = await sealItemInReview(repo, [EXEC, ATT], { kind: "bug", id: "bug-289" });
+    const via = await repo.attestEvidence(workId, "att", "agent-verifier", "pass", [{ kind: "entity", ref: "Bug/bug-289" }]);
+    expect(via.item.status).toBe("done");
+    const v = await repo.verifyAttestation(workId, "att");
+    expect(v.valid).toBe(true);
+  });
+
+  it("bug-290: normalized kind comparison does not permit unrelated entity laundering", async () => {
+    const { repo } = await setup();
+    const { workId } = await sealItemInReview(repo, [EXEC, ATT], { kind: "bug", id: "bug-289" });
+    await expect(repo.attestEvidence(workId, "att", "agent-verifier", "pass", [{ kind: "entity", ref: "Bug/bug-404" }])).rejects.toThrow(AttestationRejected);
   });
 
   it("EXISTENCE-THEATRE: an entity ref that resolves but is NOT related to the work is rejected", async () => {
