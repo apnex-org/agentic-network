@@ -67,6 +67,19 @@ describe("renderPeekLineBody", () => {
     expect(body).toMatch(/\[FYI\]$/);
   });
 
+  it("renders additive WorkGraph actionability class when supplied", () => {
+    const body = renderPeekLineBody({
+      sourceClass: "Hub",
+      actionVerb: "Unblocked, now claimable",
+      entityRef: { type: "workitem", id: "work-9" },
+      actionability: "your-turn",
+      workGraphActionabilityClass: "CLAIMABLE_WORK",
+    });
+    expect(body).toMatch(/^\[Hub\]/);
+    expect(body).toContain("work-9");
+    expect(body).toMatch(/\[your-turn\|CLAIMABLE_WORK\]$/);
+  });
+
   it("renders with no entityRef (bare system note)", () => {
     const body = renderPeekLineBody({
       sourceClass: "Hub",
@@ -264,6 +277,7 @@ describe("work-transition-notification filter + render (work-54)", () => {
     expect(ctx!.actionVerb).toBe("Completed");
     expect(ctx!.entityRef).toEqual({ type: "workitem", id: "work-9", title: "Ship the slice" });
     expect(ctx!.actionability).toBe("FYI");
+    expect(ctx!.workGraphActionabilityClass).toBe("FYI");
   });
 
   it("a review-park is the verifier's turn", () => {
@@ -272,6 +286,7 @@ describe("work-transition-notification filter + render (work-54)", () => {
     });
     expect(ctx!.actionVerb).toBe("Parked in review");
     expect(ctx!.actionability).toBe("your-turn");
+    expect(ctx!.workGraphActionabilityClass).toBe("ACTION_REQUIRED");
   });
 
   it("a lease-expiry requeue names the sweeper path", () => {
@@ -289,6 +304,7 @@ describe("work-unblocked-notification render (work-54)", () => {
     expect(ctx!.actionVerb).toBe("Unblocked, now claimable");
     expect(ctx!.entityRef).toEqual({ type: "workitem", id: "work-9", title: "Downstream" });
     expect(ctx!.actionability).toBe("your-turn");
+    expect(ctx!.workGraphActionabilityClass).toBe("CLAIMABLE_WORK");
   });
 });
 

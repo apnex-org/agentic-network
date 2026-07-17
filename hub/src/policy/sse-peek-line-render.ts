@@ -88,6 +88,17 @@ export interface EntityRef {
 export const ACTIONABILITIES = ["your-turn", "FYI", "emitted", "acked"] as const;
 export type Actionability = (typeof ACTIONABILITIES)[number];
 
+/** driver_liveness_watchdog_impl0: additive WorkGraph-specific machine class. */
+export type WorkGraphActionabilityClass =
+  | "CLAIMABLE_WORK"
+  | "ROLE_LANE_READY"
+  | "ACTION_REQUIRED"
+  | "IN_FLIGHT_AWARENESS"
+  | "STALE_HISTORICAL"
+  | "BLOCKED_OR_GATED"
+  | "FYI"
+  | "DEGRADED_MANUAL_CHECK";
+
 /**
  * The Phase-1 extended payload shape for `kind: "external-injection"`
  * Messages, per Design v1.1 §1.1 + Phase-1.5 #1 §1.1
@@ -109,6 +120,8 @@ export interface ExternalInjectionPayload {
   sourceClass: SourceClass;
   entityRef?: EntityRef;
   actionability: Actionability;
+  /** Additive WorkGraph actionability class when the event is WorkItem-scoped. */
+  workGraphActionabilityClass?: WorkGraphActionabilityClass;
   body: string;
 
   // Phase-1.5 #1 addition (M-SSE-Filter-List-Adapter-Consumption Design v1.0):
@@ -133,6 +146,8 @@ export interface PeekLineRenderInput {
   /** First 1-2 sentences of body (~100 chars) per §2.4. Optional. */
   bodyPreview?: string;
   actionability: Actionability;
+  /** Additive machine-readable class rendered visibly when supplied. */
+  workGraphActionabilityClass?: WorkGraphActionabilityClass;
 }
 
 // ── Constants ────────────────────────────────────────────────────────
@@ -240,11 +255,11 @@ export function shouldFilterPeekLine(
  * in `payload.body`.
  */
 export function renderPeekLineBody(input: PeekLineRenderInput): string {
-  const { sourceClass, actionVerb, entityRef, bodyPreview, actionability } =
+  const { sourceClass, actionVerb, entityRef, bodyPreview, actionability, workGraphActionabilityClass } =
     input;
 
   const prefix = `[${sourceClass}]`;
-  const actionMarker = `[${actionability}]`;
+  const actionMarker = workGraphActionabilityClass ? `[${actionability}|${workGraphActionabilityClass}]` : `[${actionability}]`;
 
   // Build the entity-segment: `<entity-id>: "<entity-title>"`
   // When entityRef is absent (e.g., bare system note), omit the segment;
@@ -353,6 +368,7 @@ export function deriveRenderContext(
   entityRef?: EntityRef;
   bodyPreview?: string;
   actionability: Actionability;
+  workGraphActionabilityClass?: WorkGraphActionabilityClass;
 } | null {
   if (shouldFilterPeekLine(event, data)) return null;
 
@@ -520,6 +536,7 @@ export function deriveRenderContext(
         entityRef: { type: "workitem", id: workId, title: str("title") },
         // review-parked = a verifier's turn to look (the review evidence gate).
         actionability: to === "review" ? "your-turn" : "FYI",
+        workGraphActionabilityClass: to === "review" ? "ACTION_REQUIRED" : "FYI",
       };
     }
 
@@ -531,6 +548,7 @@ export function deriveRenderContext(
         entityRef: { type: "workitem", id: workId, title: str("title") },
         bodyPreview: str("body"),
         actionability: "your-turn",
+        workGraphActionabilityClass: "CLAIMABLE_WORK",
       };
     }
 

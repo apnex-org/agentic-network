@@ -98,6 +98,7 @@ import { ScheduledMessageSweeper } from "./policy/scheduled-message-sweeper.js";
 import { CascadeReplaySweeper } from "./policy/cascade-replay-sweeper.js";
 import { PulseSweeper } from "./policy/pulse-sweeper.js";
 import { WorkItemLeaseSweeper } from "./policy/work-item-lease-sweeper.js";
+import { DriverLivenessWatchdogSweeper } from "./policy/driver-liveness-watchdog.js";
 import {
   RepoEventBridge,
   createPolicyRouterInvoker,
@@ -920,6 +921,26 @@ const pulseSweeper = new PulseSweeper(
 );
 allStores.pulseSweeper = pulseSweeper;
 
+// driver_liveness_watchdog_impl0: conservative Hub-side readout over held arc
+// drivers. The pure evaluator lives in driver-liveness-watchdog.ts; this sweeper
+// supplies restart-stable warning idempotency via Message.migrationSourceId and
+// pushes concrete architect-visible warnings when graph-local next action remains
+// ready past the threshold. Candidate scan is broad-status but truncation-honest;
+// child actionability is still resolved via getNextAction over the driver's own
+// completionDependsOn graph.
+const driverLivenessWatchdogSweeper = new DriverLivenessWatchdogSweeper(
+  {
+    workItem: workItemStore,
+    message: messageStore,
+    engineerRegistry,
+    dispatch: hub.dispatchEvent.bind(hub),
+  },
+  {
+    intervalMs: Number(process.env.OIS_DRIVER_LIVENESS_WATCHDOG_INTERVAL_MS ?? 60_000),
+    thresholdMs: Number(process.env.OIS_DRIVER_LIVENESS_WATCHDOG_THRESHOLD_MS ?? 10 * 60_000),
+  },
+);
+
 // Mission-52 T3: repo-event-bridge composition. Conditional on
 // OIS_GH_API_TOKEN — absent → bridge skipped, Hub starts cleanly.
 // PAT scope/auth failures are caught inside RepoEventBridge.start()
@@ -1085,6 +1106,7 @@ startupSequence().then(async () => {
     console.warn("[Hub] Startup WorkItem lease sweep failed; sweeper still starts:", err);
   }
   workItemLeaseSweeper.start(WORKITEM_LEASE_SWEEP_INTERVAL_MS);
+  driverLivenessWatchdogSweeper.start();
 
   // mission-102 P3-B6: EMIT-ONLY decision-aging sweep (S2.4) — reads dwell in
   // the routed queue, mints NudgeReceipts, emits decision-aging-notification.
@@ -1138,6 +1160,7 @@ startupSequence().then(async () => {
   messageProjectionSweeper.start();
   scheduledMessageSweeper.start();
   pulseSweeper.start();
+  driverLivenessWatchdogSweeper.start();
   console.log(`[Hub] MCP Relay Hub listening on port ${PORT} (with startup warning)`);
 });
 
@@ -1153,6 +1176,7 @@ async function shutdown(signal: string): Promise<void> {
   messageProjectionSweeper.stop();
   scheduledMessageSweeper.stop();
   pulseSweeper.stop();
+  driverLivenessWatchdogSweeper.stop();
   // Mission-52 T3: stop the bridge before the Hub network so any
   // in-flight create_message dispatches land cleanly.
   if (repoEventBridge) {

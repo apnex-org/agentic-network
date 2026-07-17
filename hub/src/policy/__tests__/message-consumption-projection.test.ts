@@ -110,9 +110,12 @@ describe("projectMessageForConsumption — WorkItem notification projection", ()
 
     expect(projected.payload).toBe(raw.payload); // raw audit payload preserved
     expect(projected.projection?.presentation).toBe("historical");
-    expect(projected.projection?.actionability).toBe("ack-only");
+    expect(projected.projection?.actionability).toBe("none");
+    expect(projected.projection?.workGraphActionabilityClass).toBe("STALE_HISTORICAL");
+    expect(projected.projection?.recommendedActions).toEqual([]);
     expect(projected.projection?.reason).toBe("terminal-now");
     expect(projected.projection?.renderBody).toContain("Historical/no action");
+    expect(projected.projection?.renderBody).toContain("class=STALE_HISTORICAL");
   });
 
   it("keeps an unblocked message actionable only when current item-local legal_moves says claim is legal", async () => {
@@ -130,6 +133,7 @@ describe("projectMessageForConsumption — WorkItem notification projection", ()
 
     expect(projected.projection?.presentation).toBe("actionable");
     expect(projected.projection?.actionability).toBe("your-turn");
+    expect(projected.projection?.workGraphActionabilityClass).toBe("CLAIMABLE_WORK");
     expect(projected.projection?.reason).toBe("claimable-now");
   });
 
@@ -171,7 +175,46 @@ describe("projectMessageForConsumption — WorkItem notification projection", ()
 
     expect(projected.projection?.presentation).toBe("awareness");
     expect(projected.projection?.actionability).toBe("ack-only");
+    expect(projected.projection?.workGraphActionabilityClass).toBe("FYI");
     expect(projected.projection?.reason).toBe("quarantined");
+  });
+
+  it("classifies already-held/non-ready WorkGraph notification as in-flight awareness", async () => {
+    const raw = message({
+      notificationEvent: "work-unblocked-notification",
+      work_id: "work-1",
+      body: "work-1 is now claimable",
+    });
+
+    const projected = await projectMessageForConsumption(
+      { workItem: store(work({ status: "in_progress", lease: { holder: "agent-a", token: "t", claimedAt: "2026-07-08T00:00:00.000Z", expiresAt: "2026-07-08T00:15:00.000Z", heartbeatAt: "2026-07-08T00:00:00.000Z" } })), now: () => "2026-07-08T00:00:01.000Z" },
+      raw,
+      { role: "architect", agentId: "agent-a" },
+    );
+
+    expect(projected.projection?.presentation).toBe("awareness");
+    expect(projected.projection?.actionability).toBe("ack-only");
+    expect(projected.projection?.workGraphActionabilityClass).toBe("IN_FLIGHT_AWARENESS");
+    expect(projected.projection?.reason).toBe("already-held-or-in-flight");
+    expect(projected.projection?.renderBody).toContain("class=IN_FLIGHT_AWARENESS");
+  });
+
+  it("classifies blocked/gated current WorkGraph state distinctly from stale history", async () => {
+    const raw = message({
+      notificationEvent: "work-unblocked-notification",
+      work_id: "work-1",
+      body: "work-1 is now claimable",
+    });
+
+    const projected = await projectMessageForConsumption(
+      { workItem: store(work({ status: "blocked", blockedOn: { blockerKind: "external", reason: "waiting" } })), now: () => "2026-07-08T00:00:01.000Z" },
+      raw,
+      { role: "architect", agentId: "agent-a" },
+    );
+
+    expect(projected.projection?.presentation).toBe("awareness");
+    expect(projected.projection?.workGraphActionabilityClass).toBe("BLOCKED_OR_GATED");
+    expect(projected.projection?.renderBody).toContain("class=BLOCKED_OR_GATED");
   });
 
   it("fails open when caller-specific actionability context is absent for a ready item", async () => {
@@ -189,6 +232,7 @@ describe("projectMessageForConsumption — WorkItem notification projection", ()
 
     expect(projected.projection?.presentation).toBe("degraded");
     expect(projected.projection?.actionability).toBe("inspect");
+    expect(projected.projection?.workGraphActionabilityClass).toBe("DEGRADED_MANUAL_CHECK");
     expect(projected.projection?.degradedReason).toBe("agent-context-unavailable");
   });
 
@@ -286,7 +330,7 @@ describe("EventPolicy registry/evaluator — evpolicy0 Slice 0", () => {
       matched: true,
       productionEligible: true,
       selectedBy: "production",
-      decision: { presentation: "historical", actionability: "none", reason: "terminal-now" },
+      decision: { presentation: "historical", actionability: "none", workGraphActionabilityClass: "STALE_HISTORICAL", reason: "terminal-now" },
       effects: [{ type: "message-projection", rawMessageId: "01KXMSG" }],
       audit: { authority: { runtimeActions: "none" } },
     });
@@ -298,14 +342,14 @@ describe("EventPolicy registry/evaluator — evpolicy0 Slice 0", () => {
       recipient: { role: "architect", agentId: "agent-a" },
       context: { workItem: snapshot(), legalMoves: legalClaim(true), agent: { agentId: "agent-a", registryRead: "ok", quarantined: false } },
     });
-    expect(claimable.decision).toMatchObject({ presentation: "actionable", actionability: "your-turn", reason: "claimable-now" });
+    expect(claimable.decision).toMatchObject({ presentation: "actionable", actionability: "your-turn", workGraphActionabilityClass: "CLAIMABLE_WORK", reason: "claimable-now" });
 
     const missingAgent = dryRunEventPolicy({
       message: rawUnblocked(),
       recipient: { role: "architect" },
       context: { workItem: snapshot(), contextErrors: ["agent-context-unavailable"] },
     });
-    expect(missingAgent.decision).toMatchObject({ presentation: "degraded", actionability: "inspect", degradedReason: "agent-context-unavailable" });
+    expect(missingAgent.decision).toMatchObject({ presentation: "degraded", actionability: "inspect", workGraphActionabilityClass: "DEGRADED_MANUAL_CHECK", degradedReason: "agent-context-unavailable" });
 
     const quarantined = dryRunEventPolicy({
       message: rawUnblocked(),

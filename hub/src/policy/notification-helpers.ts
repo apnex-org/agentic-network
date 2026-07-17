@@ -50,6 +50,7 @@ import {
   type EntityRef,
   type ExternalInjectionPayload,
   type SourceClass,
+  type WorkGraphActionabilityClass,
 } from "./sse-peek-line-render.js";
 
 /**
@@ -72,6 +73,7 @@ export interface PeekLineRenderContext {
   entityRef?: EntityRef;
   bodyPreview?: string;
   actionability: Actionability;
+  workGraphActionabilityClass?: WorkGraphActionabilityClass;
 }
 
 /**
@@ -99,12 +101,14 @@ export async function emitLegacyNotification(
         sourceClass: render.sourceClass,
         entityRef: render.entityRef,
         actionability: render.actionability,
+        ...(render.workGraphActionabilityClass ? { workGraphActionabilityClass: render.workGraphActionabilityClass } : {}),
         body: renderPeekLineBody({
           sourceClass: render.sourceClass,
           actionVerb: render.actionVerb,
           entityRef: render.entityRef,
           bodyPreview: render.bodyPreview,
           actionability: render.actionability,
+          ...(render.workGraphActionabilityClass ? { workGraphActionabilityClass: render.workGraphActionabilityClass } : {}),
         }),
       } satisfies ExternalInjectionPayload as Record<string, unknown>)
     : basePayload;
