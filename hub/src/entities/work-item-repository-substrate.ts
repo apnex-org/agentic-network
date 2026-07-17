@@ -1538,6 +1538,26 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   }
 
   // ── SEAL (idea-444) — attest_evidence + verify_attestation ────────────────
+  /** SEAL entity-kind normalization (bug-290): entity refs and WorkItem targetRefs may carry
+   *  either legacy lowercase kind labels (`bug`) or substrate canonical labels (`Bug`). Existence
+   *  resolution and relatedness MUST use the same normalization, otherwise a verifier can resolve
+   *  `Bug/bug-N` but fail the targetRef relation against `{kind:"bug", id:"bug-N"}`. Keep this
+   *  narrow to entity-ref lookup/comparison; the attestation targetRef hash still snapshots the
+   *  exact row value for relocation protection. */
+  private canonicalEntityKind(kind: string): string {
+    const k = kind.trim().toLowerCase();
+    if (k === "bug") return "Bug";
+    if (k === "idea") return "Idea";
+    if (k === "mission") return "Mission";
+    if (k === "workitem" || k === "work-item" || k === "work_item" || k === "review") return "WorkItem";
+    if (k === "audit") return "Audit";
+    return kind;
+  }
+
+  private sameEntityKind(a: string | undefined, b: string | undefined): boolean {
+    return !!a && !!b && this.canonicalEntityKind(a) === this.canonicalEntityKind(b);
+  }
+
   /** SEAL (idea-444, steve audit-11832/11839) — pre-fetch each `entity`-kind ref's entity for
    *  existence + relatedness classification. Existence is monotonic, so this async fetch is safe
    *  pre-CAS; the RELATEDNESS decision runs on the fresh `w` inside classifyEvidenceRefs. */
@@ -1549,7 +1569,10 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (slash <= 0 || slash === r.ref.length - 1) { map.set(r.ref, null); continue; }
       const kind = r.ref.slice(0, slash);
       const id = r.ref.slice(slash + 1);
-      map.set(r.ref, (await this.substrate.get<Record<string, unknown>>(kind, id)) ?? null);
+      const canonical = this.canonicalEntityKind(kind);
+      let ent = await this.substrate.get<Record<string, unknown>>(kind, id);
+      if (!ent && canonical !== kind) ent = await this.substrate.get<Record<string, unknown>>(canonical, id);
+      map.set(r.ref, ent ?? null);
     }
     return map;
   }
@@ -1583,11 +1606,11 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         if (id === item.id) { reasons.push(`entity ref '${r.ref}' is the item itself — not load-bearing`); continue; }
         const ent = resolved.get(r.ref) ?? null;
         if (!ent) { reasons.push(`entity ref '${r.ref}' does not resolve`); continue; }
-        const isTargetRef = !!item.targetRef && kind === item.targetRef.kind && id === item.targetRef.id;
-        const ek = kind.toLowerCase();
+        const isTargetRef = !!item.targetRef && this.sameEntityKind(kind, item.targetRef.kind) && id === item.targetRef.id;
+        const canonicalKind = this.canonicalEntityKind(kind);
         const related = isTargetRef
-          || (ek === "audit" && this.refRelatesToWork("audit", ent, item))
-          || ((ek === "workitem" || ek === "review") && this.refRelatesToWork("review", ent, item));
+          || (canonicalKind === "Audit" && this.refRelatesToWork("audit", ent, item))
+          || (canonicalKind === "WorkItem" && this.refRelatesToWork("review", ent, item));
         if (related) loadBearing++;
         else reasons.push(`entity ref '${r.ref}' resolves but is not related to ${item.id} or its target — existence alone is insufficient (existence-theatre)`);
       }
