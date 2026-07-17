@@ -1,8 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { NextActionProjection, WorkItem } from "../../src/entities/work-item.js";
 import {
   evaluateDriverLivenessWatchdog,
   fingerprintWorkItemForDriverProgress,
+  DriverLivenessWatchdogSweeper,
+  deriveDriverLivenessBaseline,
+  driverLivenessWarningMigrationSourceId,
+  warningPayload,
   type DriverLivenessBaseline,
   type DriverProgressEvent,
 } from "../../src/policy/driver-liveness-watchdog.js";
@@ -227,5 +231,108 @@ describe("DriverLivenessWatchdog pure evaluator", () => {
     expect(verdict.status).toBe("ok");
     expect(verdict.reason).toBe("progress_since_baseline");
     expect(verdict.progress).toMatchObject({ source: "event", kind: "role_lane_dispatch", childId: "child" });
+  });
+});
+
+
+describe("DriverLivenessWatchdogSweeper persistence/readout wiring", () => {
+  it("derives a restart-stable baseline and deterministic warning key from graph-factual state", () => {
+    const child = workItem({ id: "child", status: "ready", enteredCurrentStateAt: "2026-07-17T00:03:00.000Z" });
+    const d = driver({ enteredCurrentStateAt: "2026-07-17T00:02:00.000Z" });
+    const baseline = deriveDriverLivenessBaseline(d, [child]);
+    const verdict = evaluateDriverLivenessWatchdog({
+      driver: d,
+      children: [child],
+      driverNextAction: projection(d.id, child),
+      baseline,
+      now: "2026-07-17T00:20:00.000Z",
+      thresholdMs: THRESHOLD_MS,
+    });
+
+    expect(baseline.recordedAt).toBe("2026-07-17T00:03:00.000Z");
+    expect(verdict.status).toBe("warning");
+    expect(driverLivenessWarningMigrationSourceId(verdict, baseline)).toBe(
+      "driver-liveness-watchdog:driver:2026-07-17T00:03:00.000Z:driver_next_action:child:self",
+    );
+    expect(warningPayload(verdict, baseline).body).toContain("renew/ack/read/updatedAt do not count as progress");
+  });
+
+  it("scans active held arc drivers, uses graph-local next action, and emits one idempotent warning message", async () => {
+    const child = workItem({ id: "child", status: "ready", enteredCurrentStateAt: BASELINE });
+    const d = driver({ completionDependsOn: [child.id], enteredCurrentStateAt: BASELINE });
+    const created: any[] = [];
+    const dispatched: any[] = [];
+    const workItems = new Map<string, WorkItem>([[d.id, d], [child.id, child]]);
+
+    const sweeper = new DriverLivenessWatchdogSweeper({
+      workItem: {
+        listWorkItems: async ({ status }: { status?: string }) => ({ items: status === "in_progress" ? [d] : [], truncated: false }),
+        getWorkItem: async (id: string) => workItems.get(id) ?? null,
+        getNextAction: async (arcId: string, role?: string, agentId?: string) => {
+          expect(arcId).toBe(d.id);
+          if (role === "architect" && agentId === "architect-1") return projection(d.id, child);
+          return projection(d.id, null);
+        },
+      },
+      engineerRegistry: {
+        getAgent: async (id: string) => id === "architect-1" ? { id, role: "architect" } : null,
+      },
+      message: {
+        createMessage: async (input: any) => {
+          created.push(input);
+          return { id: "msg-1", ...input, status: "new", createdAt: NOW, updatedAt: NOW };
+        },
+      },
+      dispatch: async (event, data, selector) => { dispatched.push({ event, data, selector }); },
+      now: () => NOW,
+    } as any, { thresholdMs: THRESHOLD_MS, intervalMs: 60_000, logger: { warn: vi.fn(), log: vi.fn() } });
+
+    const result = await sweeper.sweepOnce();
+
+    expect(result).toMatchObject({ evaluated: 1, warnings: 1, skipped: 0, truncatedCandidateScan: false });
+    expect(created).toHaveLength(1);
+    expect(created[0]).toMatchObject({
+      kind: "external-injection",
+      authorRole: "system",
+      authorAgentId: "driver-liveness-watchdog",
+      target: { role: "architect" },
+      delivery: "push-immediate",
+      intent: "driver_liveness_warning",
+    });
+    expect(created[0].migrationSourceId).toContain("driver-liveness-watchdog:driver:");
+    expect(created[0].payload).toMatchObject({
+      notificationEvent: "driver-liveness-watchdog-warning",
+      arcId: "driver",
+      holder: "architect-1",
+      reason: "no_progress_with_ready_action",
+      action: { kind: "driver_next_action", childId: "child" },
+    });
+    expect(dispatched).toHaveLength(1);
+    expect(dispatched[0]).toMatchObject({ event: "message_arrived", selector: { roles: ["architect"] } });
+  });
+
+  it("is truncation-honest when the candidate driver scan hits a cap", async () => {
+    const child = workItem({ id: "child", status: "ready", enteredCurrentStateAt: BASELINE });
+    const d = driver({ completionDependsOn: [child.id], enteredCurrentStateAt: BASELINE });
+    const created: any[] = [];
+    const warn = vi.fn();
+    const workItems = new Map<string, WorkItem>([[d.id, d], [child.id, child]]);
+
+    const sweeper = new DriverLivenessWatchdogSweeper({
+      workItem: {
+        listWorkItems: async ({ status }: { status?: string }) => ({ items: status === "in_progress" ? [d] : [], truncated: status === "in_progress" }),
+        getWorkItem: async (id: string) => workItems.get(id) ?? null,
+        getNextAction: async () => projection(d.id, child),
+      },
+      engineerRegistry: { getAgent: async () => ({ id: "architect-1", role: "architect" }) },
+      message: { createMessage: async (input: any) => { created.push(input); return { id: "msg-1", ...input }; } },
+      now: () => NOW,
+    } as any, { thresholdMs: THRESHOLD_MS, logger: { warn, log: vi.fn() } });
+
+    const result = await sweeper.sweepOnce();
+
+    expect(result.truncatedCandidateScan).toBe(true);
+    expect(created[0].payload.truncatedCandidateScan).toBe(true);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("candidate scan hit"));
   });
 });

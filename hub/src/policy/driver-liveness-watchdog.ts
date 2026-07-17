@@ -8,6 +8,7 @@
  * notifications, and `updatedAt` churn as non-progress by construction.
  */
 import type { NextActionProjection, WorkItem, WorkItemBlockedOn, WorkItemPhase } from "../entities/work-item.js";
+import type { Selector } from "../state.js";
 
 export type DriverProgressEventKind =
   | "workitem_transition"
@@ -325,4 +326,208 @@ function parseTime(value: string): number {
   const ms = Date.parse(value);
   if (!Number.isFinite(ms)) throw new Error(`invalid ISO timestamp: ${value}`);
   return ms;
+}
+
+export interface DriverLivenessWarningMessagePayload {
+  body: string;
+  notificationEvent: "driver-liveness-watchdog-warning";
+  arcId: string;
+  holder: string | null;
+  reason: DriverLivenessWatchdogReason;
+  action?: DriverLivenessActionRef;
+  baselineRecordedAt: string;
+  elapsedMs: number;
+  childStatuses: DriverLivenessWatchdogVerdict["childStatuses"];
+  truncatedCandidateScan?: boolean;
+}
+
+export interface DriverLivenessWatchdogSweepResult {
+  evaluated: number;
+  warnings: number;
+  skipped: number;
+  truncatedCandidateScan: boolean;
+}
+
+export interface DriverLivenessWatchdogSweeperOptions {
+  intervalMs?: number;
+  thresholdMs?: number;
+  logger?: Pick<Console, "warn" | "log">;
+}
+
+export interface DriverLivenessWatchdogSweeperDeps {
+  workItem: Pick<import("../entities/work-item.js").IWorkItemStore, "listWorkItems" | "getWorkItem" | "getNextAction">;
+  message: Pick<import("../entities/message.js").IMessageStore, "createMessage">;
+  engineerRegistry: Pick<import("../state.js").IEngineerRegistry, "getAgent">;
+  dispatch?: (event: string, data: Record<string, unknown>, selector: Selector) => Promise<void>;
+  now?: () => string;
+}
+
+const WATCHDOG_ACTIVE_STATUSES: WorkItemPhase[] = ["claimed", "in_progress", "blocked", "review"];
+const DEFAULT_WATCHDOG_INTERVAL_MS = 60_000;
+const DEFAULT_WATCHDOG_THRESHOLD_MS = 10 * 60_000;
+
+export class DriverLivenessWatchdogSweeper {
+  private timer: NodeJS.Timeout | null = null;
+  private running = false;
+  private readonly intervalMs: number;
+  private readonly thresholdMs: number;
+  private readonly logger: Pick<Console, "warn" | "log">;
+
+  constructor(
+    private readonly deps: DriverLivenessWatchdogSweeperDeps,
+    options: DriverLivenessWatchdogSweeperOptions = {},
+  ) {
+    this.intervalMs = options.intervalMs ?? DEFAULT_WATCHDOG_INTERVAL_MS;
+    this.thresholdMs = options.thresholdMs ?? DEFAULT_WATCHDOG_THRESHOLD_MS;
+    this.logger = options.logger ?? console;
+  }
+
+  start(): void {
+    if (this.timer) return;
+    this.timer = setInterval(() => {
+      this.sweepOnce().catch((err) => this.logger.warn(`[DriverLivenessWatchdogSweeper] sweep failed: ${(err as Error)?.message ?? String(err)}`));
+    }, this.intervalMs);
+    this.timer.unref?.();
+  }
+
+  stop(): void {
+    if (!this.timer) return;
+    clearInterval(this.timer);
+    this.timer = null;
+  }
+
+  async sweepOnce(): Promise<DriverLivenessWatchdogSweepResult> {
+    if (this.running) return { evaluated: 0, warnings: 0, skipped: 0, truncatedCandidateScan: false };
+    this.running = true;
+    try {
+      const now = this.deps.now?.() ?? new Date().toISOString();
+      const { candidates, truncated } = await this.listCandidateDrivers();
+      let evaluated = 0;
+      let warnings = 0;
+      let skipped = 0;
+
+      for (const driver of candidates) {
+        const holder = driver.lease?.holder;
+        if (!holder || driver.completionDependsOn.length === 0) {
+          skipped += 1;
+          continue;
+        }
+
+        const holderAgent = await this.deps.engineerRegistry.getAgent(holder);
+        const holderRole = holderAgent?.role;
+        if (!holderRole) {
+          skipped += 1;
+          continue;
+        }
+
+        const children = (await Promise.all(driver.completionDependsOn.map((id) => this.deps.workItem.getWorkItem(id)))).filter((child): child is WorkItem => Boolean(child));
+        const driverNextAction = await this.deps.workItem.getNextAction(driver.id, holderRole, holder);
+        if (!driverNextAction) {
+          skipped += 1;
+          continue;
+        }
+        const roleLaneNextActions = await this.roleLaneProjections(driver, children, holderRole);
+        const baseline = deriveDriverLivenessBaseline(driver, children);
+        const verdict = evaluateDriverLivenessWatchdog({
+          driver,
+          children,
+          driverNextAction,
+          roleLaneNextActions,
+          baseline,
+          now,
+          thresholdMs: this.thresholdMs,
+        });
+        evaluated += 1;
+        if (verdict.status !== "warning") continue;
+        await this.emitWarning(verdict, baseline, truncated);
+        warnings += 1;
+      }
+
+      if (truncated) this.logger.warn("[DriverLivenessWatchdogSweeper] candidate scan hit a listWorkItems cap; warning coverage may be incomplete");
+      return { evaluated, warnings, skipped, truncatedCandidateScan: truncated };
+    } finally {
+      this.running = false;
+    }
+  }
+
+  private async listCandidateDrivers(): Promise<{ candidates: WorkItem[]; truncated: boolean }> {
+    const byId = new Map<string, WorkItem>();
+    let truncated = false;
+    for (const status of WATCHDOG_ACTIVE_STATUSES) {
+      const page = await this.deps.workItem.listWorkItems({ status });
+      truncated = truncated || page.truncated;
+      for (const item of page.items) {
+        if (item.lease && item.completionDependsOn.length > 0) byId.set(item.id, item);
+      }
+    }
+    return { candidates: [...byId.values()], truncated };
+  }
+
+  private async roleLaneProjections(driver: WorkItem, children: WorkItem[], holderRole: string): Promise<DriverRoleLaneProjection[]> {
+    const roles = new Set<string>();
+    for (const child of children) {
+      for (const role of child.roleEligibility) {
+        if (role !== holderRole) roles.add(role);
+      }
+    }
+    const projections: DriverRoleLaneProjection[] = [];
+    for (const role of roles) {
+      const projection = await this.deps.workItem.getNextAction(driver.id, role);
+      if (projection) projections.push({ role, projection });
+    }
+    return projections;
+  }
+
+  private async emitWarning(verdict: DriverLivenessWatchdogVerdict, baseline: DriverLivenessBaseline, truncatedCandidateScan: boolean): Promise<void> {
+    const migrationSourceId = driverLivenessWarningMigrationSourceId(verdict, baseline);
+    const payload = warningPayload(verdict, baseline, truncatedCandidateScan);
+    const message = await this.deps.message.createMessage({
+      kind: "external-injection",
+      authorRole: "system",
+      authorAgentId: "driver-liveness-watchdog",
+      target: { role: "architect" },
+      delivery: "push-immediate",
+      intent: "driver_liveness_warning",
+      migrationSourceId,
+      payload,
+    });
+    await this.deps.dispatch?.("message_arrived", { message, projection: undefined, body: payload.body }, { roles: ["architect"] });
+  }
+}
+
+export function deriveDriverLivenessBaseline(driver: WorkItem, children: WorkItem[]): DriverLivenessBaseline {
+  const all = [driver, ...children];
+  const latest = all.reduce((max, item) => Math.max(max, parseTime(item.enteredCurrentStateAt)), 0);
+  return {
+    recordedAt: new Date(latest).toISOString(),
+    driverFingerprint: fingerprintWorkItemForDriverProgress(driver),
+    childFingerprints: Object.fromEntries(children.map((child) => [child.id, fingerprintWorkItemForDriverProgress(child)])),
+  };
+}
+
+export function driverLivenessWarningMigrationSourceId(verdict: DriverLivenessWatchdogVerdict, baseline: DriverLivenessBaseline): string {
+  const action = verdict.action ? `${verdict.action.kind}:${verdict.action.childId}:${verdict.action.role ?? "self"}` : "no-action";
+  return `driver-liveness-watchdog:${verdict.arcId}:${baseline.recordedAt}:${action}`;
+}
+
+export function warningPayload(
+  verdict: DriverLivenessWatchdogVerdict,
+  baseline: DriverLivenessBaseline,
+  truncatedCandidateScan = false,
+): DriverLivenessWarningMessagePayload {
+  const actionText = verdict.action
+    ? `${verdict.action.kind} child=${verdict.action.childId}${verdict.action.role ? ` role=${verdict.action.role}` : ""}`
+    : "no concrete action";
+  return {
+    body: `Driver liveness warning: ${verdict.arcId} holder=${verdict.holder ?? "none"} has ${actionText}; no graph progress since ${baseline.recordedAt}. renew/ack/read/updatedAt do not count as progress.`,
+    notificationEvent: "driver-liveness-watchdog-warning",
+    arcId: verdict.arcId,
+    holder: verdict.holder,
+    reason: verdict.reason,
+    ...(verdict.action ? { action: verdict.action } : {}),
+    baselineRecordedAt: baseline.recordedAt,
+    elapsedMs: verdict.elapsedMs,
+    childStatuses: verdict.childStatuses,
+    ...(truncatedCandidateScan ? { truncatedCandidateScan: true } : {}),
+  };
 }
