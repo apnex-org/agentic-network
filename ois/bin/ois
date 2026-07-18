@@ -423,7 +423,7 @@ pi_auth_bridge() { # <agent> <per-seat-cdir>
 }
 
 pi_models_400k_valid() { # <models.json>
-  jq -e '.providers["openai-codex"].modelOverrides["gpt-5.5"].contextWindow == 400000' "$1" >/dev/null 2>&1
+  jq -e '(.providers["openai-codex"].modelOverrides["gpt-5.5"].contextWindow == 400000) or (.providers["openai-codex"].modelOverrides["gpt-5.6-sol"].contextWindow == 400000)' "$1" >/dev/null 2>&1
 }
 
 pi_json_equiv() { # <json-a> <json-b> — canonical semantic equality
@@ -443,7 +443,7 @@ pi_settings_valid() { # <settings.json>
     type == "object" and
     .theme == "dark" and
     .defaultProvider == "openai-codex" and
-    .defaultModel == "gpt-5.5" and
+    (.defaultModel == "gpt-5.5" or .defaultModel == "gpt-5.6-sol") and
     .defaultThinkingLevel == "xhigh" and
     .terminal.showTerminalProgress == true and
     ((.packages // []) | index("npm:pi-tool-display")) != null and
@@ -898,7 +898,7 @@ cmd_up() {
     # bug-247: table-driven interactive-prompt handling (dev-channels banner, resume-mode, …)
     # via the transport-neutral resolver. Guards/detect/respond are DATA in prompt-handlers.json.
     _pane_handle_prompts "$s" "$h" "${largs[*]-}" fired
-    new=$(tail -n +$((pre+1)) "$logf" 2>/dev/null)
+    new=$(tail -n +$((pre+1)) "$logf" 2>/dev/null || true)
     echo "$new" | grep -q "FATAL" && { echo "  ✗ harness FATAL:"; echo "$new" | grep FATAL | head -2 | sed 's/^/    /'; return 1; }
     echo "$new" | grep -qiE "$marker" && { ok=1; break; }
   done
@@ -982,6 +982,55 @@ cmd_down() { # <agent> [harness] — harness optional: at most one live session 
   sleep 5; stmux "$s" kill-session -t "$s" 2>/dev/null || true
   reap_seat_procgroup "$pane_pid" "$cdir"
   echo "session $s stopped"
+}
+
+cmd_reset() { # <agent> [harness] [--force] — bug-298: CONVERGE a seat to a running session on the CURRENT tool schema (IDEMPOTENT)
+  # THE reset PRIMITIVE (work-274, Director-scoped). = safe-point `ois down` (if live) + `ois up`:
+  # a claude seat with a prior session auto-resumes via `-c` (idea-494, cmd_up:910-918), so the agent
+  # comes back on the LIVE tool schema (the fresh process re-snapshots MCP ListTools — clearing the
+  # bug-298 freeze) with its conversation (-c) + WorkGraph lease/state intact (the lease persists
+  # through process death). This formalizes the manual `ois down/up <seat> claude -c` reload proven
+  # twice in the refresh-spike receipts. Invocable manually AND WorkGraph-orchestrated.
+  # HARD SCOPE: this is JUST the reset action. The automatic staleness-detection + convergence ENGINE
+  # (SessionFreshnessReconciler / actuator / substrate-truth-resume / lease-recovery / durable episode
+  # ledger / admission fence) is DEFERRED to idea-587 — NOT built here. staleness->reset is a plain
+  # operator/orchestration decision, not auto-detection.
+  local a="" h="" force=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --force) force=1 ;;
+      *) if [[ -z "$a" ]]; then a="$arg"; elif [[ -z "$h" ]]; then h="$arg"; fi ;;
+    esac
+  done
+  [[ -n "$a" ]] || fatal "usage: ois reset <agent> [harness] [--force]"
+  # resolve harness: explicit -> the agent's live one -> default 'claude' (the bug-298 target; needed
+  # to `up` a DEAD seat, which has no live harness to infer). Pass the harness explicitly for non-claude.
+  [[ -n "$h" ]] || h=$(live_harness "$a")
+  [[ -n "$h" ]] || h="claude"
+  local s; s=$(session_name "$a" "$h")
+  # IDEMPOTENT converge-to-running (Director): if a session is LIVE, restart it (down); if NOT, just
+  # start it (up). Repeated `reset <seat>` converges to the same end state — a running interactive
+  # tmux claude on the CURRENT tool schema — so an operator/orchestrator can fire it WITHOUT first
+  # checking whether the seat is up.
+  if stmux "$s" has-session -t "$s" 2>/dev/null; then
+    # SIMPLE safe-point idle check (NOT the deferred admission fence, idea-587). Local + BEST-EFFORT:
+    # refuse if the pane shows the harness actively working (claude renders an 'esc to interrupt' hint
+    # mid turn/tool-call), so a manual reset never kills a live tool call. Fail-open (the -c resume +
+    # lease-persistence make a reset safe regardless); --force overrides. NOTE: the authoritative idle
+    # signal is the Hub activityState==online_idle (activity FSM) — the WorkGraph-orchestrated trigger
+    # should gate on THAT (it has the Hub view); this local pane check is the operator-CLI convenience.
+    if [[ "$force" -eq 0 ]] && stmux "$s" capture-pane -t "$s" -p 2>/dev/null | grep -qiE "esc to interrupt"; then
+      fatal "seat $s looks BUSY (mid turn/tool-call) — reset could interrupt a live call. Re-run when idle, or 'ois reset $a $h --force'."
+    fi
+    echo "→ ois reset $a/$h  (live: restart onto current schema; -c resume; WorkGraph state intact)"
+    cmd_down "$a" "$h"
+  else
+    echo "→ ois reset $a/$h  (no live session: starting fresh onto current schema)"
+  fi
+  # cmd_up injects `-c` ONLY when a prior conversation exists (idea-494, cmd_up:910-918); with no prior
+  # session it starts fresh GRACEFULLY (never the `-c: No conversation found` error). POSTCONDITION
+  # (always, regardless of prior state): a running interactive tmux claude on the current tool schema.
+  cmd_up "$a" "$h"
 }
 
 cmd_attach() { # <agent> [harness] — harness optional: at most one live session per agent
@@ -1153,6 +1202,7 @@ case "$sub" in
   up)     [[ $# -ge 2 ]] || fatal "usage: ois up <agent> <harness> [launch-args…]"; cmd_up "$@" ;;
   attach) if [[ $# -eq 0 ]]; then cmd_ps; else cmd_attach "$@"; fi ;;
   down)   [[ $# -ge 1 ]] || fatal "usage: ois down <agent> [harness]"; cmd_down "$@" ;;
+  reset)  [[ $# -ge 1 ]] || fatal "usage: ois reset <agent> [harness] [--force]"; cmd_reset "$@" ;;
   say)    [[ $# -ge 2 ]] || fatal "usage: ois say <agent> <message...>"; cmd_say "$@" ;;
   decisions) cmd_decisions "$@" ;;
   nodes)  cmd_nodes "$@" ;;
@@ -1182,6 +1232,6 @@ case "$sub" in
     ;;
   list)   cmd_list ;;
   doctor) cmd_doctor ;;
-  *) fatal "usage: ois {launch|up|attach|say|confirm|decisions|nodes|show|down|ps|render|env|check|seed|list|doctor}" ;;
+  *) fatal "usage: ois {launch|up|attach|say|confirm|decisions|nodes|show|down|reset|ps|render|env|check|seed|list|doctor}" ;;
 esac
 fi

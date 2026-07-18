@@ -25,7 +25,7 @@
   "piSettings": {
     "theme": "dark",
     "defaultProvider": "openai-codex",
-    "defaultModel": "gpt-5.5",
+    "defaultModel": "gpt-5.6-sol",
     "defaultThinkingLevel": "xhigh",
     "terminal": {
       "showTerminalProgress": true
@@ -45,7 +45,7 @@
     "providers": {
       "openai-codex": {
         "modelOverrides": {
-          "gpt-5.5": {
+          "gpt-5.6-sol": {
             "contextWindow": 400000
           }
         }
