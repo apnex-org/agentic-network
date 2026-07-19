@@ -192,6 +192,9 @@ jobs:
         run: |
           bash scripts/test/ois-seat-configdir.test.sh
           bash scripts/test/ois-fleet-seat-config.test.sh
+          bash ois/test/reap-scope.test.sh
+          bash ois/test/socket-isolation.test.sh
+          bash ois/test/reset.test.sh
 
   # ── Aggregator: single status-check name for branch-protection rules ─
   # Branch-protection rule targets `test` (a stable name); the
