@@ -193,6 +193,7 @@ jobs:
           bash scripts/test/ois-seat-configdir.test.sh
           bash scripts/test/ois-fleet-seat-config.test.sh
           bash ois/test/reap-scope.test.sh
+          bash ois/test/seat-identity.test.sh
           bash ois/test/socket-isolation.test.sh
           bash ois/test/reset.test.sh
 

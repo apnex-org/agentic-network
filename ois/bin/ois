@@ -88,10 +88,14 @@ cell_json() {
   # missing identity/role/workspace/tag used to degrade into literal `null` env or
   # render values; fail loud before any launch/check/env surface can launder it.
   # Likewise, stale OIS_INSTANCE_ID is retired authority and may not be reintroduced
-  # by fleet, agent, harness, secret, or template config.
+  # by fleet, agent, harness, secret, or template config. bug-303 (oisfix3): OIS_SEAT_ID is the
+  # kill-ownership key the blast-safe reap (reap_seat) matches per-PID — a config/secret layer must
+  # NOT be able to AUTHOR (clobber) it, so reject it in every env layer too. Defense in depth
+  # alongside the canonical-wins stamp-AFTER-env_lines-replay ordering in do_launch.
   jq -e --arg h "$h" '
     def nonempty($x): (($x // "") | type == "string" and length > 0);
     def lacks_instance_id($x): (($x // {}) | has("OIS_INSTANCE_ID") | not);
+    def lacks_seat_id($x): (($x // {}) | has("OIS_SEAT_ID") | not);
     nonempty(.agentName)
     and nonempty(.role)
     and nonempty(.workspace)
@@ -102,7 +106,10 @@ cell_json() {
     and lacks_instance_id(.envTemplate)
     and lacks_instance_id(.env)
     and lacks_instance_id(.secretEnv)
-  ' <<<"$out" >/dev/null || fatal "invalid merged cell '$a/$h' (requires agentName/role/workspace/hubModelTag/exec/renders, per-seat configDirTemplate for pi/claude, and no OIS_INSTANCE_ID authority)"
+    and lacks_seat_id(.envTemplate)
+    and lacks_seat_id(.env)
+    and lacks_seat_id(.secretEnv)
+  ' <<<"$out" >/dev/null || fatal "invalid merged cell '$a/$h' (requires agentName/role/workspace/hubModelTag/exec/renders, per-seat configDirTemplate for pi/claude, and no OIS_INSTANCE_ID authority and no OIS_SEAT_ID authority)"
   printf '%s\n' "$out"
 }
 
@@ -721,6 +728,10 @@ cmd_doctor() {
 
 do_launch() {
   local a="$1" h="$2"; shift 2
+  # bug-303 (oisfix3): validate the seat tokens BEFORE cell_json — a delimiter-ambiguous token must hit
+  # THIS fail-closed check (unownable OIS_SEAT_ID), NOT cell_json's 'unknown agent'. ois-<agent>-<harness>.
+  [[ "$a" =~ ^[A-Za-z0-9_]+$ && "$h" =~ ^[A-Za-z0-9_]+$ ]] \
+    || fatal "seat tokens must match [A-Za-z0-9_]+ (agent='$a' harness='$h') — OIS_SEAT_ID would be ambiguous"
   local c ws; c=$(cell_json "$a" "$h"); ws=$(expand "$(jq -r '.workspace' <<<"$c")")
   [[ -d "$ws" ]] || fatal "missing workspace $ws"
   # render + write artifacts
@@ -744,19 +755,16 @@ do_launch() {
   # legacy OIS_INSTANCE_ID must never leak into a launched harness as ambient
   # authority. env_lines also rejects any config layer that tries to render it.
   unset OIS_INSTANCE_ID
-  # bug-303 (oisfix2): stamp a canonical per-seat identity on the launched process AND every
-  # descendant, OVERWRITING any inherited value (a peer-spawned seat must NOT carry the spawner's id
-  # — set fresh, separately from OIS_AGENT_NAME). This is the exact key the blast-safe reap
-  # (reap_seat) matches per-PID before signaling. The key MUST include the harness: OIS_AGENT_NAME is
-  # NOT seat-unique (same agent / different harness share it) and the one-live-session-per-agent guard
-  # is advisory/non-atomic (raw `ois launch`, legacy/default-server seats, and detached trees bypass
-  # it). Validate the tokens so the '-' separator in ois-<agent>-<harness> is unambiguous; a malformed
-  # id is unownable → fatal (fail-closed).
-  [[ "$a" =~ ^[A-Za-z0-9_]+$ && "$h" =~ ^[A-Za-z0-9_]+$ ]] \
-    || fatal "seat tokens must match [A-Za-z0-9_]+ (agent='$a' harness='$h') — OIS_SEAT_ID would be ambiguous"
-  export OIS_SEAT_ID="$(session_name "$a" "$h")"
+  # bug-303: replay the cell env, THEN stamp the canonical per-seat identity OIS_SEAT_ID. oisfix3:
+  # the stamp lands AFTER the env_lines replay so the kill-ownership key is CANONICAL-WINS — no
+  # config/secret layer (.envTemplate/.env/.secretEnv) can clobber it (cell_json also REJECTS a
+  # config-authored OIS_SEAT_ID; defense in depth). It OVERWRITES any inherited value so a peer-spawned
+  # seat never carries the spawner's id. The key MUST include the harness (OIS_AGENT_NAME is NOT
+  # seat-unique; the one-live-session-per-agent guard is advisory). Token grammar is validated at
+  # do_launch entry (before cell_json).
   local line
   while IFS= read -r line; do export "${line%%=*}=${line#*=}"; done < <(env_lines "$c" raw "$h")
+  export OIS_SEAT_ID="$(session_name "$a" "$h")"
   # opencode plugin cache refresh (npm channel only — github: specs are retired)
   if [[ "$h" == "opencode" ]]; then
     local plug; plug=$(jq -r '.opencodePlugin' <<<"$c")

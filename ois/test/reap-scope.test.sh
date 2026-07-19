@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# reap-scope.test.sh — bug-256/idea-511 + bug-303 (oisfix2): PROVE the seat reap is blast-safe.
+# reap-scope.test.sh — bug-256/idea-511 + bug-303 (oisfix2/oisfix3): PROVE the seat reap is blast-safe.
 # The reap targets ONLY the seat whose canonical OIS_SEAT_ID matches, signalling each PID
 # individually (exact /proc/<pid>/environ) — NEVER a process-group kill. So a co-resident sibling
 # with a different / absent / unreadable identity CANNOT be swept — the guarantee the bug-303 fleet
@@ -125,20 +125,60 @@ reap_target "$TP" "$TDIR/seatLily" "ois-lily-claude"
 assert_dead "$TP" "tree parent"
 assert_dead "$TC" "tree child (inherited id)"
 
-echo "== (8) do_launch OVERWRITES an inherited OIS_SEAT_ID (a peer-spawn can't inherit the spawner's) =="
-got=$(OIS_SEAT_ID="ois-spawner-claude" bash -c 'source "'"$DIR/../bin/ois"'"; a=lily; h=claude; export OIS_SEAT_ID="$(session_name "$a" "$h")"; printf %s "$OIS_SEAT_ID"' 2>/dev/null)
-if [[ "$got" == "ois-lily-claude" ]]; then echo "  ok: inherited 'ois-spawner-claude' overwritten to '$got'"; else echo "  FAIL: overwrite produced '$got'"; fail=1; fi
+# (do_launch OVERWRITE + token-validation are now proven END-TO-END through the real `ois launch`
+#  path in ois/test/seat-identity.test.sh — oisfix2's in-test export/regex versions were hollow,
+#  steve's oisfix2 blockers 1+2. This file keeps the reap-signal guards, driven for real below.)
 
-echo "== (9) seat-token validation rejects a delimiter-ambiguous token (fail-closed in do_launch) =="
-if [[ "a-b" =~ ^[A-Za-z0-9_]+$ ]]; then echo "  FAIL: hyphenated token 'a-b' wrongly accepted"; fail=1; else echo "  ok: 'a-b' rejected (do_launch would fatal — unambiguous id)"; fi
-if [[ "lily" =~ ^[A-Za-z0-9_]+$ && "claude" =~ ^[A-Za-z0-9_]+$ ]]; then echo "  ok: canonical tokens accepted"; else echo "  FAIL: canonical tokens rejected"; fail=1; fi
+echo "== (8) PID-REUSE guard: _reap_seat_signal SUPPRESSES the signal when the per-PID start-identity"
+echo "       CHANGES between its two production reads (st1 != st2) — a recycled PID is never mis-killed. =="
+# A real owned proc (OIS_SEAT_ID=target) so pgrep enumerates it + the REAL ownership check matches.
+OIS_SEAT_ID="ois-lily-claude" setsid bash -c "echo \$\$ > '$TDIR/PR'; exec -a seat-reuse sleep 30" >/dev/null 2>&1 &
+disown 2>/dev/null || true
+for i in $(seq 1 20); do [[ -s "$TDIR/PR" ]] && break; sleep 0.1; done
+PR=$(cat "$TDIR/PR" 2>/dev/null); PIDS+=("$PR")
+# Negative: a FILE-backed counter forces the two production _seat_pid_starttime reads to DIFFER (an
+# in-memory counter would reset inside each $() call → st1==st2, passing for the WRONG reason). The
+# kill-spy logs the intended signal and sends nothing; the REAL st1==st2 gate must skip the target.
+if ( CNT="$TDIR/stcnt"; KLOG="$TDIR/klog8"; echo 0 > "$CNT"; : > "$KLOG"; sf=0
+     _seat_pid_starttime() { local n; n=$(cat "$CNT" 2>/dev/null); echo $((n+1)) > "$CNT"; [[ "$1" == "$PR" ]] && echo "$n" || echo 7; }
+     kill() { echo "$*" >> "$KLOG"; }
+     _reap_seat_signal "ois-lily-claude" TERM
+     if grep -qw "$PR" "$KLOG"; then echo "  FAIL: PID $PR signalled despite st1 != st2 (guard not enforced)"; sf=1
+     else echo "  ok: signal SUPPRESSED on changed start-identity (kill-spy empty for target)"; fi
+     exit $sf ); then :; else fail=1; fi
+# POSITIVE CONTROL: with a STABLE start-identity the SAME real reap DOES signal the target — proving the
+# suppression above is the st1==st2 gate, not a reap that never fires. (Delete the gate in ois/bin/ois →
+# the negative case above signals → RED, while this control stays green.)
+if ( KLOG="$TDIR/klog8c"; : > "$KLOG"; sf=0
+     _seat_pid_starttime() { echo 42; }
+     kill() { echo "$*" >> "$KLOG"; }
+     _reap_seat_signal "ois-lily-claude" TERM
+     if grep -qw "$PR" "$KLOG"; then echo "  ok: positive control — stable start-identity DOES signal the target"
+     else echo "  FAIL: positive control — matching+stable target not signalled (reap a no-op?)"; sf=1; fi
+     exit $sf ); then :; else fail=1; fi
 
-echo "== (10) PID-reuse guard: _seat_pid_starttime is a stable numeric start-identity; unreadable -> empty (fail-closed) =="
-s1=$(_seat_pid_starttime "$$"); sleep 0.2; s2=$(_seat_pid_starttime "$$")
-if [[ "$s1" =~ ^[0-9]+$ && "$s1" == "$s2" ]]; then echo "  ok: starttime stable+numeric ($s1)"; else echo "  FAIL: starttime s1='$s1' s2='$s2'"; fail=1; fi
-if [[ -z "$(_seat_pid_starttime 999999)" ]]; then echo "  ok: unreadable pid -> empty starttime -> _reap_seat_signal skips (fail-closed)"; else echo "  note: pid 999999 unexpectedly present (skipping)"; fi
+echo "== (9) UNREADABLE-ENVIRON candidate is NOT signalled (fail-closed): an enumerated PID whose"
+echo "       environ read returns EMPTY is skipped, while a readable matching sibling IS reaped. =="
+OIS_SEAT_ID="ois-lily-claude" setsid bash -c "echo \$\$ > '$TDIR/PU'; exec -a seat-unread sleep 30" >/dev/null 2>&1 &
+disown 2>/dev/null || true
+OIS_SEAT_ID="ois-lily-claude" setsid bash -c "echo \$\$ > '$TDIR/PC'; exec -a seat-ctl sleep 30" >/dev/null 2>&1 &
+disown 2>/dev/null || true
+for i in $(seq 1 20); do [[ -s "$TDIR/PU" && -s "$TDIR/PC" ]] && break; sleep 0.1; done
+PU=$(cat "$TDIR/PU" 2>/dev/null); PC=$(cat "$TDIR/PC" 2>/dev/null); PIDS+=("$PU" "$PC")
+# Stub ONLY the proc-read boundary (_seat_id_of_pid): return "" for the UNREADABLE target (simulated),
+# the REAL read for every other pid. The REAL _reap_seat_signal ownership comparison ("" != seat_id)
+# must SKIP the unreadable one (fail-closed); the readable matching sibling IS signalled (positive control).
+if ( KLOG="$TDIR/klog9"; : > "$KLOG"; sf=0
+     _seat_id_of_pid() { if [[ "$1" == "$PU" ]]; then echo ""; else cat "/proc/$1/environ" 2>/dev/null | tr '\0' '\n' | grep -m1 '^OIS_SEAT_ID=' | cut -d= -f2-; fi; }
+     kill() { echo "$*" >> "$KLOG"; }
+     _reap_seat_signal "ois-lily-claude" TERM
+     if grep -qw "$PU" "$KLOG"; then echo "  FAIL: unreadable-environ PID $PU was signalled (NOT fail-closed)"; sf=1
+     else echo "  ok: unreadable candidate $PU NOT signalled (fail-closed)"; fi
+     if grep -qw "$PC" "$KLOG"; then echo "  ok: positive control — readable matching sibling $PC IS signalled"
+     else echo "  FAIL: positive control — matching readable sibling not signalled (reap a no-op?)"; sf=1; fi
+     exit $sf ); then :; else fail=1; fi
 
-echo "== (11) spawn isolation — POSTCONDITION ONLY (NOT setsid causality): a seat launched via"
+echo "== (10) spawn isolation — POSTCONDITION ONLY (NOT setsid causality): a seat launched via"
 echo "        _seat_new_session gets its OWN pgid, severed from the caller =="
 if command -v tmux >/dev/null 2>&1; then
   T11="ois-reapscope11-$$"
