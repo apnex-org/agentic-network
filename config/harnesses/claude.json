@@ -17,6 +17,10 @@
     "HUB_LLM_MODEL": "{hubModelTag}",
     "OIS_HUB_ROLE": "{role}"
   },
+  "env": {
+    "OIS_COGNITIVE_BYPASS": "1"
+  },
+  "_envWhy": "OIS_COGNITIVE_BYPASS=1 — bug-302/idea-589 stopgap (Director-authorized 2026-07-19): disables the cognitive pipeline (the pre-WorkGraph ResponseSummarizer silently truncates structured read-tool results >10 items or >2KB and caches the truncated form). FULL-pipeline bypass — also disables WriteCallDedup (double-write guard) + cache, accepted as temporary collateral until idea-589 ships the WorkGraph-era redesign. Claude-only (the PI shim does not read this var). REVERT: remove .env.OIS_COGNITIVE_BYPASS and reset the seats.",
   "credentialImports": {
     "anthropic": {
       "inject": "env",
