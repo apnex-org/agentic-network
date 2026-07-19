@@ -10,5 +10,6 @@ export * from "./oracles.js";
 export * from "./determinism.js";
 export * from "./arc.js";
 export * from "./properties.js";
+export * from "./mp0bn-rehearsal.js";
 // Re-export the injected clock so sim consumers need not deep-import hub (idea-449/525).
 export { VirtualClock, systemClock, type Clock } from "hub/dist/entities/clock.js";
