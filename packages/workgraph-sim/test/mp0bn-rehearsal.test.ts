@@ -4,14 +4,15 @@
  * making BOTH verifier-gate paths explicit (the 449_B_gate acceptance forbids a rehearsal that
  * plays to done by silently skipping the gate-close constraint):
  *   - RESHAPE (architect-driven -vg + distinct verifier attest) → whole arc reaches all-done;
- *   - TRAP (faithful single-verifier -vg, executor==attester) → the gates DEADLOCK, proving the
- *     sim catches the bug-249 class instead of false-greening it.
+ *   - SINGLE-VERIFIER (faithful single-verifier -vg, executor==attester) → post-#616 (bug-249 /
+ *     idea-528) the target-work-scoped self-attest fence permits it (the verifier did not author the
+ *     gated work), so the gates close and the arc reaches all-done. (Pre-#616 this deadlocked.)
  */
 import { describe, it, expect } from "vitest";
 import { runDressRehearsal } from "../src/mp0bn-rehearsal.js";
 
 describe("449_B B3 — mp0bn dress-rehearsal (both paths, no silent gate-skip)", () => {
-  it("the reshape path drives the whole mp0bn arc to all-done; the single-verifier trap deadlocks", async () => {
+  it("the reshape path and the single-verifier path both drive the mp0bn arc to all-done (bug-249 fixed)", async () => {
     const results = await runDressRehearsal();
     const failures = results.filter((r) => !r.pass);
     expect(results.length).toBe(2);

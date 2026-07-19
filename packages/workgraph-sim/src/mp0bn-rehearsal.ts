@@ -10,9 +10,11 @@
  *
  * Per the 449_B_gate acceptance, the rehearsal is explicit about BOTH verifier-gate paths —
  * it never silently skips the gate-close constraint:
- *   - TRAP path (faithful, blueprint role=verifier): the -vg executor IS the attester, so
- *     attestEvidence's fold-2 self-attestation fence rejects → the gates DEADLOCK. This proves
- *     the sim CATCHES the bug-249 single-verifier class rather than false-greening it.
+ *   - SINGLE-VERIFIER path (faithful, blueprint role=verifier): the -vg executor IS the attester.
+ *     Post-#616 (bug-249 / idea-528) the self-attestation fence is TARGET-WORK-scoped — the verifier
+ *     did not author the gated target work, so the fence permits the attest, the gates close, and the
+ *     whole arc drives to all-done. (Pre-#616 this deadlocked; that was the bug-249 bug, and #616 is
+ *     the fix — so the reconstructed arc now completes on both drive paths.)
  *   - RESHAPE path (role=architect): the architect drives the -vg to review and a DISTINCT
  *     verifier attests → the whole arc drives to all-done.
  */
@@ -62,18 +64,22 @@ export async function rehearseMp0bnReshape(): Promise<OracleResult> {
   };
 }
 
-/** TRAP path: faithful single-verifier -vg (executor==attester) → the -vg gates DEADLOCK (sim catches bug-249). */
+/** SINGLE-VERIFIER path: one verifier drives the -vg AND attests. Post-#616 (bug-249 / idea-528) the
+ * self-attestation fence is TARGET-WORK-scoped, not gate-scoped: the verifier did not author the gated
+ * target work (engineers did), so the fence permits the attest, the -vg gates close, and the whole arc
+ * drives to all-done. (Pre-#616 this DEADLOCKED — that WAS the bug-249 bug; #616 is the fix. The
+ * self-authored case the fence still rejects is covered by hub's seal-a2-attest suite.) */
 export async function rehearseMp0bnTrap(): Promise<OracleResult> {
   const r = await new WholeArcSim(freshHarness()).run(mp0bnArc("verifier"));
-  const trapped = r.deadlock === true && r.stuck.includes("449_A_gate") && !r.done.includes("arc_driver");
+  const allDone = r.deadlock === false && r.stuck.length === 0 && r.done.includes("arc_driver");
   return {
-    name: "B3:mp0bn-dress-rehearsal/TRAP-path-single-verifier-deadlocks",
-    pass: trapped,
-    detail: trapped ? undefined : `expected a -vg deadlock; deadlock=${r.deadlock} stuck=${r.stuck.slice(0, 8)}`,
+    name: "B3:mp0bn-dress-rehearsal/single-verifier-drives-to-all-done-post-bug-249",
+    pass: allDone,
+    detail: allDone ? undefined : `expected all-done (bug-249 fixed by #616); deadlock=${r.deadlock} stuck=${r.stuck.slice(0, 8)}`,
   };
 }
 
-/** The B3 dress-rehearsal — both the reshape (green) and trap (caught-as-deadlock) paths, stated explicitly. */
+/** The B3 dress-rehearsal — both the reshape (distinct-verifier) and single-verifier (bug-249-fixed) paths, stated explicitly. */
 export async function runDressRehearsal(): Promise<OracleResult[]> {
   return [await rehearseMp0bnReshape(), await rehearseMp0bnTrap()];
 }
