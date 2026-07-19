@@ -744,6 +744,17 @@ do_launch() {
   # legacy OIS_INSTANCE_ID must never leak into a launched harness as ambient
   # authority. env_lines also rejects any config layer that tries to render it.
   unset OIS_INSTANCE_ID
+  # bug-303 (oisfix2): stamp a canonical per-seat identity on the launched process AND every
+  # descendant, OVERWRITING any inherited value (a peer-spawned seat must NOT carry the spawner's id
+  # — set fresh, separately from OIS_AGENT_NAME). This is the exact key the blast-safe reap
+  # (reap_seat) matches per-PID before signaling. The key MUST include the harness: OIS_AGENT_NAME is
+  # NOT seat-unique (same agent / different harness share it) and the one-live-session-per-agent guard
+  # is advisory/non-atomic (raw `ois launch`, legacy/default-server seats, and detached trees bypass
+  # it). Validate the tokens so the '-' separator in ois-<agent>-<harness> is unambiguous; a malformed
+  # id is unownable → fatal (fail-closed).
+  [[ "$a" =~ ^[A-Za-z0-9_]+$ && "$h" =~ ^[A-Za-z0-9_]+$ ]] \
+    || fatal "seat tokens must match [A-Za-z0-9_]+ (agent='$a' harness='$h') — OIS_SEAT_ID would be ambiguous"
+  export OIS_SEAT_ID="$(session_name "$a" "$h")"
   local line
   while IFS= read -r line; do export "${line%%=*}=${line#*=}"; done < <(env_lines "$c" raw "$h")
   # opencode plugin cache refresh (npm channel only — github: specs are retired)
@@ -839,12 +850,12 @@ _seat_new_session() { # <session/socket> <command-string> — same target for -L
   # bug-303: spawn the seat's tmux server in its OWN session, provably severed from the caller's
   # process group. tmux self-daemonization is NOT sufficient — when `ois up` runs from INSIDE a
   # live seat's pane (peer-spawn), the new seat inherited the SPAWNER's pgid, so a later
-  # `ois reset <spawner>` group-kill (reap_seat_procgroup) swept every co-resident sibling
+  # `ois reset <spawner>` group-kill (the old pgid-based reap) swept every co-resident sibling
   # (the bug-303 fleet detonation: one `ois reset lily` killed greg+ruby+lily). `setsid -w` forks
   # into a fresh session leader (group-leader-safe) and WAITS, so the exit status + the set-option
   # below stay correct; `env -u TMUX -u TMUX_PANE` stops the new `-L` client from binding to the
   # OUTER server when ois is invoked inside tmux. Harness-agnostic (protects claude/pi/opencode);
-  # paired with the CLAUDE_CONFIG_DIR-primary reap defense (reap_seat_procgroup) for depth.
+  # paired with the exact-OIS_SEAT_ID reap (reap_seat) for defense in depth.
   env -u TMUX -u TMUX_PANE setsid -w tmux -L "$s" new-session -d -s "$s" -x "$cols" -y "$rows" "$@" || return 1
   stmux "$s" set-option -g window-size manual 2>/dev/null || true
 }
@@ -926,6 +937,10 @@ cmd_up() {
     fi
   fi
   command -v tmux >/dev/null 2>&1 || fatal "'tmux' required for ois up"
+  # bug-303 (oisfix2): setsid is load-bearing — _seat_new_session uses it to give each seat its OWN
+  # session/pgid (spawn isolation). Fail LOUD rather than silently launch without isolation on a box
+  # lacking util-linux.
+  command -v setsid >/dev/null 2>&1 || fatal "'setsid' (util-linux) required for ois up — seat spawn-isolation depends on it"
   stmux "$s" has-session -t "$s" 2>/dev/null && fatal "session $s already running (ois down $a $h first)"
   # displacement guard: one live harness per agent (hub allows one session per identity).
   # idea-512: check the agent's OWN per-seat sockets (no shared server to `tmux ls`).
@@ -957,22 +972,26 @@ cmd_up() {
   fi
 }
 
-# ---------- bug-256/idea-511: blast-safe seat process-tree reap ----------
-# `tmux kill-session` frees the pane, but a claude seat's process GROUP (its shim + any
-# bg-pty-host children) and a DETACHED cc-daemon can survive and ACCRETE across restarts
-# (bug-256: the cleanslate0 incident — a broad kill wiped greg+lily off the SHARED default
-# tmux server). We reap ONLY the target seat, NEVER `tmux kill-server` / broad `pkill`.
-# Two scoped reaps, with CLAUDE_CONFIG_DIR as the PRIMARY (provably per-seat) key:
-#   1. any straggler carrying THIS seat's CLAUDE_CONFIG_DIR in its environ — the config dir is
-#      unique per seat, so an exact match can NEVER select another seat or the operator. This is
-#      the load-bearing, always-safe reap.
-#   2. the seat's process GROUP — a COMPLETENESS booster that also reaps target procs the cdir
-#      pattern might miss. bug-303: pane-pgid uniqueness is NO LONGER ASSUMED — it is ENFORCED at
-#      spawn by _seat_new_session's setsid (a peer-spawned seat once inherited the spawner's pgid,
-#      so an unconditional `kill -- -<pgid>` swept co-resident siblings = the fleet detonation).
-#      The group-kill is now DEMOTED behind a same-seat check: it is REFUSED if the target group is
-#      MIXED (contains a proc bearing a foreign CLAUDE_CONFIG_DIR), failing safe to cdir-only (1).
-#      NEVER `tmux kill-server` / broad `pkill`.
+# ---------- bug-256/idea-511 + bug-303 (oisfix2): blast-safe per-seat reap by exact OIS_SEAT_ID ----------
+# `tmux kill-session` frees the pane, but a seat's process tree (its harness + bg-pty-host/bg-spare
+# children, and any DETACHED straggler) can survive and ACCRETE across restarts (bug-256: the
+# cleanslate0 incident wiped greg+lily off the SHARED default tmux server). We reap ONLY the target
+# seat, keyed on its canonical per-seat identity OIS_SEAT_ID (stamped by do_launch on the seat root,
+# inherited by every descendant). We NEVER do a process-GROUP kill (`kill -- -<pgid>`) and NEVER
+# `tmux kill-server` / broad `pkill`:
+#   - A userspace membership scan can NOT be atomic with a group signal, so a group-kill can never be
+#     PROVEN single-seat (a foreign proc can fork/join the group in the scan→kill gap). That
+#     unprovable race WAS the bug-303 fleet detonation (one `ois reset lily` group-killed
+#     greg+ruby+lily via a shared pgid). Removing the group-kill eliminates the blast BY CONSTRUCTION.
+#   - Exact-OIS_SEAT_ID matching signals each PID individually, only after confirming it belongs to
+#     the target seat. FAIL-CLOSED: any PID whose environ is unreadable, or whose OIS_SEAT_ID is
+#     absent/empty/non-matching, is NOT signalled. No group snapshot → no cross-seat blast.
+# COVERAGE is honest, not absolute: complete for descendants that RETAIN the inherited OIS_SEAT_ID
+# (proven for the bug-256 detached tree in reap-scope.test.sh); a descendant that env-SCRUBS/REPLACES
+# its environment MAY survive — a deliberate safety-over-completeness residual, absent a kernel
+# ownership primitive (cgroup / pidfd). Repeat-to-quiescence re-reaps stragglers/children spawned
+# during teardown (it does NOT heal a mis-signal). The per-PID read→signal window is bounded by a
+# start-time recheck but is non-zero (no atomicity without pidfd).
 
 seat_config_dir() { # <agent> <harness> -> expanded CLAUDE_CONFIG_DIR ("" if none)
   local c cdir
@@ -981,67 +1000,67 @@ seat_config_dir() { # <agent> <harness> -> expanded CLAUDE_CONFIG_DIR ("" if non
   expand "${cdir//\{agent\}/$1}"
 }
 
-# _reap_by_configdir <cdir> <signal>: signal every own-user seat-family proc whose environ has
-# EXACTLY CLAUDE_CONFIG_DIR=<cdir>. Excludes self/parent. Always returns 0.
-# The pgrep pattern is a PERF PRE-FILTER over "scan every proc's environ"; the EXACT environ match
-# (below) is the safety gate — it can never select another seat or the operator. bug-303: this
-# cdir-only reap is now the fail-safe fallback when the group-kill is refused on a MIXED group, so
-# its completeness matters more. Audit (bug-303) found every extant claude-seat proc type already
-# matched (claude binary / @apnex/claude-plugin / the seat shell whose cmdline carries the
-# <agent>.claude config path); `node` is added so a node-based seat helper is caught regardless of
-# its argv path — the exact-cdir gate keeps unrelated node procs untouched.
-_reap_by_configdir() {
-  local cdir="$1" sig="$2" pid
-  for pid in $(pgrep -u "$(id -u)" -f 'claude|bg-pty-host|bg-spare|@apnex/claude-plugin|node' 2>/dev/null); do
+# _seat_id_of_pid <pid> -> exact OIS_SEAT_ID from the proc's environ ("" if none/unreadable/vanished).
+# `cat … 2>/dev/null` (not `tr < …`) so an unreadable (privileged/vanished) proc is a SILENT
+# fail-closed skip — no shell redirection-open error leaks to stderr as we scan every own-user PID.
+_seat_id_of_pid() {
+  cat "/proc/$1/environ" 2>/dev/null | tr '\0' '\n' | grep -m1 '^OIS_SEAT_ID=' | cut -d= -f2-
+}
+
+# _seat_pid_starttime <pid> -> field 22 (starttime) of /proc/<pid>/stat ("" if unreadable). With the
+# PID this is a start-identity token that bounds reuse between the ownership read and the signal.
+# comm (field 2) may contain spaces/parens, so parse the fields AFTER the last ') '.
+_seat_pid_starttime() {
+  local stat rest; stat=$(cat "/proc/$1/stat" 2>/dev/null) || return 0
+  rest=${stat##*') '}                  # fields from state(3) onward
+  local -a f=($rest); echo "${f[19]}"  # 0-based: f[19] == stat field 22 (starttime)
+}
+
+# _reap_seat_signal <seat_id> <sig>: send <sig> to every own-user PID whose environ OIS_SEAT_ID
+# EXACTLY == <seat_id>, re-validating ownership + start-identity IMMEDIATELY before the signal — this
+# BOUNDS (does NOT eliminate) PID reuse; the residual read→signal window is non-zero (no atomicity
+# without pidfd). Excludes self/parent. FAIL-CLOSED: no id / mismatch / unreadable environ → skip.
+# NO argv/comm prefilter — the exact-environ id is the only gate, so completeness never depends on
+# a proc's command line.
+_reap_seat_signal() {
+  local seat_id="$1" sig="$2" pid st1 st2
+  [[ -n "$seat_id" ]] || return 0
+  for pid in $(pgrep -u "$(id -u)" 2>/dev/null); do
     [[ "$pid" == "$$" || "$pid" == "${PPID:-}" ]] && continue
-    if tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -qxF "CLAUDE_CONFIG_DIR=$cdir"; then
-      kill "-$sig" "$pid" 2>/dev/null || true
-    fi
+    [[ "$(_seat_id_of_pid "$pid")" == "$seat_id" ]] || continue          # exact ownership
+    st1=$(_seat_pid_starttime "$pid"); [[ -n "$st1" ]] || continue
+    [[ "$(_seat_id_of_pid "$pid")" == "$seat_id" ]] || continue          # re-validate id just before signal
+    st2=$(_seat_pid_starttime "$pid"); [[ "$st1" == "$st2" ]] || continue # start-identity unchanged (PID-reuse bound)
+    kill "-$sig" "$pid" 2>/dev/null || true
   done
   return 0
 }
 
-# _group_has_foreign_cdir <pgid> <target_cdir>: 0 if any process in group <pgid> carries a
-# CLAUDE_CONFIG_DIR that is non-empty AND != <target_cdir> — i.e. a DIFFERENT seat shares the
-# group. Used to refuse a cross-seat group-kill (bug-303). A member with the same cdir, or no
-# cdir at all (a target-owned helper), is NOT foreign. When target_cdir is empty (pi/opencode,
-# which carry no CLAUDE_CONFIG_DIR), ANY non-empty cdir member is foreign — catching a co-resident
-# claude seat. Always safe: on error/none it reports NOT-mixed only via the loop falling through.
-_group_has_foreign_cdir() {
-  local pgid="$1" tcdir="${2:-}" pid pcdir
-  [[ "$pgid" =~ ^[0-9]+$ ]] || return 1
-  for pid in $(pgrep -g "$pgid" 2>/dev/null); do
-    [[ "$pid" == "$$" ]] && continue
-    pcdir=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null | grep -m1 '^CLAUDE_CONFIG_DIR=' | cut -d= -f2-)
-    [[ -n "$pcdir" && "$pcdir" != "$tcdir" ]] && return 0
+# _seat_live_count <seat_id> -> number of own-user PIDs currently carrying OIS_SEAT_ID==<seat_id>.
+_seat_live_count() {
+  local seat_id="$1" pid n=0
+  [[ -n "$seat_id" ]] || { echo 0; return 0; }
+  for pid in $(pgrep -u "$(id -u)" 2>/dev/null); do
+    [[ "$pid" == "$$" || "$pid" == "${PPID:-}" ]] && continue
+    [[ "$(_seat_id_of_pid "$pid")" == "$seat_id" ]] && n=$((n+1))
   done
-  return 1
+  echo "$n"
 }
 
-# reap_seat_procgroup <pane_pid> <config_dir>: SIGTERM→(2s)→SIGKILL the seat's CLAUDE_CONFIG_DIR
-# stragglers (PRIMARY, always-safe) AND — only when the group is provably single-seat — its
-# process group (completeness booster). Both args may be empty (no-op).
-reap_seat_procgroup() {
-  local pane_pid="${1:-}" cdir="${2:-}" pgid="" selfpgid
-  selfpgid=$(ps -o pgid= -p "$$" 2>/dev/null | tr -d ' ')
-  if [[ "$pane_pid" =~ ^[0-9]+$ && "$pane_pid" != "$$" && "$pane_pid" != "${PPID:-}" ]] \
-       && kill -0 "$pane_pid" 2>/dev/null; then
-    pgid=$(ps -o pgid= -p "$pane_pid" 2>/dev/null | tr -d ' ')
-    # refuse a non-numeric / init(1) / OUR-OWN group — provably no self/operator blast.
-    if [[ ! "$pgid" =~ ^[0-9]+$ ]] || [[ "$pgid" -le 1 ]] || [[ "$pgid" == "$selfpgid" ]]; then pgid=""; fi
-  fi
-  # bug-303 blast-safety: DEMOTE the group-kill behind a same-seat check. If a foreign-cdir seat
-  # shares this group (residual co-residency from a pre-setsid peer-spawn), refuse the group-kill
-  # and fail safe to the CLAUDE_CONFIG_DIR-scoped reap only — never sweep a co-resident sibling.
-  if [[ -n "$pgid" ]] && _group_has_foreign_cdir "$pgid" "$cdir"; then
-    echo "  · refusing group-kill of pgid $pgid — MIXED group (a foreign-CLAUDE_CONFIG_DIR seat shares it); cdir-scoped reap only (bug-303)"
-    pgid=""
-  fi
-  if [[ -n "$pgid" ]]; then kill -TERM "-$pgid" 2>/dev/null || true; fi
-  if [[ -n "$cdir" ]]; then _reap_by_configdir "$cdir" TERM; fi
-  sleep 2
-  if [[ -n "$pgid" ]]; then kill -KILL "-$pgid" 2>/dev/null || true; echo "  · reaped seat process group $pgid"; fi
-  if [[ -n "$cdir" ]]; then _reap_by_configdir "$cdir" KILL; fi
+# reap_seat <seat_id>: blast-safe exact-OIS_SEAT_ID per-PID reap to bounded quiescence. TERM first
+# (graceful), then KILL survivors, RE-ENUMERATING before EACH round; repeat until no owned PID
+# remains or the round cap is hit. NEVER a group signal. Empty/absent seat_id is a safe no-op.
+# Quiescence re-reaps stragglers/children spawned during teardown — it does NOT heal a mis-signal.
+reap_seat() {
+  local seat_id="${1:-}" round sig
+  [[ -n "$seat_id" ]] || return 0
+  for round in 1 2 3 4 5 6; do
+    [[ "$round" -le 2 ]] && sig=TERM || sig=KILL
+    _reap_seat_signal "$seat_id" "$sig"
+    [[ "$(_seat_live_count "$seat_id")" -eq 0 ]] && { echo "  · reaped seat $seat_id (quiescent after $round round(s))"; return 0; }
+    sleep 1
+  done
+  echo "  · reap_seat $seat_id: $(_seat_live_count "$seat_id") proc(s) still live after 6 rounds — left as stragglers (safety-over-completeness: env-scrubbed/unkillable; never a cross-seat kill)"
   return 0
 }
 
@@ -1055,14 +1074,12 @@ cmd_down() { # <agent> [harness] — harness optional: at most one live session 
     s=$(session_name "$a" "$h")
   fi
   stmux "$s" has-session -t "$s" 2>/dev/null || { echo "no session $s"; return 0; }
-  # bug-256/idea-511: capture the seat's process group + config dir BEFORE teardown, so we
-  # can blast-safely reap the detached claude/bg-pty-host tree that survives kill-session.
-  local pane_pid cdir=""
-  pane_pid=$(stmux "$s" list-panes -t "$s" -F '#{pane_pid}' 2>/dev/null | head -1)
-  if [[ "$h" == "claude" ]]; then cdir=$(seat_config_dir "$a" "$h"); fi
+  # bug-256/bug-303: the seat's canonical identity ($s == session_name == the seat's OIS_SEAT_ID)
+  # lets us blast-safely reap its whole process tree — including the detached bg-pty-host straggler
+  # that survives kill-session — by EXACT OIS_SEAT_ID, never by process group (see reap_seat).
   if [[ "$h" == "claude" ]]; then stmux "$s" send-keys -t "$s" "/exit" Enter; else stmux "$s" send-keys -t "$s" C-c; fi
   sleep 5; stmux "$s" kill-session -t "$s" 2>/dev/null || true
-  reap_seat_procgroup "$pane_pid" "$cdir"
+  reap_seat "$s"
   echo "session $s stopped"
 }
 
@@ -1275,8 +1292,8 @@ cmd_ps() {
 
 # ---------- dispatch ----------
 # Source-guard (idea-511/bug-256 testability): SKIP the CLI dispatch when this file is
-# SOURCED — the reap-scope test sources it to exercise reap_seat_procgroup directly and
-# gets every function def without running a command. The exec path is unchanged.
+# SOURCED — the reap-scope test sources it to exercise reap_seat / the exact-id reap helpers
+# directly and gets every function def without running a command. The exec path is unchanged.
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 sub="${1:-}"; shift || true
 case "$sub" in
