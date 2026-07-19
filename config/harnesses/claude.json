@@ -1,0 +1,39 @@
+{
+  "harness": "claude",
+  "_why": "Claude Code harness: hub via the agent-adapter plugin. The dev-channels flag is required for autonomous wakeup injection; its confirmation banner is per-session (no config bypass exists). Sovereign per-agent CLAUDE_CONFIG_DIR, seeded idempotently at launch.",
+  "exec": [
+    "claude",
+    "--model",
+    "{hubModelTag}",
+    "--dangerously-load-development-channels",
+    "{pluginSpec}"
+  ],
+  "pluginSpec": "plugin:agent-adapter@agentic-network",
+  "configDirTemplate": "~/.config/apnex-agents/{agent}.claude",
+  "hubModelTag": "opus",
+  "envTemplate": {
+    "WORK_DIR": "{workspace}",
+    "OIS_EAGER_SESSION_CLAIM": "{eagerFlag}",
+    "HUB_LLM_MODEL": "{hubModelTag}",
+    "OIS_HUB_ROLE": "{role}"
+  },
+  "credentialImports": {
+    "anthropic": {
+      "inject": "env",
+      "name": "CLAUDE_CODE_OAUTH_TOKEN"
+    }
+  },
+  "renders": [
+    "adapter-config"
+  ],
+  "exportsRetiredInstanceId": false,
+  "_selfWrites": "claude owns everything under CLAUDE_CONFIG_DIR (.claude.json, settings.json, plugins/) \u2014 ois seeds once + repairs trust flag only; never diffs the rest",
+  "_configDirNote": "Sovereign dirs hold non-regenerable login-class state; seeding repairs the workspace trust flag only and never touches credentials.",
+  "statusLine": "~/.config/apnex-agents/bin/claude-statusline.sh",
+  "_statusLineWhy": "Estate-owned copy of the operator statusline (cwd/model/ctx/rate-limit burn) \u2014 sovereign configs must not reference the operator config dir. Seeded into settings.json; seed also repairs the field if absent.",
+  "claudeSettings": {
+    "ultracode": true,
+    "enableWorkflows": true,
+    "model": "opus"
+  }
+}
