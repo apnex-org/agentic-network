@@ -1577,6 +1577,38 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return map;
   }
 
+  /** idea-528 / bug-249: resolve the SELF-attestation exclusion set for a verifier-attestation
+   *  gate. The laundering risk is the verifier authoring the VERIFIED WORK, not merely driving the
+   *  verifier-gate node. Prefer target-work history: an explicit WorkItem targetRef and/or the
+   *  parent work item(s) whose completionDependsOn includes this gate. If no target work resolves,
+   *  fail safe to the historical gate-node history check. */
+  private async selfAttestationExclusionFor(gate: WorkItem): Promise<{ excluded: Set<string>; basis: "target-work" | "gate-node"; targetIds: string[] }> {
+    const targets = new Map<string, WorkItem>();
+    const targetRefKind = gate.targetRef?.kind.toLowerCase();
+    if (gate.targetRef && (targetRefKind === "workitem" || targetRefKind === "work-item" || targetRefKind === "work")) {
+      const target = await this.substrate.get<WorkItem>(KIND, gate.targetRef.id);
+      if (target) targets.set(gate.targetRef.id, cloneWorkItem(target));
+    }
+    for (const parent of await this.parentsAwaitingCompletion(gate.id)) {
+      if (parent.id !== gate.id) targets.set(parent.id, parent);
+    }
+
+    const excluded = new Set<string>();
+    if (targets.size > 0) {
+      for (const target of targets.values()) {
+        for (const agentId of target.executorHistory) excluded.add(agentId);
+        if (target.createdBy?.agentId) excluded.add(target.createdBy.agentId);
+        if (target.lease?.holder) excluded.add(target.lease.holder);
+      }
+      return { excluded, basis: "target-work", targetIds: [...targets.keys()].sort() };
+    }
+
+    for (const agentId of gate.executorHistory) excluded.add(agentId);
+    if (gate.createdBy?.agentId) excluded.add(gate.createdBy.agentId);
+    if (gate.lease?.holder) excluded.add(gate.lease.holder);
+    return { excluded, basis: "gate-node", targetIds: [] };
+  }
+
   /** SEAL — the SINGLE typed-ref validator (steve audit-11839): classify EVERY ref + count the
    *  LOAD-BEARING ones, against the FRESH `item`. Used identically by attest_evidence (throws on
    *  any reason) and verify_attestation (collects reasons) so the two can never drift.
@@ -1644,18 +1676,18 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // (c) CAS: derive requirement/hashes/HISTORY/ref-validation ALL from the FRESH w (steve
     //     audit-11832 #1: closes the first-attestation relocation TOCTOU — an attestation built
     //     from a stale pre-read must never be merged onto a moved row / auto-advance).
-    const written = await this.tryCasUpdate(workId, (w) => {
+    const written = await this.tryCasUpdate(workId, async (w) => {
       const req = w.evidenceRequirements.find((r) => r.id === requirementId);
       if (!req) throw new AttestationRejected(`requirement '${requirementId}' not found on ${workId}`);
       if (req.evidenceAuthority !== "verifier-attestation") {
         throw new AttestationRejected(`requirement '${requirementId}' is evidenceAuthority=${req.evidenceAuthority ?? "executor-evidence"} — attest_evidence only applies to verifier-attestation requirements`);
       }
-      // fold 2 HISTORY exclusion — executorHistory ∪ {creator, current holder}, from the fresh w.
-      const excluded = new Set<string>(w.executorHistory);
-      if (w.createdBy?.agentId) excluded.add(w.createdBy.agentId);
-      if (w.lease?.holder) excluded.add(w.lease.holder);
-      if (excluded.has(verifierId)) {
-        throw new AttestationRejected(`verifier ${verifierId} is in the executor/holder/creator history of ${workId} — self-attestation rejected (fold 2)`);
+      // fold 2 HISTORY exclusion (idea-528): reject only when the verifier authored the VERIFIED
+      // work. If no verified work can be resolved, fail safe to the historical gate-node check.
+      const selfExclusion = await this.selfAttestationExclusionFor(w);
+      if (selfExclusion.excluded.has(verifierId)) {
+        const targetSuffix = selfExclusion.basis === "target-work" ? `target work ${selfExclusion.targetIds.join(",")}` : workId;
+        throw new AttestationRejected(`verifier ${verifierId} is in the executor/holder/creator history of ${targetSuffix} — self-attestation rejected (fold 2)`);
       }
       // typed-ref validation against the fresh w (steve audit-11839): every ref validated, ≥1 load-bearing.
       const { reasons } = this.classifyEvidenceRefs(evidenceRefs, w, resolved);
@@ -1727,11 +1759,13 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (active.evidenceSetHash !== hashEvidenceSet(active.evidenceRefs)) invalidReasons.push("evidenceSetHash mismatch — the recorded evidence set is inconsistent");
       const role = await this.resolveAgentRole(active.verifierId);
       if (role !== "verifier") invalidReasons.push(`verifier ${active.verifierId} does not resolve to a verifier role (role=${role ?? "unknown"})`);
-      // self-attestation set = executorHistory ∪ {creator, current holder} (steve audit-11832 #3: include holder).
-      const excluded = new Set<string>(item.executorHistory);
-      if (item.createdBy?.agentId) excluded.add(item.createdBy.agentId);
-      if (item.lease?.holder) excluded.add(item.lease.holder);
-      if (excluded.has(active.verifierId)) invalidReasons.push(`verifier ${active.verifierId} is in the executor/holder/creator history (self-attestation)`);
+      // self-attestation set mirrors attest_evidence: target-work history when resolvable,
+      // otherwise fail-safe gate-node history.
+      const selfExclusion = await this.selfAttestationExclusionFor(item);
+      if (selfExclusion.excluded.has(active.verifierId)) {
+        const targetSuffix = selfExclusion.basis === "target-work" ? `target work ${selfExclusion.targetIds.join(",")}` : "gate-node";
+        invalidReasons.push(`verifier ${active.verifierId} is in the executor/holder/creator history of ${targetSuffix} (self-attestation)`);
+      }
       // RECOMPUTE the exact same typed-ref validation as attest_evidence (drift → invalid).
       const resolved = await this.resolveEntityRefs(active.evidenceRefs);
       invalidReasons.push(...this.classifyEvidenceRefs(active.evidenceRefs, item, resolved).reasons);
@@ -1899,12 +1933,12 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
 
   private async tryCasUpdate(
     workId: string,
-    transform: (current: WorkItem) => WorkItem,
+    transform: (current: WorkItem) => WorkItem | Promise<WorkItem>,
   ): Promise<WorkItem | null> {
     for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
       const existing = await this.substrate.getWithRevision<WorkItem>(KIND, workId);
       if (!existing) return null;
-      const next = transform(cloneWorkItem(existing.entity));
+      const next = await transform(cloneWorkItem(existing.entity));
       const result = await this.substrate.putIfMatch(KIND, next, existing.resourceVersion);
       if (result.ok) {
         console.log(`[WorkItemRepositorySubstrate] WorkItem ${workId} → ${next.status}`);

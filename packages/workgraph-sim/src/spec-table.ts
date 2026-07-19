@@ -104,7 +104,7 @@ export const SPEC: Record<Phase, Record<SpecVerb, Move>> = {
   }),
   review: row({
     complete_work: { legal: true, to: "gate", note: "→done once the gate is satisfied and explicit frictionReflection is present; missing friction persists valid evidence but stays same" },
-    attest_evidence: { legal: true, to: "done", note: "verifier dual-edge advances review→done" },
+    attest_evidence: { legal: true, to: "done", note: "verifier dual-edge advances review→done; self-attest guard is target-work-scoped (idea-528)" },
     renew_lease: { legal: true, to: "same" },
   }),
   done: allIllegal(),

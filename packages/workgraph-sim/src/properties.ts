@@ -115,27 +115,36 @@ export async function p8StateTimerSumIdentity(): Promise<OracleResult[]> {
 }
 
 /**
- * P9 — bug-249 single-verifier deadlock (lily's hook). A verifier-gate closes when a
- * DISTINCT verifier attests it. Mutant: when the executor IS the verifier (gate role =
- * verifier, so the same agent claims/completes AND attests), attestEvidence's fold-2
- * self-attestation fence rejects the verdict → the gate cannot close → in-sim DEADLOCK.
- * work-220 (the bug-249 fix) later flips this mutant green; until then it MUST be red.
+ * P9 — bug-249 / idea-528 single-verifier gate close. A verifier may mechanically
+ * claim/complete/attest a verifier-gate when the gate's VERIFIED WORK is authored by a
+ * different agent. Mutant: if the verifier authored the verified work, the self-attest
+ * fence still red-lights it — the fix is target-work-scoped, not a blanket bypass.
  */
 export async function p9SingleVerifierDeadlock(): Promise<OracleResult[]> {
-  const good = await new WholeArcSim(freshHarness()).run({ nodes: [{ id: "g", gate: true, role: "engineer" }] });
-  const mutant = await new WholeArcSim(freshHarness()).run({ nodes: [{ id: "g", gate: true, role: "verifier" }] });
+  const good = await new WholeArcSim(freshHarness()).run({
+    nodes: [{ id: "driver", completionDependsOn: ["g"] }, { id: "g", gate: true, role: "verifier" }],
+  });
+
+  const h = freshHarness();
+  const arch = await SimClient.create(h, "a", "architect", "a");
+  const ver = await SimClient.create(h, "v", "verifier", "v");
+  const gid = flatId((await arch.createWork({ type: "verifier-gate", roleEligibility: ["verifier"], runbook: "g", evidenceRequirements: gateReqs })).data);
+  const driver = flatId((await arch.createWork({ type: "task", roleEligibility: ["verifier"], evidenceRequirements: taskReqs, completionDependsOn: [gid] })).data);
+  await ver.claim(driver); await ver.start(driver); // verifier authors the VERIFIED work
+  await ver.claim(gid); await ver.start(gid);
+  await ver.complete(gid, commitEvidence(h)); // parks gate in review
+  const rejected = await ver.call("attest_evidence", { workId: gid, requirementId: "seal", verdict: "pass", evidenceRefs: [{ kind: "evidence", ref: "deadbeef" }] });
+
   return [
     {
-      name: "P9:distinct-verifier-gate-closes",
-      pass: good.deadlock === false && good.done.includes("g"),
-      detail: good.deadlock ? `distinct-verifier gate did not close: stuck=${good.stuck}` : undefined,
+      name: "P9:single-verifier-gate-closes-when-target-work-not-self-authored",
+      pass: good.deadlock === false && good.done.includes("g") && good.done.includes("driver"),
+      detail: good.deadlock ? `single-verifier gate did not close: stuck=${good.stuck}` : undefined,
     },
     {
-      name: "P9:MUTANT/single-verifier-self-attest-deadlocks",
-      pass: mutant.deadlock === true && mutant.stuck.includes("g"),
-      detail: mutant.deadlock
-        ? undefined
-        : "single-verifier gate CLOSED — the bug-249 self-attestation fence was bypassed (FALSE-GREEN)",
+      name: "P9:MUTANT/target-work-self-attestation-rejected",
+      pass: rejected.ok === false && (await phaseOf(arch, gid)) === "review",
+      detail: rejected.ok ? "verifier attested their OWN target work — self-attestation fence bypassed" : undefined,
     },
   ];
 }
