@@ -46,7 +46,7 @@ PROMPT_HANDLERS="${OIS_PROMPT_HANDLERS:-$CFG/prompt-handlers.json}"
 # npmdeliver0 (idea-492): the Claude agent-adapter plugin ships via the npm registry
 # (single channel; the Channel-2 GitHub-Release tarball is retired). EXACT pin — never
 # @latest (silent drift); deploy.sh can grep-guard this token.
-CLAUDE_PLUGIN_VERSION="0.1.14"
+CLAUDE_PLUGIN_VERSION="0.1.15"
 _CLAUDE_PLUGIN_MP=""   # process-cached npm-installed marketplace dir (set by claude_npm_ensure)
 
 fatal() { echo "ois: FATAL: $*" >&2; exit 1; }
@@ -57,13 +57,13 @@ command -v jq >/dev/null 2>&1 || fatal "'jq' not found on PATH"
 # ---------- cell resolution ----------
 # merged cell JSON on stdout; layers: fleet.defaults < harness < agent-common < agent.harness[h]
 cell_json() {
-  local a="$1" h="$2"
+  local a="$1" h="$2" out
   local af="$CFG/agents/$a.json" hf="$CFG/harnesses/$h.json" ff="$CFG/fleet.json"
   [[ -f "$ff" ]] || fatal "missing $ff"
   [[ -f "$af" ]] || fatal "unknown agent '$a' (no $af)"
   [[ -f "$hf" ]] || fatal "unknown harness '$h' (no $hf)"
   jq -e --arg h "$h" '.harness[$h]' "$af" >/dev/null 2>&1 || fatal "agent '$a' does not declare harness '$h'"
-  jq -s --arg h "$h" --arg a "$1" '
+  out=$(jq -s --arg h "$h" --arg a "$1" '
     (.[0].defaults) as $d | (.[1]) as $hz | (.[2]) as $ag |
     ($d * $hz * ($ag | del(.harness)) * ($ag.harness[$h] // {})) as $m |
     $m + {
@@ -82,7 +82,28 @@ cell_json() {
       cellHarness: $h,
       secretEnv: ((($d.secretEnv // {}) | with_entries(.value |= gsub("\\{agent\\}"; $a))) * ($ag.secretEnv // {}))
     }
-  ' "$ff" "$hf" "$af"
+  ' "$ff" "$hf" "$af") || fatal "failed to merge cell '$a/$h'"
+  # Bootstrap/bug-296 guardrail: OIS_AGENT_NAME is the canonical identity and the
+  # merged fleet/seat cell must contain the fields every harness renders from. A
+  # missing identity/role/workspace/tag used to degrade into literal `null` env or
+  # render values; fail loud before any launch/check/env surface can launder it.
+  # Likewise, stale OIS_INSTANCE_ID is retired authority and may not be reintroduced
+  # by fleet, agent, harness, secret, or template config.
+  jq -e --arg h "$h" '
+    def nonempty($x): (($x // "") | type == "string" and length > 0);
+    def lacks_instance_id($x): (($x // {}) | has("OIS_INSTANCE_ID") | not);
+    nonempty(.agentName)
+    and nonempty(.role)
+    and nonempty(.workspace)
+    and nonempty(.hubModelTag)
+    and ((.exec // []) | type == "array" and length > 0)
+    and ((.renders // []) | type == "array" and length > 0)
+    and (if ($h == "pi" or $h == "claude") then nonempty(.configDirTemplate) else true end)
+    and lacks_instance_id(.envTemplate)
+    and lacks_instance_id(.env)
+    and lacks_instance_id(.secretEnv)
+  ' <<<"$out" >/dev/null || fatal "invalid merged cell '$a/$h' (requires agentName/role/workspace/hubModelTag/exec/renders, per-seat configDirTemplate for pi/claude, and no OIS_INSTANCE_ID authority)"
+  printf '%s\n' "$out"
 }
 
 cells_all() {
@@ -251,9 +272,21 @@ env_lines() {
 claude_npm_ensure() {
   [[ -n "$_CLAUDE_PLUGIN_MP" ]] && return 0
   command -v npm >/dev/null 2>&1 || fatal "'npm' not found on PATH (needed for @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION)"
-  echo "  seeding : npm install -g @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION"
-  npm install -g "@apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION" >/dev/null || fatal "npm install -g @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION failed"
   local mp; mp="$(npm root -g)/@apnex/claude-plugin"   # <nvm prefix>/lib/node_modules/@apnex/claude-plugin
+  local installed_ver=""
+  if [[ -f "$mp/package.json" ]]; then
+    installed_ver="$(node -p "require('$mp/package.json').version" 2>/dev/null || true)"
+  fi
+  # bootstrap/bug-296: direct operator installs may carry a just-built local package before
+  # the npm registry has accepted the new pin. If the exact pinned version is already present,
+  # trust that installed artifact and converge the per-seat plugin cache from it instead of
+  # re-installing the older registry tarball over the repaired package.
+  if [[ "$installed_ver" == "$CLAUDE_PLUGIN_VERSION" ]]; then
+    echo "  seeding : using installed @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION at $mp"
+  else
+    echo "  seeding : npm install -g @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION"
+    npm install -g "@apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION" >/dev/null || fatal "npm install -g @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION failed"
+  fi
   [[ -d "$mp" ]] || fatal "npm-installed plugin dir missing at $mp after install"
   [[ -x "$mp/install.sh" ]] && ( cd "$mp" && ./install.sh >/dev/null ) || echo "  · install.sh missing/failed at $mp — continuing (per-seat converge follows)"
   _CLAUDE_PLUGIN_MP="$mp"
@@ -493,7 +526,7 @@ pi_settings_seed() { # <agent> <per-seat-cdir> <cell-json>
   mv "$tmp" "$dst"
   chmod 600 "$dst"
   umask "$old_umask"
-  echo "  seeding : pi settings policy rendered ($dst; theme=dark, provider=openai-codex, model=gpt-5.5)"
+  echo "  seeding : pi settings policy rendered ($dst; theme=dark, provider=openai-codex, model=$(jq -r '.defaultModel' "$dst" 2>/dev/null))"
 }
 
 # pi_models_seed — bug-271: per-seat PI_CODING_AGENT_DIR must receive an explicit,
@@ -707,6 +740,10 @@ do_launch() {
     pi_seed "$c"
   fi
   # env
+  # bug-296/bootstrap: OIS_AGENT_NAME is first-class identity; a caller's stale
+  # legacy OIS_INSTANCE_ID must never leak into a launched harness as ambient
+  # authority. env_lines also rejects any config layer that tries to render it.
+  unset OIS_INSTANCE_ID
   local line
   while IFS= read -r line; do export "${line%%=*}=${line#*=}"; done < <(env_lines "$c" raw "$h")
   # opencode plugin cache refresh (npm channel only — github: specs are retired)

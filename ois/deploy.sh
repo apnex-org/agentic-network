@@ -38,6 +38,8 @@ RESOLVER_DEST="$HOME/.config/apnex-agents/bin/prompt-resolve.sh"
 HANDLERS_DEST="$HOME/.config/apnex-agents/config/prompt-handlers.json"
 PI_HARNESS_CONFIG_SRC="$(dirname "$SRC")/../../config/harnesses/pi.json"
 PI_HARNESS_CONFIG_DEST="$HOME/.config/apnex-agents/config/harnesses/pi.json"
+CLAUDE_HARNESS_CONFIG_SRC="$(dirname "$SRC")/../../config/harnesses/claude.json"
+CLAUDE_HARNESS_CONFIG_DEST="$HOME/.config/apnex-agents/config/harnesses/claude.json"
 
 MANIFEST_REL="ois/manifests/skill-sync/wanted-bundles.yaml"
 MANIFEST_DEST="$HOME/.config/apnex-agents/manifests/skill-sync/wanted-bundles.yaml"
@@ -93,6 +95,12 @@ bash -n "$SRC" || { echo "error: canonical source fails bash -n; refusing to dep
 # (config/harnesses/claude.json) — verify those are present at deploy time too, else the
 # reader defaults to {} and seeds nothing.
 grep -q 'claudeSettings' "$SRC" || { echo "error: deploy source lacks the claudeSettings reader — stale ois? pull main or deploy from the worktree with the code. Refusing to deploy." >&2; exit 1; }
+# bug-296/bootstrap: claude launch defaults are now part of the same staged harness-config
+# surface as pi. Without co-shipping this file, `ois up <agent> claude` can keep reading a
+# stale live harness policy while `bin/ois` has changed underneath it, making PI-vs-Claude
+# seat equivalence unverifiable.
+[[ -f "$CLAUDE_HARNESS_CONFIG_SRC" ]] || { echo "error: missing repo claude harness config at $CLAUDE_HARNESS_CONFIG_SRC — refusing to deploy centralized claude harness config without its source" >&2; exit 1; }
+jq -e '.harness == "claude" and (.exec | index("claude") == 0) and ((.exec // []) | index("--dangerously-load-development-channels") != null) and .pluginSpec == "plugin:agent-adapter@agentic-network" and .configDirTemplate == "~/.config/apnex-agents/{agent}.claude" and .exportsRetiredInstanceId == false and .envTemplate.WORK_DIR == "{workspace}" and .envTemplate.HUB_LLM_MODEL == "{hubModelTag}" and (.envTemplate | has("OIS_INSTANCE_ID") | not) and .credentialImports.anthropic.inject == "env" and .credentialImports.anthropic.name == "CLAUDE_CODE_OAUTH_TOKEN" and .claudeSettings.model == "opus" and .claudeSettings.enableWorkflows == true and .claudeSettings.ultracode == true' "$CLAUDE_HARNESS_CONFIG_SRC" >/dev/null || { echo "error: repo claude harness config lacks required centralized Claude launch/settings policy — refusing to deploy" >&2; exit 1; }
 # bug-272: pi settings/models policy is config, not inline script or implicit ~/.pi/agent.
 # This deployable surface must co-ship the repo-side harness config into live OIS /config,
 # because bin/ois reads $HOME/.config/apnex-agents/config at runtime.
@@ -137,6 +145,8 @@ if [[ "$MODE" == "diff" ]]; then
     echo "--- prompt-handlers.json diff ---"
     diff -u "$HANDLERS_DEST" "$HANDLERS_SRC" && echo "live prompt-handlers.json is identical to canonical" || true
   fi
+  echo "--- config/harnesses/claude.json diff ---"
+  diff -u "$CLAUDE_HARNESS_CONFIG_DEST" "$CLAUDE_HARNESS_CONFIG_SRC" && echo "live claude harness config is identical to canonical" || true
   echo "--- config/harnesses/pi.json diff ---"
   diff -u "$PI_HARNESS_CONFIG_DEST" "$PI_HARNESS_CONFIG_SRC" && echo "live pi harness config is identical to canonical" || true
   exit 0
@@ -182,6 +192,8 @@ fi
 # + the handler table (config/, where ois reads it). Guarded above to co-deploy with any ois
 # that references them — so a claude seat's dev-channels banner is always auto-accepted.
 mkdir -p "$(dirname "$PI_HARNESS_CONFIG_DEST")"
+install -m 0644 "$CLAUDE_HARNESS_CONFIG_SRC" "$CLAUDE_HARNESS_CONFIG_DEST"
+echo "deployed $CLAUDE_HARNESS_CONFIG_SRC -> $CLAUDE_HARNESS_CONFIG_DEST"
 install -m 0644 "$PI_HARNESS_CONFIG_SRC" "$PI_HARNESS_CONFIG_DEST"
 echo "deployed $PI_HARNESS_CONFIG_SRC -> $PI_HARNESS_CONFIG_DEST"
 
