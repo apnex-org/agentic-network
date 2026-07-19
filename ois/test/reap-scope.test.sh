@@ -8,8 +8,9 @@
 #
 # Sources ois (dispatch source-guarded) to exercise the REAL reap_seat / _seat_id_of_pid /
 # _seat_pid_starttime / _seat_new_session against controlled throwaway procs + a throwaway tmux
-# socket. Self-cleaning; NEVER touches a real seat (throwaway ids/groups keep the runner + real
-# seats out of blast range).
+# socket. Self-cleaning; NEVER touches a real seat: the reap keys are PID-UNIQUE throwaway ids
+# (TW/TID below) that can NEVER match a live seat's OIS_SEAT_ID — even POST-DEPLOY when seats carry
+# one — and the exact-id reap + selfpgid guard keep the runner + real seats out of blast range.
 #
 # The DISCRIMINATING negatives (1)-(4) call the reap via a VERSION-AWARE entrypoint (reap_target):
 # on oisfix2 -> reap_seat(seat_id); on the pre-fix oisfix0 -> reap_seat_procgroup(pane_pid,cdir).
@@ -23,6 +24,15 @@ source "$DIR/../bin/ois"   # loads fns; the source-guard skips the CLI dispatch
 set +e
 # Hermetic env: never leak the test-runner's own identity into throwaway procs.
 unset OIS_SEAT_ID CLAUDE_CONFIG_DIR
+# bug-303 (oisfix3 follow-up, greg): PID-UNIQUE throwaway seat ids so the exact-id reap can NEVER
+# match a REAL fleet seat — even post-deploy when live seats carry OIS_SEAT_ID (a bug-303 FIX must
+# NOT ship a test that re-creates the bug-303 detonation). The 'reaptest<pid>a'/'reaptest<pid>b'
+# agent tokens cannot collide with any real agent name; used across ALL reap tests (1-4/6/7 real
+# reap; 8/9 kill-spy).
+TW="ois-reaptest$$"
+TID="${TW}a-claude"      # target seat (throwaway agent reaptest<pid>a, harness claude)
+TID_H2="${TW}a-pi"       # (2) SAME agent, other harness
+TID_FA="${TW}b-claude"   # (3) FOREIGN agent
 
 TDIR="$(mktemp -d)"
 PIDS=()
@@ -84,19 +94,19 @@ run_negative() { # <label> <tsid> <tcdir> <ssid> <scdir>
 
 echo "== (1) cdir-less foreign sibling co-resident in the target's group SURVIVES (steve's falsifier) =="
 run_negative "cdir-less foreign sibling (no OIS_SEAT_ID, no CLAUDE_CONFIG_DIR)" \
-  "ois-lily-claude" "$TDIR/seatLily" "" ""
+  "$TID" "$TDIR/seatLily" "" ""
 
-echo "== (2) SAME AGENT, TWO HARNESSES: ois-lily-pi sibling SURVIVES a reap of ois-lily-claude =="
-run_negative "same-agent/other-harness sibling (ois-lily-pi)" \
-  "ois-lily-claude" "$TDIR/seatLily" "ois-lily-pi" ""
+echo "== (2) SAME AGENT, TWO HARNESSES: $TID_H2 sibling SURVIVES a reap of $TID =="
+run_negative "same-agent/other-harness sibling ($TID_H2)" \
+  "$TID" "$TDIR/seatLily" "$TID_H2" ""
 
-echo "== (3) foreign-AGENT sibling (ois-greg-claude, cdir-less) co-resident SURVIVES =="
-run_negative "foreign-agent sibling (ois-greg-claude)" \
-  "ois-lily-claude" "$TDIR/seatLily" "ois-greg-claude" ""
+echo "== (3) foreign-AGENT sibling ($TID_FA, cdir-less) co-resident SURVIVES =="
+run_negative "foreign-agent sibling ($TID_FA)" \
+  "$TID" "$TDIR/seatLily" "$TID_FA" ""
 
 echo "== (4) legacy-no-id sibling (launched by a pre-oisfix2 ois) co-resident SURVIVES (fail-closed) =="
 run_negative "legacy-no-id sibling" \
-  "ois-lily-claude" "$TDIR/seatLily" "" "$TDIR/seatOther"
+  "$TID" "$TDIR/seatLily" "" "$TDIR/seatOther"
 
 echo "== (5) empty args are a safe no-op (never a broad signal) =="
 reap_target "" "" ""
@@ -104,15 +114,15 @@ echo "  ok: empty reap did not error"
 
 echo "== (6) bug-256: a DETACHED (own-session) straggler carrying the target OIS_SEAT_ID is reaped =="
 # detached = its OWN process group (setsid), NOT in any pane group — the id-reap still finds it.
-OIS_SEAT_ID="ois-lily-claude" CLAUDE_CONFIG_DIR="$TDIR/seatLily" setsid bash -c "echo \$\$ > '$TDIR/D'; exec -a seat-detached sleep 30" >/dev/null 2>&1 &
+OIS_SEAT_ID="$TID" CLAUDE_CONFIG_DIR="$TDIR/seatLily" setsid bash -c "echo \$\$ > '$TDIR/D'; exec -a seat-detached sleep 30" >/dev/null 2>&1 &
 disown 2>/dev/null || true
 for i in $(seq 1 20); do [[ -s "$TDIR/D" ]] && break; sleep 0.1; done
 D=$(cat "$TDIR/D" 2>/dev/null); PIDS+=("$D")
-reap_target "$D" "$TDIR/seatLily" "ois-lily-claude"
+reap_target "$D" "$TDIR/seatLily" "$TID"
 assert_dead "$D" "detached id-retaining straggler (bug-256 reap preserved)"
 
 echo "== (7) id-retention: a DESCENDANT inherits OIS_SEAT_ID; the whole tree is reaped =="
-OIS_SEAT_ID="ois-lily-claude" CLAUDE_CONFIG_DIR="$TDIR/seatLily" setsid bash -c "
+OIS_SEAT_ID="$TID" CLAUDE_CONFIG_DIR="$TDIR/seatLily" setsid bash -c "
   echo \$\$ > '$TDIR/TP'
   ( exec -a seat-child sleep 30 ) & echo \$! > '$TDIR/TC'
   wait
@@ -120,8 +130,8 @@ OIS_SEAT_ID="ois-lily-claude" CLAUDE_CONFIG_DIR="$TDIR/seatLily" setsid bash -c 
 disown 2>/dev/null || true
 for i in $(seq 1 20); do [[ -s "$TDIR/TP" && -s "$TDIR/TC" ]] && break; sleep 0.1; done
 TP=$(cat "$TDIR/TP" 2>/dev/null); TC=$(cat "$TDIR/TC" 2>/dev/null); PIDS+=("$TP" "$TC")
-if [[ "$(_seat_id_of_pid "$TC")" == "ois-lily-claude" ]]; then echo "  ok: child inherited OIS_SEAT_ID"; else echo "  FAIL: child did not inherit OIS_SEAT_ID"; fail=1; fi
-reap_target "$TP" "$TDIR/seatLily" "ois-lily-claude"
+if [[ "$(_seat_id_of_pid "$TC")" == "$TID" ]]; then echo "  ok: child inherited OIS_SEAT_ID"; else echo "  FAIL: child did not inherit OIS_SEAT_ID"; fail=1; fi
+reap_target "$TP" "$TDIR/seatLily" "$TID"
 assert_dead "$TP" "tree parent"
 assert_dead "$TC" "tree child (inherited id)"
 
@@ -132,7 +142,7 @@ assert_dead "$TC" "tree child (inherited id)"
 echo "== (8) PID-REUSE guard: _reap_seat_signal SUPPRESSES the signal when the per-PID start-identity"
 echo "       CHANGES between its two production reads (st1 != st2) — a recycled PID is never mis-killed. =="
 # A real owned proc (OIS_SEAT_ID=target) so pgrep enumerates it + the REAL ownership check matches.
-OIS_SEAT_ID="ois-lily-claude" setsid bash -c "echo \$\$ > '$TDIR/PR'; exec -a seat-reuse sleep 30" >/dev/null 2>&1 &
+OIS_SEAT_ID="$TID" setsid bash -c "echo \$\$ > '$TDIR/PR'; exec -a seat-reuse sleep 30" >/dev/null 2>&1 &
 disown 2>/dev/null || true
 for i in $(seq 1 20); do [[ -s "$TDIR/PR" ]] && break; sleep 0.1; done
 PR=$(cat "$TDIR/PR" 2>/dev/null); PIDS+=("$PR")
@@ -142,7 +152,7 @@ PR=$(cat "$TDIR/PR" 2>/dev/null); PIDS+=("$PR")
 if ( CNT="$TDIR/stcnt"; KLOG="$TDIR/klog8"; echo 0 > "$CNT"; : > "$KLOG"; sf=0
      _seat_pid_starttime() { local n; n=$(cat "$CNT" 2>/dev/null); echo $((n+1)) > "$CNT"; [[ "$1" == "$PR" ]] && echo "$n" || echo 7; }
      kill() { echo "$*" >> "$KLOG"; }
-     _reap_seat_signal "ois-lily-claude" TERM
+     _reap_seat_signal "$TID" TERM
      if grep -qw "$PR" "$KLOG"; then echo "  FAIL: PID $PR signalled despite st1 != st2 (guard not enforced)"; sf=1
      else echo "  ok: signal SUPPRESSED on changed start-identity (kill-spy empty for target)"; fi
      exit $sf ); then :; else fail=1; fi
@@ -152,16 +162,16 @@ if ( CNT="$TDIR/stcnt"; KLOG="$TDIR/klog8"; echo 0 > "$CNT"; : > "$KLOG"; sf=0
 if ( KLOG="$TDIR/klog8c"; : > "$KLOG"; sf=0
      _seat_pid_starttime() { echo 42; }
      kill() { echo "$*" >> "$KLOG"; }
-     _reap_seat_signal "ois-lily-claude" TERM
+     _reap_seat_signal "$TID" TERM
      if grep -qw "$PR" "$KLOG"; then echo "  ok: positive control — stable start-identity DOES signal the target"
      else echo "  FAIL: positive control — matching+stable target not signalled (reap a no-op?)"; sf=1; fi
      exit $sf ); then :; else fail=1; fi
 
 echo "== (9) UNREADABLE-ENVIRON candidate is NOT signalled (fail-closed): an enumerated PID whose"
 echo "       environ read returns EMPTY is skipped, while a readable matching sibling IS reaped. =="
-OIS_SEAT_ID="ois-lily-claude" setsid bash -c "echo \$\$ > '$TDIR/PU'; exec -a seat-unread sleep 30" >/dev/null 2>&1 &
+OIS_SEAT_ID="$TID" setsid bash -c "echo \$\$ > '$TDIR/PU'; exec -a seat-unread sleep 30" >/dev/null 2>&1 &
 disown 2>/dev/null || true
-OIS_SEAT_ID="ois-lily-claude" setsid bash -c "echo \$\$ > '$TDIR/PC'; exec -a seat-ctl sleep 30" >/dev/null 2>&1 &
+OIS_SEAT_ID="$TID" setsid bash -c "echo \$\$ > '$TDIR/PC'; exec -a seat-ctl sleep 30" >/dev/null 2>&1 &
 disown 2>/dev/null || true
 for i in $(seq 1 20); do [[ -s "$TDIR/PU" && -s "$TDIR/PC" ]] && break; sleep 0.1; done
 PU=$(cat "$TDIR/PU" 2>/dev/null); PC=$(cat "$TDIR/PC" 2>/dev/null); PIDS+=("$PU" "$PC")
@@ -171,7 +181,7 @@ PU=$(cat "$TDIR/PU" 2>/dev/null); PC=$(cat "$TDIR/PC" 2>/dev/null); PIDS+=("$PU"
 if ( KLOG="$TDIR/klog9"; : > "$KLOG"; sf=0
      _seat_id_of_pid() { if [[ "$1" == "$PU" ]]; then echo ""; else cat "/proc/$1/environ" 2>/dev/null | tr '\0' '\n' | grep -m1 '^OIS_SEAT_ID=' | cut -d= -f2-; fi; }
      kill() { echo "$*" >> "$KLOG"; }
-     _reap_seat_signal "ois-lily-claude" TERM
+     _reap_seat_signal "$TID" TERM
      if grep -qw "$PU" "$KLOG"; then echo "  FAIL: unreadable-environ PID $PU was signalled (NOT fail-closed)"; sf=1
      else echo "  ok: unreadable candidate $PU NOT signalled (fail-closed)"; fi
      if grep -qw "$PC" "$KLOG"; then echo "  ok: positive control — readable matching sibling $PC IS signalled"
