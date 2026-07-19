@@ -11,8 +11,17 @@ import {
   type PrWorkGraphBindingProof,
   type ReviewerResolutionProof,
 } from "./pr-review-workitem-event-contract.js";
+import { prWorkGraphBindingProofFromWorkItem } from "./pr-evidence-admission-binding.js";
 import { evaluatePrReviewRequestRule } from "./pr-review-request-static-rule.js";
 import { reconcilePrReviewProjection, projectPrReviewWorkItem, type ExistingPrReviewProjection } from "./pr-review-workitem-projection.js";
+import { APNEX_AGENTIC_NETWORK_REVIEW_POLICY } from "./pr-reviewer-eligibility-policy-fixture.js";
+import { projectReviewerGithubIdentities } from "./pr-reviewer-identity-source.js";
+import {
+  evaluateReviewerEligibility,
+  PR_REVIEWER_ELIGIBILITY_CONTRACT_VERSION,
+  summarizeReviewerEligibility,
+  type ReviewerEligibilityProjectionSummary,
+} from "./pr-reviewer-eligibility.js";
 
 interface PrReviewRequestPayload {
   repo: string;
@@ -130,22 +139,7 @@ function reviewerProofFromResolution(resolution: ResolutionProjection): Reviewer
 }
 
 function bindingFromWorkItem(item: WorkItem, payload: PrReviewRequestPayload): PrWorkGraphBindingProof | null {
-  const p = item.payload;
-  if (!isRecord(p)) return null;
-  if (p.obligationKind !== "github_pr_workgraph_binding") return null;
-  if (p.repo !== payload.repo || p.prNumber !== payload.number) return null;
-  if (typeof p.targetWorkId !== "string") return null;
-  if (item.createdBy?.role !== "architect" && item.createdBy?.role !== "system") return null;
-  return {
-    id: item.id,
-    repo: payload.repo,
-    prNumber: payload.number,
-    targetWorkId: p.targetWorkId,
-    provenance: "hub",
-    headSha: typeof p.headSha === "string" ? p.headSha : undefined,
-    baseSha: typeof p.baseSha === "string" ? p.baseSha : undefined,
-    version: typeof p.version === "string" ? p.version : undefined,
-  };
+  return prWorkGraphBindingProofFromWorkItem(item, { repo: payload.repo, prNumber: payload.number });
 }
 
 async function listPrReviewBindingCandidates(
@@ -193,6 +187,55 @@ async function resolveHubBinding(ctx: IPolicyContext, payload: PrReviewRequestPa
   if (matches.length === 1) return { binding: matches[0] };
   if (matches.length > 1) return { binding: null, denialReason: "binding_ambiguous" };
   return { binding: null };
+}
+
+async function buildReviewerEligibilitySummary(
+  ctx: IPolicyContext,
+  payload: PrReviewRequestPayload,
+  binding: PrWorkGraphBindingProof | null,
+): Promise<ReviewerEligibilityProjectionSummary | undefined> {
+  if (!binding) return undefined;
+  if (!binding.lastPusherLogin) {
+    return {
+      contractVersion: PR_REVIEWER_ELIGIBILITY_CONTRACT_VERSION,
+      ok: false,
+      reason: "last_pusher_missing",
+      requiredTeams: [],
+      pathClasses: binding.pathClasses ?? [],
+      selectedReviewers: [],
+      requestedReviewerStatus: payload.requestedReviewerLogin ? "insufficient_no_alternative" : "not_requested",
+      disqualified: [],
+      policyVersion: APNEX_AGENTIC_NETWORK_REVIEW_POLICY.version,
+      policySourceRef: APNEX_AGENTIC_NETWORK_REVIEW_POLICY.provenance.sourceRef,
+    };
+  }
+  const agents = await ctx.stores.engineerRegistry.listAgents();
+  const identityProjection = projectReviewerGithubIdentities(
+    agents.map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      role: agent.role,
+      labels: agent.labels,
+    })),
+  );
+  const summary = summarizeReviewerEligibility(evaluateReviewerEligibility({
+    contractVersion: PR_REVIEWER_ELIGIBILITY_CONTRACT_VERSION,
+    repo: payload.repo,
+    prNumber: payload.number,
+    authorLogin: payload.author,
+    lastPusherLogin: binding.lastPusherLogin,
+    requestedReviewerLogin: payload.requestedReviewerLogin || undefined,
+    requestedTeamSlug: payload.requestedTeamSlug || undefined,
+    headSha: payload.head?.sha,
+    paths: {
+      changedPaths: binding.changedPaths,
+      pathClasses: binding.pathClasses,
+      provenance: APNEX_AGENTIC_NETWORK_REVIEW_POLICY.provenance,
+    },
+    policy: APNEX_AGENTIC_NETWORK_REVIEW_POLICY,
+    agents: identityProjection.identities,
+  }));
+  return { ...summary, lastPusherLogin: binding.lastPusherLogin };
 }
 
 async function findExistingProjection(
@@ -245,12 +288,14 @@ async function buildDispatch(
   const target = binding && ctx.stores.workItem
     ? await ctx.stores.workItem.getWorkItem(binding.targetWorkId)
     : null;
+  const eligibility = await buildReviewerEligibilitySummary(ctx, payload, binding);
   const preliminaryRuleDecision = evaluatePrReviewRequestRule({
     event: normalizedEvent,
     binding,
     bindingDenialReason: bindingResolution.denialReason,
     target: target ? { id: target.id, status: target.status } : null,
     reviewer: reviewerProofFromResolution(resolution),
+    eligibility,
   });
   const existingProjection = await findExistingProjection(
     ctx,
@@ -265,6 +310,7 @@ async function buildDispatch(
     existingObligation: existingProjection
       ? { id: existingProjection.workId, status: existingProjection.status as WorkItem["status"] }
       : null,
+    eligibility,
   });
   const projectionDecision = projectPrReviewWorkItem({ ruleResult: ruleDecision, existingProjection });
   const materialization = await reconcilePrReviewProjection({

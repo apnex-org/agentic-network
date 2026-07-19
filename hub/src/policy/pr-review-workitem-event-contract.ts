@@ -8,6 +8,10 @@ export const PR_REVIEW_REQUEST_REMOVED_EVENT_TYPE =
   "github.pull_request.review_request_removed" as const;
 export const PR_REVIEW_REQUEST_RULE_ID =
   "pr_review_request_to_workitem_v0" as const;
+export const PR_EVIDENCE_REVIEW_REQUIRED_EVENT_TYPE =
+  "workitem.complete_work.pr_evidence_review_required" as const;
+export const PR_EVIDENCE_REVIEW_GATE_RULE_ID =
+  "pr_evidence_admission_review_gate_v0" as const;
 
 export type PrReviewRequestLegacySubkind =
   "pr-review-requested" | "pr-review-request-removed";
@@ -65,6 +69,16 @@ export interface PrWorkGraphBindingProof {
   headSha?: string;
   baseSha?: string;
   version?: string;
+  /** Optional deterministic changed-path source carried by the Hub-owned binding row. */
+  changedPaths?: string[];
+  /** Optional compact path classes derived from changedPaths by a declared review policy. */
+  pathClasses?: string[];
+  /** Provenance for changedPaths/pathClasses, e.g. PR-open event or audit fixture ref. */
+  changedPathSource?: string;
+  /** Deterministic last pusher GitHub login from a trusted Hub-owned binding/event source. */
+  lastPusherLogin?: string;
+  /** Deterministic PR author GitHub login from a trusted Hub-owned binding/event source. */
+  authorLogin?: string;
 }
 
 export interface ReviewerResolutionProof {
@@ -103,6 +117,10 @@ export type PrReviewBindingDecision =
       reviewerAgentId: string;
       reviewerRole: AgentRole;
       projectionKey: string;
+      changedPaths?: string[];
+      pathClasses?: string[];
+      changedPathSource?: string;
+      lastPusherLogin?: string;
     }
   | {
       ok: false;
@@ -418,5 +436,9 @@ export function evaluatePrReviewBinding(args: {
       binding,
       reviewerAgentId: reviewer.agentId,
     }),
+    changedPaths: binding.changedPaths,
+    pathClasses: binding.pathClasses,
+    changedPathSource: binding.changedPathSource,
+    lastPusherLogin: binding.lastPusherLogin,
   };
 }
