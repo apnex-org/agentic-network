@@ -93,7 +93,7 @@ export type ReviewerGithubLoginResolution =
     };
 
 const AUDIT_PROVENANCE: PolicyProvenance = {
-  sourceRef: "docs/reports/org-review-eligibility-audit-2026-07-17.md",
+  sourceRef: "docs/reports/pr-reviewer-eligibility0-behavior.md",
   capturedAt: "2026-07-17T00:00:00Z",
   driftBounded: true,
   caveat:

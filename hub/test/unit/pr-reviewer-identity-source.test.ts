@@ -58,7 +58,7 @@ describe("PR reviewer identity source", () => {
       ]),
     );
     expect(projection.identitySources.find((source) => source.agentId === "agent-f148389d")?.sourceRef).toBe(
-      "docs/reports/org-review-eligibility-audit-2026-07-17.md",
+      "docs/reports/pr-reviewer-eligibility0-behavior.md",
     );
   });
 
@@ -114,7 +114,7 @@ describe("PR reviewer identity source", () => {
         role: "verifier",
         labelLogin: "apnex-other",
         fixtureLogin: "apnex",
-        fixtureSourceRef: "docs/reports/org-review-eligibility-audit-2026-07-17.md",
+        fixtureSourceRef: "docs/reports/pr-reviewer-eligibility0-behavior.md",
       },
     ]);
     expect(projection.missingGithubLoginAgents).toEqual([

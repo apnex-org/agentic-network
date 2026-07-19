@@ -113,10 +113,10 @@ This builds the plugin, registers the local marketplace, and installs into Claud
 claude --dangerously-load-development-channels plugin:agent-adapter@agentic-network-local
 ```
 
-Or use the convenience script:
+Or launch via the OIS control plane (the current supervised launch path):
 
 ```bash
-./adapters/claude-plugin/start-claude.sh
+ois up <name> claude
 ```
 
 ## Verifying the connection

@@ -17,7 +17,7 @@ export const APNEX_AGENTIC_NETWORK_REVIEW_POLICY: RepoReviewPolicy = {
   version: "apnex-agentic-network-review-policy-2026-07-17",
   source: "audited-static-fixture",
   provenance: {
-    sourceRef: "docs/reports/org-review-eligibility-audit-2026-07-17.md",
+    sourceRef: "docs/reports/pr-reviewer-eligibility0-behavior.md",
     revision: "81061e70ccdd7a1f91f0356fc500562aa09fc3cc:.github/CODEOWNERS",
     capturedAt: "2026-07-17T00:00:00Z",
     driftBounded: true,

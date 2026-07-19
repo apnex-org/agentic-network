@@ -48,7 +48,7 @@ describe("evaluateReviewerEligibility", () => {
     expect(summarizeReviewerEligibility(result)).toMatchObject({
       ok: true,
       selectedReviewers: [{ agentId: "agent-lily", role: "architect", githubLogin: "apnex-lily" }],
-      policySourceRef: "docs/reports/org-review-eligibility-audit-2026-07-17.md",
+      policySourceRef: "docs/reports/pr-reviewer-eligibility0-behavior.md",
     });
   });
 
