@@ -11,7 +11,7 @@ describe("apnex agentic-network review policy fixture", () => {
   it("carries audited team and ruleset facts with drift-bounded provenance", () => {
     expect(policy.repo).toBe("apnex-org/agentic-network");
     expect(policy.source).toBe("audited-static-fixture");
-    expect(policy.provenance.sourceRef).toBe("docs/reports/org-review-eligibility-audit-2026-07-17.md");
+    expect(policy.provenance.sourceRef).toBe("docs/reports/pr-reviewer-eligibility0-behavior.md");
     expect(policy.provenance.driftBounded).toBe(true);
     expect(policy.teams.engineer).toEqual(["apnex", "apnex-greg"]);
     expect(policy.teams.architect).toEqual(["apnex", "apnex-lily"]);
