@@ -35,9 +35,9 @@ function makeStub(overrides: Partial<Record<keyof IWorkItemStore, (...a: unknown
   };
   return {
     calls,
-    createWorkItem: m("createWorkItem"), createBlueprintNode: m("createBlueprintNode"), deleteWorkItem: m("deleteWorkItem"),
+    createWorkItem: m("createWorkItem"), updateWorkItem: m("updateWorkItem"), createBlueprintNode: m("createBlueprintNode"), deleteWorkItem: m("deleteWorkItem"),
     getWorkItem: m("getWorkItem"), getCompletionProgress: m("getCompletionProgress"), getStintProjection: m("getStintProjection"), getNextAction: m("getNextAction"), getLegalMoves: m("getLegalMoves"), entityExists: m("entityExists"),
-    listWorkItems: m("listWorkItems"), listReadyForRole: m("listReadyForRole"),
+    listWorkItems: m("listWorkItems"), listPrReviewBindingWorkItems: m("listPrReviewBindingWorkItems"), listWorkItemsByProjectionKey: m("listWorkItemsByProjectionKey"), listReadyForRole: m("listReadyForRole"),
     claimWorkItem: m("claimWorkItem"), startWork: m("startWork"), blockWork: m("blockWork"),
     resumeWork: m("resumeWork"), renewLease: m("renewLease"), releaseWork: m("releaseWork"),
     abandonWork: m("abandonWork"), pauseWork: m("pauseWork"), unpauseWork: m("unpauseWork"), completeWork: m("completeWork"),
@@ -228,6 +228,263 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     const r = await router.handle("complete_work", { workId: "work-1", leaseToken: "tok-abc", evidence: [] }, ctxFor(failStub, "engineer"));
     expect(r.isError).toBe(true);
     expect(body(r).errorKind).toBe("evidence_predicate_failed");
+  });
+
+  it("complete_work: denies PR evidence admission before generic evidence persistence for raw/unbound/mismatched PR evidence", async () => {
+    const before = sampleItem({ id: "work-parent", status: "in_progress" });
+    const evidence = [{ requirementId: "pr", kind: "pr", ref: "PR is in the body #621", producedAt: "t" }];
+    const rawStub = makeStub({ getWorkItem: () => before, completeWork: () => { throw new Error("must not complete with raw PR prose"); } });
+    const raw = await router.handle("complete_work", { workId: "work-parent", leaseToken: "tok-abc", evidence }, ctxFor(rawStub, "engineer"));
+    expect(raw.isError).toBe(true);
+    expect(body(raw).errorKind).toBe("pr_evidence_admission_denied");
+    expect(body(raw).prEvidenceActionability).toMatchObject({
+      classifier: "PR_EVIDENCE_DENIED",
+      admissionStatus: "denied",
+      workId: "work-parent",
+      reason: "not_explicit_pr_locator",
+      requiredAction: "fix_pr_evidence_or_binding",
+    });
+    expect(rawStub.calls.some((c) => c.method === "completeWork")).toBe(false);
+
+    const unboundStub = makeStub({ getWorkItem: () => before, completeWork: () => { throw new Error("must not complete without binding"); } });
+    (unboundStub as unknown as { listPrReviewBindingWorkItems: unknown }).listPrReviewBindingWorkItems = async () => ({ items: [], truncated: false });
+    const unbound = await router.handle("complete_work", { workId: "work-parent", leaseToken: "tok-abc", evidence: [{ ...evidence[0], ref: "apnex-org/agentic-network#621" }] }, ctxFor(unboundStub, "engineer"));
+    expect(unbound.isError).toBe(true);
+    expect(body(unbound).error).toMatch(/binding_missing/);
+    expect(unboundStub.calls.some((c) => c.method === "completeWork")).toBe(false);
+
+    const mismatchedStub = makeStub({ getWorkItem: () => before, completeWork: () => { throw new Error("must not complete with wrong target binding"); } });
+    (mismatchedStub as unknown as { listPrReviewBindingWorkItems: unknown }).listPrReviewBindingWorkItems = async () => ({
+      items: [sampleItem({
+        id: "prbind-621",
+        createdBy: { role: "architect", agentId: "agent-architect" },
+        payload: { obligationKind: "github_pr_workgraph_binding", repo: "apnex-org/agentic-network", prNumber: 621, targetWorkId: "work-other" },
+      })],
+      truncated: false,
+    });
+    const mismatch = await router.handle("complete_work", { workId: "work-parent", leaseToken: "tok-abc", evidence: [{ ...evidence[0], ref: "apnex-org/agentic-network#621" }] }, ctxFor(mismatchedStub, "engineer"));
+    expect(mismatch.isError).toBe(true);
+    expect(body(mismatch).error).toMatch(/binding_target_mismatch/);
+    expect(mismatchedStub.calls.some((c) => c.method === "completeWork")).toBe(false);
+  });
+
+  it("complete_work: rejects multiple PR evidence entries before any generic completion path", async () => {
+    const before = sampleItem({ id: "work-parent", status: "in_progress" });
+    const cases = [
+      {
+        name: "first-admitted+second-raw",
+        evidence: [
+          { requirementId: "pr1", kind: "pr", ref: "apnex-org/agentic-network#621", producedAt: "t" },
+          { requirementId: "pr2", kind: "pr", ref: "PR is in the body #620", producedAt: "t" },
+        ],
+      },
+      {
+        name: "first-admitted+second-unbound",
+        evidence: [
+          { requirementId: "pr1", kind: "pr", ref: "apnex-org/agentic-network#621", producedAt: "t" },
+          { requirementId: "pr2", kind: "pr", ref: "apnex-org/agentic-network#999", producedAt: "t" },
+        ],
+      },
+      {
+        name: "first-admitted+second-wrong-repo-pr-target-head-base",
+        evidence: [
+          { requirementId: "pr1", kind: "pr", ref: "apnex-org/agentic-network#621", producedAt: "t" },
+          { requirementId: "pr2", kind: "pr", ref: "apnex-org/other#620", producedAt: "t" },
+        ],
+      },
+    ];
+
+    for (const tc of cases) {
+      const stub = makeStub({
+        getWorkItem: () => before,
+        completeWork: () => { throw new Error(`${tc.name}: generic completion must not run for multi-PR evidence`); },
+      });
+      const r = await router.handle("complete_work", { workId: "work-parent", leaseToken: "tok-abc", evidence: tc.evidence }, ctxFor(stub, "engineer"));
+      expect(r.isError, tc.name).toBe(true);
+      const b = body(r);
+      expect(b.errorKind, tc.name).toBe("pr_evidence_admission_denied");
+      expect(b.prEvidenceActionability, tc.name).toMatchObject({
+        classifier: "PR_EVIDENCE_DENIED",
+        admissionStatus: "denied",
+        workId: "work-parent",
+        reason: "multiple_pr_evidence_unsupported",
+        requiredAction: "fix_pr_evidence_or_binding",
+      });
+      expect(stub.calls.some((c) => c.method === "completeWork"), tc.name).toBe(false);
+    }
+  });
+
+  it("complete_work: valid bound PR evidence projects a deterministic review child as a completion gate", async () => {
+    const before = sampleItem({ id: "work-parent", status: "in_progress", lease: { holder: "anonymous-engineer", token: "tok-abc", claimedAt: "t", expiresAt: "t", heartbeatAt: "t" } });
+    const createdNodes: unknown[] = [];
+    const updates: unknown[] = [];
+    const stub = makeStub({
+      getWorkItem: () => before,
+      listWorkItemsByProjectionKey: () => ({ items: [], truncated: false }),
+      createBlueprintNode: (input: unknown) => {
+        createdNodes.push(input);
+        return { item: sampleItem({ id: "work-review-621", status: "ready", payload: (input as { payload?: unknown }).payload }), created: true };
+      },
+      updateWorkItem: (...args: unknown[]) => {
+        updates.push(args);
+        return { before, after: { ...before, completionDependsOn: ["work-review-621"] } };
+      },
+      completeWork: () => { throw new Error("review-required PR evidence must not reach generic completion yet"); },
+    });
+    (stub as unknown as { listPrReviewBindingWorkItems: unknown }).listPrReviewBindingWorkItems = async (repo: string, prNumber: number) => ({
+      items: [sampleItem({
+        id: "prbind-621",
+        createdBy: { role: "architect", agentId: "agent-architect" },
+        payload: {
+          obligationKind: "github_pr_workgraph_binding",
+          repo,
+          prNumber,
+          targetWorkId: "work-parent",
+          headSha: "head-1",
+          baseSha: "base-1",
+          version: "v1",
+          authorLogin: "apnex-greg",
+          lastPusherLogin: "apnex-greg",
+          pathClasses: ["architect_docs"],
+          changedPathSource: "test-fixture",
+        },
+      })],
+      truncated: false,
+    });
+
+    const registry = stubRegistry({
+      listAgents: async () => [
+        { id: "agent-greg", name: "greg", role: "engineer", labels: {} },
+        { id: "agent-lily", name: "lily", role: "architect", labels: {} },
+      ],
+    });
+    const r = await router.handle("complete_work", {
+      workId: "work-parent",
+      leaseToken: "tok-abc",
+      evidence: [{ requirementId: "pr", kind: "pr", ref: "https://github.com/apnex-org/agentic-network/pull/621", producedAt: "t" }],
+    }, ctxFor(stub, "engineer", registry));
+    expect(r.isError).toBeFalsy();
+    const b = body(r);
+    expect(b.completionBlocked).toBe("pr_review_required");
+    expect((b.workItem as WorkItem).status).toBe("in_progress");
+    expect(b.prEvidenceActionability).toMatchObject({
+      classifier: "PR_REVIEW_REQUIRED",
+      admissionStatus: "review_required",
+      workId: "work-parent",
+      bindingId: "prbind-621",
+      reviewWorkId: "work-review-621",
+      requiredAction: "project_or_complete_pr_review_obligation",
+    });
+    expect(b.prEvidenceAdmission).toMatchObject({
+      status: "review_required",
+      bindingId: "prbind-621",
+      targetWorkId: "work-parent",
+      reviewWorkId: "work-review-621",
+      requiredAction: "project_or_complete_pr_review_obligation",
+    });
+    expect(b.prReviewProjection).toMatchObject({
+      materialization: { materialized: true, created: true, workId: "work-review-621", relation: "appendCompletionDependsOn" },
+    });
+    expect(createdNodes).toHaveLength(1);
+    expect(createdNodes[0]).toMatchObject({
+      type: "review",
+      roleEligibility: ["architect"],
+      targetRef: { kind: "pull_request", id: "apnex-org/agentic-network#621" },
+      payload: {
+        obligationKind: "github_pr_review_request",
+        ruleId: "pr_evidence_admission_review_gate_v0",
+        eventType: "workitem.complete_work.pr_evidence_review_required",
+        selectedReviewerLogin: "apnex-lily",
+        reviewerAgentId: "agent-lily",
+        completionPolicy: {
+          requiredReviewerLogin: "apnex-lily",
+          requiredHeadSha: "head-1",
+          forbiddenReviewerLogins: ["apnex-greg"],
+          lastPusherLogin: "apnex-greg",
+          verifierAuthorityRequired: true,
+        },
+      },
+    });
+    expect(updates).toEqual([[
+      "work-parent",
+      { role: "architect", agentId: "system-pr-review-rule" },
+      { appendCompletionDependsOn: ["work-review-621"] },
+    ]]);
+    expect(stub.calls.some((c) => c.method === "completeWork")).toBe(false);
+  });
+
+  it("complete_work: after review child is done, explicit PR evidence retry reaches generic completion with admitted actionability", async () => {
+    const before = sampleItem({
+      id: "work-parent",
+      status: "in_progress",
+      completionDependsOn: ["work-review-621"],
+      lease: { holder: "anonymous-engineer", token: "tok-abc", claimedAt: "t", expiresAt: "t", heartbeatAt: "t" },
+    });
+    const doneParent = sampleItem({ id: "work-parent", status: "done", completionDependsOn: ["work-review-621"], lease: before.lease });
+    const updates: unknown[] = [];
+    const completed: unknown[] = [];
+    const stub = makeStub({
+      getWorkItem: (id: unknown) => id === "work-review-621" ? sampleItem({ id: "work-review-621", status: "done" }) : before,
+      listWorkItemsByProjectionKey: (projectionKey: unknown) => ({
+        items: [sampleItem({ id: "work-review-621", status: "done", payload: { projectionKey } })],
+        truncated: false,
+      }),
+      updateWorkItem: (...args: unknown[]) => {
+        updates.push(args);
+        return { before, after: before };
+      },
+      completeWork: (...args: unknown[]) => {
+        completed.push(args);
+        return doneParent;
+      },
+    });
+    (stub as unknown as { listPrReviewBindingWorkItems: unknown }).listPrReviewBindingWorkItems = async (repo: string, prNumber: number) => ({
+      items: [sampleItem({
+        id: "prbind-621",
+        createdBy: { role: "architect", agentId: "agent-architect" },
+        payload: {
+          obligationKind: "github_pr_workgraph_binding",
+          repo,
+          prNumber,
+          targetWorkId: "work-parent",
+          headSha: "head-1",
+          baseSha: "base-1",
+          version: "v1",
+          authorLogin: "apnex-greg",
+          lastPusherLogin: "apnex-greg",
+          pathClasses: ["architect_docs"],
+          changedPathSource: "test-fixture",
+        },
+      })],
+      truncated: false,
+    });
+    const registry = stubRegistry({
+      listAgents: async () => [
+        { id: "agent-greg", name: "greg", role: "engineer", labels: {} },
+        { id: "agent-lily", name: "lily", role: "architect", labels: {} },
+      ],
+    });
+    const evidence = [{ requirementId: "pr", kind: "pr", ref: "apnex-org/agentic-network#621", producedAt: "t" }];
+    const r = await router.handle("complete_work", { workId: "work-parent", leaseToken: "tok-abc", evidence }, ctxFor(stub, "engineer", registry));
+    expect(r.isError).toBeFalsy();
+    const b = body(r);
+    expect(b.completionBlocked).toBeUndefined();
+    expect((b.workItem as WorkItem).status).toBe("done");
+    expect(b.prEvidenceActionability).toMatchObject({
+      classifier: "PR_EVIDENCE_ADMITTED",
+      admissionStatus: "admitted",
+      workId: "work-parent",
+      bindingId: "prbind-621",
+      reviewWorkId: "work-review-621",
+      requiredAction: "none",
+    });
+    expect(b.prEvidenceAdmission).toMatchObject({ status: "admitted", reviewWorkId: "work-review-621", requiredAction: "none" });
+    expect(updates).toEqual([[
+      "work-parent",
+      { role: "architect", agentId: "system-pr-review-rule" },
+      { appendCompletionDependsOn: ["work-review-621"] },
+    ]]);
+    expect(completed).toEqual([["work-parent", "anonymous-engineer", "tok-abc", evidence, undefined]]);
   });
 
   it("abandon_work: leaseToken + reason optional (creator-override path)", async () => {

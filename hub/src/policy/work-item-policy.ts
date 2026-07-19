@@ -16,6 +16,14 @@ import { z } from "zod";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import type { PolicyRouter } from "./router.js";
 import { resolveCreatedBy } from "./caller-identity.js";
+import { parsePrEvidenceLocator } from "./pr-evidence-admission-contract.js";
+import { resolvePrEvidenceBinding } from "./pr-evidence-admission-binding.js";
+import { prEvidenceAdmittedProjection, prEvidenceDeniedProjection, prManualCheckRequiredProjection, prReviewRequiredProjection, type PrEvidenceActionabilityProjection } from "./pr-evidence-actionability.js";
+import { findExistingPrReviewProjection, buildPrEvidenceReviewProjectionKey, projectPrEvidenceReviewWorkItem, reconcilePrReviewProjection } from "./pr-review-workitem-projection.js";
+import { APNEX_AGENTIC_NETWORK_REVIEW_POLICY } from "./pr-reviewer-eligibility-policy-fixture.js";
+import { projectReviewerGithubIdentities } from "./pr-reviewer-identity-source.js";
+import { evaluateReviewerEligibility, PR_REVIEWER_ELIGIBILITY_CONTRACT_VERSION, summarizeReviewerEligibility, type ReviewerEligibilityProjectionSummary } from "./pr-reviewer-eligibility.js";
+import type { PrWorkGraphBindingProof } from "./pr-review-workitem-event-contract.js";
 // work-54 (idea-357 pts 1-2): push-native FSM-transition events. Best-effort +
 // never-throws — the store transition is the source of truth; the event is
 // enhancement (the mission-policy runTriggers posture).
@@ -70,6 +78,73 @@ function err(errorKind: string, message: string): PolicyResult {
 }
 function notFound(workId: string): PolicyResult {
   return err("not_found", `WorkItem not found: ${workId}`);
+}
+
+function prAdmissionDenied(projection: PrEvidenceActionabilityProjection, details: Record<string, unknown> = {}): PolicyResult {
+  return {
+    content: [{
+      type: "text" as const,
+      text: JSON.stringify({
+        error: `${projection.reason ?? projection.classifier}: ${JSON.stringify(details)}`,
+        errorKind: "pr_evidence_admission_denied",
+        prEvidenceActionability: projection,
+      }),
+    }],
+    isError: true,
+  };
+}
+
+function failedPrEvidenceReviewerEligibility(
+  binding: PrWorkGraphBindingProof,
+  reason: ReviewerEligibilityProjectionSummary["reason"],
+): ReviewerEligibilityProjectionSummary {
+  return {
+    contractVersion: PR_REVIEWER_ELIGIBILITY_CONTRACT_VERSION,
+    ok: false,
+    reason,
+    requiredTeams: [],
+    pathClasses: binding.pathClasses ?? [],
+    selectedReviewers: [],
+    requestedReviewerStatus: "insufficient_no_alternative",
+    disqualified: [],
+    policyVersion: APNEX_AGENTIC_NETWORK_REVIEW_POLICY.version,
+    policySourceRef: APNEX_AGENTIC_NETWORK_REVIEW_POLICY.provenance.sourceRef,
+    lastPusherLogin: binding.lastPusherLogin,
+  };
+}
+
+async function buildPrEvidenceReviewerEligibility(
+  ctx: IPolicyContext,
+  binding: PrWorkGraphBindingProof,
+): Promise<ReviewerEligibilityProjectionSummary> {
+  if (!binding.authorLogin) return failedPrEvidenceReviewerEligibility(binding, "identity_missing");
+  if (!binding.lastPusherLogin) return failedPrEvidenceReviewerEligibility(binding, "last_pusher_missing");
+  const agents = await ctx.stores.engineerRegistry.listAgents();
+  const identityProjection = projectReviewerGithubIdentities(
+    agents.map((agent) => ({
+      id: agent.id,
+      name: agent.name,
+      role: agent.role,
+      labels: agent.labels,
+    })),
+  );
+  const summary = summarizeReviewerEligibility(evaluateReviewerEligibility({
+    contractVersion: PR_REVIEWER_ELIGIBILITY_CONTRACT_VERSION,
+    repo: binding.repo,
+    prNumber: binding.prNumber,
+    authorLogin: binding.authorLogin,
+    lastPusherLogin: binding.lastPusherLogin,
+    requestedReviewerLogin: undefined,
+    headSha: binding.headSha,
+    paths: {
+      changedPaths: binding.changedPaths,
+      pathClasses: binding.pathClasses,
+      provenance: APNEX_AGENTIC_NETWORK_REVIEW_POLICY.provenance,
+    },
+    policy: APNEX_AGENTIC_NETWORK_REVIEW_POLICY,
+    agents: identityProjection.identities,
+  }));
+  return { ...summary, lastPusherLogin: binding.lastPusherLogin };
 }
 
 /** Map a repo verb error to a structured PolicyResult. Re-throws anything unexpected
@@ -257,6 +332,140 @@ async function completeWork(args: Record<string, unknown>, ctx: IPolicyContext):
   const frictionReflection = args.frictionReflection as FrictionReflectionInput | undefined;
   // complete can come from in_progress|review — pre-read for the event's from_status.
   const before = await store.getWorkItem(args.workId as string);
+  let admittedPrEvidenceActionability: PrEvidenceActionabilityProjection | undefined;
+  let admittedPrEvidenceAdmission: Record<string, unknown> | undefined;
+  const prEvidence = evidence.filter((entry) => entry.kind === "pr");
+  if (prEvidence.length > 1) {
+    return prAdmissionDenied(prEvidenceDeniedProjection({
+      workId: args.workId as string,
+      reason: "multiple_pr_evidence_unsupported",
+    }), {
+      prEvidenceCount: prEvidence.length,
+      requiredAction: "submit exactly one Hub-bound PR evidence item per completion attempt",
+    });
+  }
+  if (prEvidence.length > 0) {
+    if (!before) return notFound(args.workId as string);
+    for (const entry of prEvidence) {
+      const parsed = parsePrEvidenceLocator(entry.ref);
+      if (!parsed.ok) {
+        return prAdmissionDenied(prEvidenceDeniedProjection({
+          workId: args.workId as string,
+          reason: parsed.code,
+        }), {
+          requirementId: entry.requirementId,
+          ref: entry.ref ?? null,
+        });
+      }
+      const admission = await resolvePrEvidenceBinding({
+        store,
+        locator: parsed.locator,
+        targetWorkId: before.id,
+      });
+      if (!admission.ok) {
+        return prAdmissionDenied(prEvidenceDeniedProjection({
+          workId: before.id,
+          reason: admission.reason,
+          locator: parsed.locator,
+          candidateBindingIds: admission.candidateBindingIds ?? [],
+        }), {
+          requirementId: entry.requirementId,
+          ref: entry.ref ?? null,
+        });
+      }
+      const eligibility = await buildPrEvidenceReviewerEligibility(ctx, admission.binding);
+      const selectedReviewer = eligibility.selectedReviewers[0];
+      const projectionKey = eligibility.ok && selectedReviewer
+        ? buildPrEvidenceReviewProjectionKey({
+            binding: admission.binding,
+            reviewerAgentId: selectedReviewer.agentId,
+            reviewerGithubLogin: selectedReviewer.githubLogin,
+            policyVersion: eligibility.policyVersion,
+            policySourceRef: eligibility.policySourceRef,
+          })
+        : null;
+      const existingProjection = await findExistingPrReviewProjection(store, projectionKey);
+      const projectionDecision = projectPrEvidenceReviewWorkItem({
+        binding: admission.binding,
+        locator: parsed.locator,
+        sourceMessageId: `pr-evidence:${before.id}:${entry.requirementId}`,
+        eligibility,
+        existingProjection,
+      });
+      const materialization = await reconcilePrReviewProjection({
+        store,
+        projection: projectionDecision,
+        binding: admission.binding,
+        sourceMessageId: `pr-evidence:${before.id}:${entry.requirementId}`,
+        relation: "appendCompletionDependsOn",
+      });
+      if (!materialization.materialized) {
+        return ok({
+          workItem: before,
+          leaseToken: before.lease?.token ?? null,
+          completionBlocked: "pr_review_projection_required",
+          message: "PR evidence is bound to Hub-owned delivery truth, but no safe review obligation could be projected; manual check is required before terminal advancement.",
+          prEvidenceActionability: prManualCheckRequiredProjection({
+            workId: before.id,
+            locator: parsed.locator,
+            bindingId: admission.bindingId,
+            reviewWorkId: materialization.workId,
+            reason: materialization.fallbackReason ?? (projectionDecision.action === "fallback_only" ? projectionDecision.reason : "review_projection_failed"),
+          }),
+          prReviewProjection: { eligibility, projectionDecision, materialization },
+          // Compatibility alias for the initial pr_evidence_admission0 admission-policy slice.
+          prEvidenceAdmission: {
+            status: "manual_check_required",
+            locator: parsed.locator,
+            bindingId: admission.bindingId,
+            targetWorkId: admission.targetWorkId,
+            reviewWorkId: materialization.workId,
+            requiredAction: "manual_check_pr_evidence_admission",
+          },
+        });
+      }
+      if (projectionDecision.action === "reuse_existing_review_workitem" && projectionDecision.existingStatus === "done") {
+        admittedPrEvidenceActionability = prEvidenceAdmittedProjection({
+          workId: before.id,
+          locator: parsed.locator,
+          bindingId: admission.bindingId,
+          reviewWorkId: materialization.workId,
+        });
+        admittedPrEvidenceAdmission = {
+          status: "admitted",
+          locator: parsed.locator,
+          bindingId: admission.bindingId,
+          targetWorkId: admission.targetWorkId,
+          reviewWorkId: materialization.workId,
+          requiredAction: "none",
+        };
+        break;
+      }
+      const afterGate = await store.getWorkItem(before.id) ?? before;
+      return ok({
+        workItem: afterGate,
+        leaseToken: afterGate.lease?.token ?? before.lease?.token ?? null,
+        completionBlocked: "pr_review_required",
+        message: "PR evidence is bound to Hub-owned delivery truth; completion awaits the projected PR review obligation before terminal advancement.",
+        prEvidenceActionability: prReviewRequiredProjection({
+          workId: before.id,
+          locator: parsed.locator,
+          bindingId: admission.bindingId,
+          reviewWorkId: materialization.workId,
+        }),
+        prReviewProjection: { eligibility, projectionDecision, materialization },
+        // Compatibility alias for the initial pr_evidence_admission0 admission-policy slice.
+        prEvidenceAdmission: {
+          status: "review_required",
+          locator: parsed.locator,
+          bindingId: admission.bindingId,
+          targetWorkId: admission.targetWorkId,
+          reviewWorkId: materialization.workId,
+          requiredAction: "project_or_complete_pr_review_obligation",
+        },
+      });
+    }
+  }
   try {
     const result = await store.completeWork(args.workId as string, caller.agentId, args.leaseToken as string, evidence, frictionReflection);
     if (!result) return notFound(args.workId as string);
@@ -282,7 +491,22 @@ async function completeWork(args: Record<string, unknown>, ctx: IPolicyContext):
       }
     }
     if (result.completionBlocked) {
-      return ok({ workItem: w, leaseToken: w.lease?.token ?? null, completionBlocked: result.completionBlocked, message: result.message });
+      return ok({
+        workItem: w,
+        leaseToken: w.lease?.token ?? null,
+        completionBlocked: result.completionBlocked,
+        message: result.message,
+        ...(admittedPrEvidenceActionability ? { prEvidenceActionability: admittedPrEvidenceActionability } : {}),
+        ...(admittedPrEvidenceAdmission ? { prEvidenceAdmission: admittedPrEvidenceAdmission } : {}),
+      });
+    }
+    if (admittedPrEvidenceActionability) {
+      return ok({
+        workItem: w,
+        leaseToken: w.lease?.token ?? null,
+        prEvidenceActionability: admittedPrEvidenceActionability,
+        prEvidenceAdmission: admittedPrEvidenceAdmission,
+      });
     }
     return workItemResult(w);
   } catch (e) { return mapVerbError(e); }

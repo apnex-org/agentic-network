@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { normalizePrReviewRequestEvent } from "../../src/policy/pr-review-workitem-event-contract.js";
 import { evaluatePrReviewRequestRule } from "../../src/policy/pr-review-request-static-rule.js";
-import { projectPrReviewWorkItem } from "../../src/policy/pr-review-workitem-projection.js";
+import { projectPrEvidenceReviewWorkItem, projectPrReviewWorkItem, reconcilePrReviewProjection } from "../../src/policy/pr-review-workitem-projection.js";
 import { createMemoryStorageSubstrate } from "../../src/storage-substrate/memory-substrate.js";
 import { SubstrateCounter } from "../../src/entities/substrate-counter.js";
 import { AttestationRejected, WorkItemRepositorySubstrate } from "../../src/entities/work-item-repository-substrate.js";
@@ -96,7 +96,6 @@ describe("PR review WorkItem projection", () => {
     const deleted: string[] = [];
     const projection = projectPrReviewWorkItem({ ruleResult: allowedRuleResult() });
     if (projection.action !== "create_review_workitem") throw new Error("expected create");
-    const { reconcilePrReviewProjection } = await import("../../src/policy/pr-review-workitem-projection.js");
     const result = await reconcilePrReviewProjection({
       projection,
       binding: {
@@ -121,6 +120,96 @@ describe("PR review WorkItem projection", () => {
       fallbackReason: "relation_failed:edge rejected",
     });
     expect(deleted).toEqual(["work-created"]);
+  });
+
+
+  it("projects PR-evidence review gates deterministically and reuses duplicate evidence/replay", async () => {
+    const binding = {
+      id: "prbind-625",
+      repo: "apnex-org/agentic-network",
+      prNumber: 625,
+      targetWorkId: "work-123",
+      provenance: "hub" as const,
+      headSha: "head-sha",
+      baseSha: "base-sha",
+      version: "1",
+      authorLogin: "apnex-greg",
+      lastPusherLogin: "apnex",
+      pathClasses: ["architect_docs"],
+      changedPathSource: "test-fixture",
+    };
+    const eligibility = {
+      contractVersion: "pr-reviewer-eligibility-v1" as const,
+      ok: true,
+      requiredTeams: ["architect"],
+      pathClasses: ["architect_docs"],
+      selectedReviewers: [{ agentId: "agent-lily", role: "architect" as const, githubLogin: "apnex-lily" }],
+      requestedReviewerStatus: "not_requested" as const,
+      disqualified: [
+        { agentId: "agent-greg", githubLogin: "apnex-greg", reason: "author_self_review" as const },
+        { agentId: "agent-steve", githubLogin: "apnex", reason: "last_pusher_self_review" as const },
+      ],
+      policyVersion: "test-policy",
+      policySourceRef: "test-policy-ref",
+      lastPusherLogin: "apnex",
+    };
+
+    const first = projectPrEvidenceReviewWorkItem({
+      binding,
+      locator: { repo: binding.repo, prNumber: binding.prNumber, source: "repo_pr_number", raw: "apnex-org/agentic-network#625" },
+      sourceMessageId: "pr-evidence:work-123:pr",
+      eligibility,
+    });
+    expect(first.action).toBe("create_review_workitem");
+    if (first.action !== "create_review_workitem") throw new Error("expected create");
+    expect(first.createSpec.payload).toMatchObject({
+      ruleId: "pr_evidence_admission_review_gate_v0",
+      eventType: "workitem.complete_work.pr_evidence_review_required",
+      selectedReviewerLogin: "apnex-lily",
+      completionPolicy: {
+        requiredReviewerLogin: "apnex-lily",
+        requiredHeadSha: "head-sha",
+        forbiddenReviewerLogins: ["apnex-greg", "apnex"],
+        verifierAuthorityRequired: true,
+      },
+    });
+
+    const second = projectPrEvidenceReviewWorkItem({
+      binding,
+      locator: { repo: binding.repo, prNumber: binding.prNumber, source: "repo_pr_number", raw: "apnex-org/agentic-network#625" },
+      sourceMessageId: "pr-evidence:work-123:pr",
+      eligibility,
+      existingProjection: { projectionKey: first.projectionKey, workId: "work-review-existing", status: "ready" },
+    });
+    expect(second).toEqual({
+      action: "reuse_existing_review_workitem",
+      projectionKey: first.projectionKey,
+      existingWorkId: "work-review-existing",
+      existingStatus: "ready",
+    });
+
+    const updates: unknown[] = [];
+    const materialized = await reconcilePrReviewProjection({
+      projection: second,
+      binding,
+      sourceMessageId: "pr-evidence:work-123:pr",
+      relation: "appendCompletionDependsOn",
+      store: {
+        updateWorkItem: async (...args: unknown[]) => { updates.push(args); return { before: { id: "work-123" }, after: { id: "work-123", completionDependsOn: ["work-review-existing"] } }; },
+      } as never,
+    });
+
+    expect(materialized).toMatchObject({
+      materialized: true,
+      created: false,
+      workId: "work-review-existing",
+      relation: "appendCompletionDependsOn",
+    });
+    expect(updates).toEqual([[
+      "work-123",
+      { role: "architect", agentId: "system-pr-review-rule" },
+      { appendCompletionDependsOn: ["work-review-existing"] },
+    ]]);
   });
 
   it("provides a load-bearing SEAL path: artifact evidence parks, verifier cites evidence ref, external-only rejects", async () => {

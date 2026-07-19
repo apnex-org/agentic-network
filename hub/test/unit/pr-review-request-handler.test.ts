@@ -225,7 +225,7 @@ describe("PR review request handler", () => {
   });
 
   it("uses typed binding/projection lookups instead of capped unfiltered WorkItem scans", async () => {
-    const bindingItem = { id: "prbind-990626", createdBy: { role: "architect", agentId: "agent-architect" }, status: "ready", payload: { obligationKind: "github_pr_workgraph_binding", repo: "apnex-org/agentic-network", prNumber: 624, targetWorkId: "work-target", headSha: "bbb", version: "1" } };
+    const bindingItem = { id: "prbind-990626", createdBy: { role: "architect", agentId: "agent-architect" }, status: "ready", payload: { obligationKind: "github_pr_workgraph_binding", repo: "apnex-org/agentic-network", prNumber: 624, targetWorkId: "work-target", headSha: "bbb", version: "1", pathClasses: ["architect_docs"], changedPathSource: "test-fixture", lastPusherLogin: "apnex-greg" } };
     const bindingQueries: Array<{ repo: string; prNumber: number }> = [];
     const projectionQueries: string[] = [];
     const workItem = {
@@ -262,6 +262,225 @@ describe("PR review request handler", () => {
     expect(projectionQueries).toHaveLength(1);
   });
 
+  it("carries Hub-owned binding changed paths/path classes into the review WorkItem payload", async () => {
+    const createdNodes: unknown[] = [];
+    const bindingItem = {
+      id: "prbind-paths",
+      createdBy: { role: "architect", agentId: "agent-architect" },
+      status: "done",
+      payload: {
+        obligationKind: "github_pr_workgraph_binding",
+        repo: "apnex-org/agentic-network",
+        prNumber: 624,
+        targetWorkId: "work-target",
+        headSha: "bbb",
+        version: "1",
+        changedPaths: ["docs/planning/pr-binding-reviewer-eligibility-plan0-final-design.md"],
+        pathClasses: ["architect_docs"],
+        changedPathSource: "pr-opened-event:01SOURCE",
+        lastPusherLogin: "apnex-greg",
+      }
+    };
+    const workItem = {
+      getWorkItem: async () => ({ id: "work-target", status: "ready", payload: {}, roleEligibility: ["engineer"] }),
+      listWorkItems: async () => ({ items: [bindingItem], truncated: false }),
+      createBlueprintNode: async (input: unknown) => {
+        createdNodes.push(input);
+        return { item: { id: "work-prrev-created", status: "ready", payload: (input as { payload?: unknown }).payload }, created: true };
+      },
+      updateWorkItem: async (id: string) => ({ before: { id }, after: { id } }),
+    };
+    const ctx = makeCtx([makeAgent("agent-lily", "architect", "apnex-lily")], workItem);
+
+    const out = await PR_REVIEW_REQUESTED_HANDLER.handle(
+      wrapAsMessage(reviewRequestedEvent({ reviewer: "apnex-lily" })),
+      ctx,
+    );
+
+    const payload = out[0].payload as Record<string, unknown>;
+    expect(payload.bindingDecision).toMatchObject({
+      ok: true,
+      changedPaths: ["docs/planning/pr-binding-reviewer-eligibility-plan0-final-design.md"],
+      pathClasses: ["architect_docs"],
+      changedPathSource: "pr-opened-event:01SOURCE",
+    });
+    expect(createdNodes).toHaveLength(1);
+    expect(createdNodes[0]).toMatchObject({
+      payload: {
+        eligibility: {
+          ok: true,
+          requestedReviewerStatus: "eligible",
+          selectedReviewers: [{ agentId: "agent-lily", role: "architect", githubLogin: "apnex-lily" }],
+          pathClasses: ["architect_docs"],
+          lastPusherLogin: "apnex-greg",
+        },
+        completionPolicy: {
+          forbiddenReviewerLogins: ["apnex-greg"],
+          lastPusherLogin: "apnex-greg",
+        },
+        changedPathSource: {
+          changedPaths: ["docs/planning/pr-binding-reviewer-eligibility-plan0-final-design.md"],
+          pathClasses: ["architect_docs"],
+          provenance: "pr-opened-event:01SOURCE",
+        },
+      },
+    });
+  });
+
+  it("emits structured eligibility denial metadata instead of a misleading review WorkItem", async () => {
+    const bindingItem = {
+      id: "prbind-no-paths",
+      createdBy: { role: "architect", agentId: "agent-architect" },
+      status: "done",
+      payload: {
+        obligationKind: "github_pr_workgraph_binding",
+        repo: "apnex-org/agentic-network",
+        prNumber: 624,
+        targetWorkId: "work-target",
+        headSha: "bbb",
+        version: "1",
+        lastPusherLogin: "apnex-greg",
+      },
+    };
+    const workItem = {
+      getWorkItem: async () => ({ id: "work-target", status: "ready", payload: {}, roleEligibility: ["engineer"] }),
+      listWorkItems: async () => ({ items: [bindingItem], truncated: false }),
+      createBlueprintNode: async () => { throw new Error("must not materialize without eligibility"); },
+      updateWorkItem: async () => { throw new Error("must not append relation without eligibility"); },
+    };
+    const ctx = makeCtx([makeAgent("agent-lily", "architect", "apnex-lily")], workItem);
+
+    const out = await PR_REVIEW_REQUESTED_HANDLER.handle(
+      wrapAsMessage(reviewRequestedEvent({ reviewer: "apnex-lily" })),
+      ctx,
+    );
+
+    const payload = out[0].payload as Record<string, unknown>;
+    expect(payload.ruleDecision).toMatchObject({
+      action: "fallback_candidate_note",
+      eligibility: { ok: false, reason: "changed_paths_missing" },
+      fallback: { reason: "reviewer_eligibility_changed_paths_missing" },
+    });
+    expect(payload.projectionDecision).toMatchObject({
+      action: "fallback_only",
+      reason: "reviewer_eligibility_changed_paths_missing",
+    });
+    expect(payload.materialization).toMatchObject({
+      materialized: false,
+      fallbackReason: "reviewer_eligibility_changed_paths_missing",
+    });
+  });
+
+  it("fails closed when deterministic last-pusher source is missing", async () => {
+    const bindingItem = {
+      id: "prbind-missing-last-pusher",
+      createdBy: { role: "architect", agentId: "agent-architect" },
+      status: "done",
+      payload: {
+        obligationKind: "github_pr_workgraph_binding",
+        repo: "apnex-org/agentic-network",
+        prNumber: 624,
+        targetWorkId: "work-target",
+        headSha: "bbb",
+        version: "1",
+        pathClasses: ["architect_docs"],
+        changedPathSource: "test-fixture",
+      },
+    };
+    const workItem = {
+      getWorkItem: async () => ({ id: "work-target", status: "ready", payload: {}, roleEligibility: ["engineer"] }),
+      listWorkItems: async () => ({ items: [bindingItem], truncated: false }),
+      createBlueprintNode: async () => { throw new Error("must not materialize without deterministic last pusher"); },
+      updateWorkItem: async () => { throw new Error("must not append relation without deterministic last pusher"); },
+    };
+    const ctx = makeCtx([makeAgent("agent-lily", "architect", "apnex-lily")], workItem);
+
+    const out = await PR_REVIEW_REQUESTED_HANDLER.handle(
+      wrapAsMessage(reviewRequestedEvent({ reviewer: "apnex-lily" })),
+      ctx,
+    );
+
+    const payload = out[0].payload as Record<string, unknown>;
+    expect(payload.ruleDecision).toMatchObject({
+      action: "fallback_candidate_note",
+      eligibility: { ok: false, reason: "last_pusher_missing" },
+      fallback: { reason: "reviewer_eligibility_last_pusher_missing" },
+    });
+    expect(payload.materialization).toMatchObject({
+      materialized: false,
+      fallbackReason: "reviewer_eligibility_last_pusher_missing",
+    });
+  });
+
+  it("materializes the selected eligible reviewer for the #628/#629-like integrated regression", async () => {
+    const createdNodes: unknown[] = [];
+    const bindingItem = {
+      id: "prbind-incident",
+      createdBy: { role: "architect", agentId: "agent-architect" },
+      status: "done",
+      payload: {
+        obligationKind: "github_pr_workgraph_binding",
+        repo: "apnex-org/agentic-network",
+        prNumber: 624,
+        targetWorkId: "work-target",
+        headSha: "bbb",
+        version: "1",
+        changedPaths: [
+          "hub/src/policy/driver-liveness-watchdog.ts",
+          "hub/test/unit/driver-liveness-watchdog.test.ts",
+        ],
+        pathClasses: ["hub_code", "hub_tests"],
+        changedPathSource: "test-fixture",
+        lastPusherLogin: "apnex-greg",
+      },
+    };
+    const workItem = {
+      getWorkItem: async () => ({ id: "work-target", status: "ready", payload: {}, roleEligibility: ["engineer"] }),
+      listWorkItems: async () => ({ items: [bindingItem], truncated: false }),
+      createBlueprintNode: async (input: unknown) => {
+        createdNodes.push(input);
+        return { item: { id: "work-prrev-created", status: "ready", payload: (input as { payload?: unknown }).payload }, created: true };
+      },
+      updateWorkItem: async (id: string) => ({ before: { id }, after: { id } }),
+    };
+    const ctx = makeCtx([
+      makeAgent("agent-greg", "engineer", "apnex-greg"),
+      makeAgent("agent-ruby", "engineer", "apnex-greg"),
+      makeAgent("agent-lily", "architect", "apnex-lily"),
+      makeAgent("agent-steve", "verifier", "apnex"),
+    ], workItem);
+
+    const out = await PR_REVIEW_REQUESTED_HANDLER.handle(
+      wrapAsMessage(reviewRequestedEvent({ reviewer: "apnex-lily" })),
+      ctx,
+    );
+
+    const payload = out[0].payload as Record<string, unknown>;
+    expect(payload.ruleDecision).toMatchObject({
+      action: "materialize_review_obligation",
+      eligibility: {
+        ok: true,
+        requestedReviewerStatus: "insufficient_but_alternative_selected",
+        selectedReviewers: [{ agentId: "agent-steve", role: "verifier", githubLogin: "apnex" }],
+      },
+    });
+    expect(payload.projectionDecision).toMatchObject({ action: "create_review_workitem" });
+    expect(createdNodes).toHaveLength(1);
+    expect(createdNodes[0]).toMatchObject({
+      roleEligibility: ["verifier"],
+      payload: {
+        requestedReviewerLogin: "apnex-lily",
+        selectedReviewerLogin: "apnex",
+        reviewerAgentId: "agent-steve",
+        completionPolicy: {
+          requiredReviewerLogin: "apnex",
+          forbiddenReviewerLogins: ["apnex-greg"],
+          lastPusherLogin: "apnex-greg",
+        },
+      },
+    });
+  });
+
   it("fails closed when multiple Hub-authored binding rows match a PR", async () => {
     const bindingPayload = { obligationKind: "github_pr_workgraph_binding", repo: "apnex-org/agentic-network", prNumber: 624, targetWorkId: "work-target", headSha: "bbb", version: "1" };
     const workItem = {
@@ -294,7 +513,7 @@ describe("PR review request handler", () => {
   it("uses the rule/projection seam to materialize safely bound review requests", async () => {
     const createdNodes: unknown[] = [];
     const updates: unknown[] = [];
-    const bindingItem = { id: "prbind-624", createdBy: { role: "architect", agentId: "agent-architect" }, status: "done", payload: { obligationKind: "github_pr_workgraph_binding", repo: "apnex-org/agentic-network", prNumber: 624, targetWorkId: "work-target", headSha: "bbb", version: "1" } };
+    const bindingItem = { id: "prbind-624", createdBy: { role: "architect", agentId: "agent-architect" }, status: "done", payload: { obligationKind: "github_pr_workgraph_binding", repo: "apnex-org/agentic-network", prNumber: 624, targetWorkId: "work-target", headSha: "bbb", version: "1", pathClasses: ["architect_docs"], changedPathSource: "test-fixture", lastPusherLogin: "apnex-greg" } };
     const workItem = {
       getWorkItem: async (id: string) =>
         id === "work-target"
@@ -326,7 +545,7 @@ describe("PR review request handler", () => {
   it("keeps projection-key idempotency stable across redelivery with different source message ids", async () => {
     const first = reviewRequestedEvent({ reviewer: "apnex-lily" }) as Record<string, unknown>;
     const second = reviewRequestedEvent({ reviewer: "apnex-lily" }) as Record<string, unknown>;
-    const bindingItem = { id: "prbind-624", createdBy: { role: "architect", agentId: "agent-architect" }, status: "done", payload: { obligationKind: "github_pr_workgraph_binding", repo: "apnex-org/agentic-network", prNumber: 624, targetWorkId: "work-target", headSha: "bbb", version: "1" } };
+    const bindingItem = { id: "prbind-624", createdBy: { role: "architect", agentId: "agent-architect" }, status: "done", payload: { obligationKind: "github_pr_workgraph_binding", repo: "apnex-org/agentic-network", prNumber: 624, targetWorkId: "work-target", headSha: "bbb", version: "1", pathClasses: ["architect_docs"], changedPathSource: "test-fixture", lastPusherLogin: "apnex-greg" } };
     const workItem = {
       getWorkItem: async () => ({ id: "work-target", status: "ready" }),
       listWorkItems: async () => ({ items: [bindingItem], truncated: false }),
