@@ -189,7 +189,9 @@ jobs:
       - name: Syntax-check ois
         run: bash -n ois/bin/ois
       - name: Run ois shell regressions
-        run: bash scripts/test/ois-seat-configdir.test.sh
+        run: |
+          bash scripts/test/ois-seat-configdir.test.sh
+          bash scripts/test/ois-fleet-seat-config.test.sh
 
   # ── Aggregator: single status-check name for branch-protection rules ─
   # Branch-protection rule targets `test` (a stable name); the
