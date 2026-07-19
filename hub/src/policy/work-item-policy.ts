@@ -626,6 +626,31 @@ async function validateNodeIntrinsics(
   if (unmintable) {
     return { errorKind: "invalid_evidence_requirements", message: `evidenceRequirement "${unmintable.id}" demands kind "${unmintable.kind}", which has no mintable producer path — every demanded evidence kind must be producible (bug-220)` };
   }
+  // bug-301 (steve SEAL review): a kind=review + refResolvable=true requirement is the DEAD,
+  // unsatisfiable verdict shape. refResolvable expects an OIS-internal ref to existence-resolve to a
+  // DONE, verifier-CREATED gate WorkItem (createdBy=verifier) targeting this item — but create_work
+  // is Architect-only, so no verifier can mint it, and the bug-220(b) audit-binding escape is dead
+  // (create_audit_entry RETIRED at SEAL-C). The CANONICAL verifier-verdict path is
+  // evidenceAuthority="verifier-attestation" with refResolvable OMITTED — the SEAL attestation gate
+  // (evaluateEvidence #1 HARD FENCE) short-circuits BEFORE the refResolvable check, so refResolvable
+  // is never consulted on an attestation requirement: keeping it is a semantically-dead field that
+  // must not be preserved. So reject refResolvable=true on a review UNCONDITIONALLY (even with
+  // verifier-attestation set) at authoring — create_work AND the seed_blueprint expander share this
+  // fn. Does NOT touch the non-refResolvable review producedBy path, and does NOT weaken the
+  // verifier-author anchor (attest_evidence server-stamps verifierId).
+  // Rejects BOTH incompatible cases: kind=review+refResolvable (steve) AND
+  // verifier-attestation+refResolvable (architect ratification #4) — refResolvable is dead on the
+  // attestation path (the SEAL fence ignores it) and unsatisfiable on a review (un-mintable gate).
+  const badRefResolvable = evidenceRequirements.find(
+    (r) => r.refResolvable === true && (r.kind === "review" || r.evidenceAuthority === "verifier-attestation"),
+  );
+  if (badRefResolvable) {
+    const why = badRefResolvable.evidenceAuthority === "verifier-attestation" ? "a verifier-attestation" : "a kind=review";
+    return {
+      errorKind: "invalid_evidence_requirements",
+      message: `evidenceRequirement "${badRefResolvable.id}" carries refResolvable=true on ${why} requirement — refResolvable is incompatible/unsatisfiable there: the SEAL attestation gate ignores refResolvable (a dead field), and the review-ref gate it would name is un-mintable (create_work is Architect-only; the audit-binding path is retired at SEAL-C). Use evidenceAuthority="verifier-attestation" with refResolvable OMITTED for a verifier verdict (attest_evidence); for a non-gate review keep kind=review WITHOUT refResolvable (the producedBy path). (bug-301)`,
+    };
+  }
   // work-86 (idea-380): the node-contract — runbook + references as first-class spec fields.
   const references = node.references ?? [];
   const runbook = node.runbook;
@@ -1303,7 +1328,7 @@ export const EVIDENCE_PRODUCER_PATHS: Readonly<Record<EvidenceKind, string>> = {
   doc: "a document (external ref, format-validated)",
   freeform: "any freeform artifact",
   audit: "a LEGACY audit ref (SEAL-C/idea-444: create_audit_entry is RETIRED — new verifier verdicts use attest_evidence; existing Audit rows stay readable, fenced)",
-  review: "a LEGACY verifier-authored verdict audit (create_audit_entry RETIRED at SEAL-C — new verifier verdicts use attest_evidence) or an architect-seeded verifier-gate WorkItem",
+  review: "the CANONICAL verifier-verdict path is evidenceAuthority='verifier-attestation' with refResolvable OMITTED (a verifier's server-stamped attest_evidence verdict; bug-301). LEGACY/retired: a create_audit_entry verdict audit (RETIRED at SEAL-C). There is NO architect-mintable review-gate — the author-anchor requires createdBy.role=verifier, so an architect-seeded gate is unsatisfiable; only a pre-existing verifier-CREATED gate row could historically satisfy a refResolvable review. A kind=review + refResolvable=true requirement is rejected fail-closed at authoring (validateNodeIntrinsics) UNCONDITIONALLY — the attestation gate ignores refResolvable, so it is a dead field, and the review-ref gate it names is un-mintable.",
 };
 const evidenceItemSchema = z.object({
   requirementId: z.string().describe("The evidenceRequirements[].id this evidence binds to"),

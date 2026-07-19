@@ -1757,3 +1757,79 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     });
   });
 });
+
+// ── bug-301 (work-276): the authoring-validator policy seam (parts 1/2) — fail-closed reject
+// of the unsatisfiable review/attestation refResolvable shape at create_work + seed_blueprint.
+describe("bug-301 authoring validator (work-276) — policy seam", () => {
+  let router: PolicyRouter;
+  beforeEach(() => { router = new PolicyRouter(() => {}); registerWorkItemPolicy(router); });
+
+  // ── Part A: the part-1 authoring validator rejects the bad shape at create_work + seed_blueprint ──
+  it("create_work REJECTS {kind:review, refResolvable:true} (invalid_evidence_requirements, zero created)", async () => {
+    const stub = makeStub({ createWorkItem: () => sampleItem({ status: "ready" }) });
+    const r = await router.handle("create_work", { type: "task", evidenceRequirements: [{ id: "att", kind: "review", refResolvable: true }] }, ctxFor(stub, "architect"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("invalid_evidence_requirements");
+    expect(stub.calls.find((c) => c.method === "createWorkItem")).toBeUndefined();
+  });
+
+  it("create_work REJECTS {kind:freeform, evidenceAuthority:'verifier-attestation', refResolvable:true} (invalid_evidence_requirements)", async () => {
+    const stub = makeStub({ createWorkItem: () => sampleItem({ status: "ready" }) });
+    const r = await router.handle("create_work", { type: "task", evidenceRequirements: [{ id: "att", kind: "freeform", evidenceAuthority: "verifier-attestation", refResolvable: true }] }, ctxFor(stub, "architect"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("invalid_evidence_requirements");
+  });
+
+  it("create_work REJECTS the exact combined {kind:review, refResolvable:true, evidenceAuthority:'verifier-attestation'} (invalid_evidence_requirements)", async () => {
+    const stub = makeStub({ createWorkItem: () => sampleItem({ status: "ready" }) });
+    const r = await router.handle("create_work", { type: "task", evidenceRequirements: [{ id: "att", kind: "review", refResolvable: true, evidenceAuthority: "verifier-attestation" }] }, ctxFor(stub, "architect"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("invalid_evidence_requirements");
+  });
+
+  it("create_work ADMITS {kind:review, evidenceAuthority:'verifier-attestation'} (no refResolvable) — the canonical corrected shape", async () => {
+    const stub = makeStub({ createWorkItem: () => sampleItem({ status: "ready" }) });
+    const r = await router.handle("create_work", { type: "task", evidenceRequirements: [{ id: "att", kind: "review", evidenceAuthority: "verifier-attestation" }] }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy();
+  });
+
+  const badNode = { localId: "n1", type: "task", evidenceRequirements: [{ id: "att", kind: "review", refResolvable: true }] };
+  const bpStub = () => makeStub({
+    createBlueprintNode: (input: unknown) => ({ item: sampleItem({ id: (input as { id: string }).id }), created: true }),
+    entityExists: async () => true,
+  });
+  const bpCreated = (stub: StubStore) => stub.calls.filter((c) => c.method === "createBlueprintNode").length;
+
+  it("seed_blueprint (inline) REJECTS the bad-shape node (invalid_evidence_requirements, zero created)", async () => {
+    const stub = bpStub();
+    const r = await router.handle("seed_blueprint", { runId: "r1", nodes: [badNode] }, ctxFor(stub, "architect"));
+    expect(body(r).errorKind).toBe("invalid_evidence_requirements");
+    expect(bpCreated(stub)).toBe(0);
+  });
+
+  it("seed_blueprint (via nodesRef) REJECTS the bad-shape node (invalid_evidence_requirements, zero created)", async () => {
+    const stub = bpStub();
+    const ctx = ctxFor(stub, "architect");
+    (ctx.stores as unknown as { document: unknown }).document = {
+      get: async (id: string) => (id === "doc-bad" ? { id, content: JSON.stringify({ nodes: [badNode] }) } : null),
+    };
+    const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-bad" }, ctx);
+    expect(body(r).errorKind).toBe("invalid_evidence_requirements");
+    expect(bpCreated(stub)).toBe(0);
+  });
+
+  it("seed_blueprint (dryRun) REJECTS the bad-shape node BEFORE the preview (invalid_evidence_requirements, zero created)", async () => {
+    const stub = bpStub();
+    const r = await router.handle("seed_blueprint", { runId: "r1", dryRun: true, nodes: [badNode] }, ctxFor(stub, "architect"));
+    expect(body(r).errorKind).toBe("invalid_evidence_requirements");
+    expect(bpCreated(stub)).toBe(0);
+  });
+
+  it("seed_blueprint (inline) REJECTS an attestation+refResolvable node too (not only review; invalid_evidence_requirements, zero created)", async () => {
+    const stub = bpStub();
+    const attNode = { localId: "n2", type: "task", evidenceRequirements: [{ id: "att", kind: "freeform", evidenceAuthority: "verifier-attestation", refResolvable: true }] };
+    const r = await router.handle("seed_blueprint", { runId: "r1", nodes: [attNode] }, ctxFor(stub, "architect"));
+    expect(body(r).errorKind).toBe("invalid_evidence_requirements");
+    expect(bpCreated(stub)).toBe(0);
+  });
+});
