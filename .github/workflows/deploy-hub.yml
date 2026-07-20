@@ -31,14 +31,15 @@ jobs:
       OIS_ENV: prod
       CI: 'true'
     steps:
-      # hubfix0 (bug-307 CI-restore, BRIDGE-KEY per the Director "keep the current key for now";
-      # keyless WIF is deferred to idea-591): actions are pinned to exact commit shas (no
-      # floating @vN) and the Cloud SDK version is pinned. This is DETERMINISM — a floating
-      # dependency can no longer silently change client behavior underneath the deploy. Pinning
-      # does NOT by itself prove or prevent any credential enforcement; the current rotated
-      # static key (secrets.GCP_SA_KEY) supplies auth. The load-bearing FM-1 proof is a REAL
-      # green post-rotation deploy-hub run, not the pin. (setup-node removed — the runner does
-      # not run node; the npm build is server-side in Cloud Build.)
+      # hubfix0 (bug-307 CI-restore, BRIDGE-KEY per the Director "keep the current key"; keyless
+      # WIF deferred to idea-591): actions pinned to exact commit shas (no floating @vN) + Cloud
+      # SDK version pinned. PURPOSE = remove DEPENDENCY DRIFT — a floating action/SDK can no
+      # longer change underneath the deploy. The FM-1 enforcement LOCUS (client-side gcloud vs
+      # server-side token endpoint) is UNPROVEN; pinning neither proves nor prevents enforcement,
+      # it only removes the silent-drift class. Auth = the current rotated static key
+      # (secrets.GCP_SA_KEY). The load-bearing FM-1 proof is a REAL green post-rotation deploy-hub
+      # run, not the pin. (setup-node removed — the runner runs no node; build is server-side in
+      # Cloud Build.)
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           # bug-195 (2): full history so the roll-confirm gate can do the
