@@ -1,0 +1,16 @@
+[Unit]
+Description=OIS Hub controlled roller cadence timer (bug-308 FM-2)
+Documentation=git:docs/design/hubfix0-bug308-roller-design.md@9548d827
+
+[Timer]
+# FROZEN cadence (design §1.2 W1): OnUnitInactiveSec is COMPLETION-relative — the 300s gap
+# starts AFTER a tick DEACTIVATES, so a tick that runs longer than the cadence does NOT
+# re-fire back-to-back (which OnUnitActiveSec, measured from activation, would cause).
+# Persistent=true deliberately DROPPED (V3): OnBootSec covers the boot case; a missed
+# activation need not catch up. systemd oneshot coalescing (not the flock) prevents a 2nd
+# concurrent instance if a tick ever exceeds the cadence.
+OnBootSec=60
+OnUnitInactiveSec=300
+
+[Install]
+WantedBy=timers.target

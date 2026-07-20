@@ -1,0 +1,36 @@
+[Unit]
+Description=OIS Hub controlled roller (bug-308 FM-2 replacement for watchtower)
+Documentation=git:docs/design/hubfix0-bug308-roller-design.md@9548d827
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /var/lib/hub-roller/roller.sh
+# Distinct-layer unit timeouts (design §1.2 W4-ii): the whole ExecStart/stop bound; sized
+# > the counted worst-case tick so systemd's Result=timeout backstop never fires in normal
+# operation, and TimeoutStopSec covers a full mid-rollback so a stop cannot sever it (T9).
+TimeoutStartSec=2200
+TimeoutStopSec=1500
+KillMode=mixed
+KillSignal=SIGTERM
+# Frozen service identity (§1.2/S4): docker-socket access is root-equivalent, so root +
+# systemd sandboxing (honest) rather than a low-priv uid that buys no real isolation.
+User=root
+Group=root
+UMask=0077
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/lib/hub-roller
+# Stable-inode lock dir (§1.2/V2): RuntimeDirectoryPreserve keeps /run/hub-roller (and the
+# lock inode) across oneshot stops, so an inherited fd is never invalidated mid-hold.
+RuntimeDirectory=hub-roller
+RuntimeDirectoryMode=0700
+RuntimeDirectoryPreserve=yes
+# Literal DOCKER_CONFIG (§1.1/S4): systemd does NOT shell-expand $HUB_DIR, so hard-code it.
+Environment=DOCKER_CONFIG=/var/lib/hub/docker-config
+# Secrets are fetched INSIDE hub-launch.sh and passed via -e; the unit never echoes them
+# (journal redaction, §1.2) and carries no secret-bearing EnvironmentFile.
