@@ -31,21 +31,29 @@ jobs:
       OIS_ENV: prod
       CI: 'true'
     steps:
-      - uses: actions/checkout@v4
+      # hubfix0 (bug-307 CI-restore, BRIDGE-KEY per the Director "keep the current key for now";
+      # keyless WIF is deferred to idea-591): actions are pinned to exact commit shas (no
+      # floating @vN) and the Cloud SDK version is pinned. This is DETERMINISM — a floating
+      # dependency can no longer silently change client behavior underneath the deploy. Pinning
+      # does NOT by itself prove or prevent any credential enforcement; the current rotated
+      # static key (secrets.GCP_SA_KEY) supplies auth. The load-bearing FM-1 proof is a REAL
+      # green post-rotation deploy-hub run, not the pin. (setup-node removed — the runner does
+      # not run node; the npm build is server-side in Cloud Build.)
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           # bug-195 (2): full history so the roll-confirm gate can do the
           # gitSha>=expected ancestry check against a superseding deploy.
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - uses: google-github-actions/auth@v2
+      - uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           credentials_json: '${{ secrets.GCP_SA_KEY }}'
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+        with:
+          # Exact Cloud SDK pin — an observed-compatible baseline (512.0.0), NOT asserted as
+          # the latest; bump deliberately after verification, never floating.
+          version: '512.0.0'
 
       - name: Build + push Hub container via build-hub.sh
         run: ./scripts/local/build-hub.sh
@@ -67,7 +75,8 @@ jobs:
       # rolled image reports gitSha == this commit. It ALARMS LOUD on timeout
       # (red X + notification) and does NOT auto-revert — auto-rollback is R3,
       # behind the Director governance-batch. A timeout means the image built
-      # but did NOT roll: suspect a watchtower stall (bug-107 token-race).
+      # but did NOT roll: suspect a watchtower stall (bug-308 AR /v2 service= challenge;
+      # bug-107 token-race was resolved).
       #
       # Self-sufficient: HEALTH_URL DEFAULTS to the known public prod endpoint, so
       # the gate fires with ZERO manual setup — no "forgot to arm the var"
@@ -108,7 +117,7 @@ jobs:
             # this commit as an ancestor (gitSha>=expected). A newer roll that already
             # contains this commit is success, not failure (the stint-3/4 false-fail).
             # A genuine stall (prod still at an OLDER sha) is NOT an ancestor → keeps
-            # polling → real alarm preserved (bug-107 token-race stays loud).
+            # polling → real alarm preserved (a genuine watchtower stall stays loud; bug-308).
             if [ "${got}" = "${EXPECTED_SHA}" ] || { [ -n "${got}" ] && git merge-base --is-ancestor "${EXPECTED_SHA}" "${got}" 2>/dev/null; }; then
               built=$(printf '%s' "${body}" | jq -r '.builtAt // ""' 2>/dev/null || true)
               if [ "${got}" = "${EXPECTED_SHA}" ]; then
@@ -121,5 +130,5 @@ jobs:
             echo "  ...not yet rolled (gitSha=${got:-<unreachable>}); sleeping ${POLL_S}s"
             sleep "${POLL_S}"
           done
-          echo "::error title=roll-confirm FAILED::prod /health did not report gitSha >= ${EXPECTED_SHA} (this commit or a superseding deploy) within ${TIMEOUT_S}s (last seen: ${last}). Image built+pushed (digest ${BUILT_DIGEST:-<unknown>}) but did NOT roll — suspect a watchtower stall (bug-107 token-race; VM-side real-fix is Director-gated). No auto-revert (R1 is alarm-only)."
+          echo "::error title=roll-confirm FAILED::prod /health did not report gitSha >= ${EXPECTED_SHA} (this commit or a superseding deploy) within ${TIMEOUT_S}s (last seen: ${last}). Image built+pushed (digest ${BUILT_DIGEST:-<unknown>}) but did NOT roll — suspect a watchtower stall (bug-308 AR /v2 service= challenge; VM-side real-fix is Director-gated). No auto-revert (R1 is alarm-only)."
           exit 1
