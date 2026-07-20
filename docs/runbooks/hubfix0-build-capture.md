@@ -1,9 +1,12 @@
-# hubfix0 — BUILD-capture runbook (frozen artifact, v6)
+# hubfix0 — BUILD-capture runbook (frozen artifact, v7)
 
 **Node:** `hubfix0 BUILD` (engineer / greg). **Executable:** `docs/runbooks/hubfix0-build-capture.sh`
-— approval binds its exact sha256 **`80b4f7b17b573b3d96f6fa5509e7b61c5a625a801f3bd6014a4aa8b9bad64ac0`**,
+— approval binds its exact sha256 **`58e533db80c2aebb4c732d3e93a56d116e04b96dab95f66b2544ffd3b5f6cd53`**,
 published durably on branch `greg/hubfix0-build-capture` (committed raw bytes). **Addresses** v1 B1–B8,
-v2 V2-1…7, v3 V3-1…6, v4 V4-1…4, v5 V5-1…4.
+v2 V2-1…7, v3 V3-1…6, v4 V4-1…4, v5 V5-1…4; **v7** = line-23 `${ATTEMPT_ID:?…}` message-only fix (removed
+the `{1,64}` braces that bash closes the parameter-expansion on — the v6 first-execution defect, **bug-309**).
+ZERO logic change; semantic tests in `hubfix0-build-capture.test.sh` (valid preserved byte-for-byte;
+unset/empty fail; invalid shape fails at the unchanged line-47 regex).
 
 Builds the immutable idea-528 Hub image + emits an **immutable, complete receipt** — frozen input to ROLL
 (ruby binds it) and LIVE-VERIFY (steve).
@@ -48,9 +51,10 @@ credential_mode}` in success **and** failure receipts. A cached-only cred cannot
 
 ## Durable execution binding (WorkItem contract)
 
-Bind + run the **EXACT steve-approved commit** (immutable — **NOT** the mutable branch HEAD):
-`fffd74ac7145da89790542df6416d0b677d023b9` : `docs/runbooks/hubfix0-build-capture.sh` :
-`sha256=80b4f7b17b573b3d96f6fa5509e7b61c5a625a801f3bd6014a4aa8b9bad64ac0`. Materialize those exact bytes
+Bind + run the **EXACT steve-source-PASSed v7 commit** (immutable — **NOT** the mutable branch HEAD),
+on branch `greg/hubfix0-build-capture` : `docs/runbooks/hubfix0-build-capture.sh` :
+`sha256=58e533db80c2aebb4c732d3e93a56d116e04b96dab95f66b2544ffd3b5f6cd53` (the content-verify — lily binds
+the exact commit at the hfx0cu2 reseed). Materialize those exact bytes
 from that commit into a clean temp, **verify the sha256**, then `bash <path>` (blob mode `100644`, no
 exec-bit); `APPROVED_SELF_SHA` = that sha; the script self-refuses on mismatch. Never a mutable
 branch/worktree copy. (The approved commit is itself immutable; the sha256 is the content-verify.)

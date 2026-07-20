@@ -20,7 +20,7 @@ export CLOUDSDK_BUILDS_REGION="$CB_LOCATION"     # V5-1: force submit + all buil
 
 # ── FROZEN INPUTS (immutable WorkItem contract) ─────────────────────────────────────────
 PINNED_SHA="${PINNED_SHA:?exact 40-lowercase-hex frozen source commit}"
-ATTEMPT_ID="${ATTEMPT_ID:?unique attempt id, [A-Za-z0-9._-]{1,64}}"
+ATTEMPT_ID="${ATTEMPT_ID:?unique attempt id, 1-64 chars A-Za-z0-9._-}"
 APPROVED_SELF_SHA="${APPROVED_SELF_SHA:?steve-approved sha256 of THIS file}"
 CRED_PREFLIGHT_RECEIPT="${CRED_PREFLIGHT_RECEIPT:?path to the governed cred-preflight fresh-exchange receipt}"
 CRED_PREFLIGHT_SHA="${CRED_PREFLIGHT_SHA:?expected sha256 of the cred-preflight receipt}"
