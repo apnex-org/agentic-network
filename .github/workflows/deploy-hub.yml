@@ -23,8 +23,9 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
+      # BR1 (steve): bridge-key auth is static credentials_json — no OIDC token mint — so
+      # id-token:write is NOT granted here; it is reintroduced only for keyless WIF (idea-591).
       contents: read
-      id-token: write
     env:
       GCP_PROJECT: labops-389703
       GCP_REGION: australia-southeast1
@@ -46,6 +47,10 @@ jobs:
           # gitSha>=expected ancestry check against a superseding deploy.
           fetch-depth: 0
 
+      # ACCEPTED RESIDUAL (BR2, Director-accepted bridge): secrets.GCP_SA_KEY is a STATIC SA key
+      # (rotated befc85dd) that EXPIRES 2026-10-18 — the bounded static-cred-expiry residual the
+      # Director accepted for the bridge; the durable keyless successor is idea-591 (WIF). No
+      # secret bytes are stored here.
       - uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
           credentials_json: '${{ secrets.GCP_SA_KEY }}'
