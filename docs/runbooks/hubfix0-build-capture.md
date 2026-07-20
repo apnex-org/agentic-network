@@ -43,16 +43,17 @@ credential_mode}` in success **and** failure receipts. A cached-only cred cannot
 |---|---|---|
 | V5-1 | submit/default-SA could inherit `builds/region` | `export CLOUDSDK_BUILDS_REGION=global` for the producer + `--region=global` on describe & default-SA — one explicit location |
 | V5-2 | cred receipt structurally-but-not-bound | enum mode/method + freshness window + session-marker match + required durable-ref input; session id + age carried |
-| V5-3 | stale commit binding in companion | **content-addressed:** the bind is the .sh **sha256** (`80b4f7b1…`); the WorkItem binds the `greg/hubfix0-build-capture` HEAD commit whose blob has that sha256 (immune to per-revision commit churn) |
+| V5-3 | stale commit binding in companion | the WorkItem binds the **EXACT steve-approved commit** `fffd74ac7145da89790542df6416d0b677d023b9` + path + `sha256=80b4f7b1…` (immutable; **NOT** the mutable branch HEAD); sha256 is the content-verify |
 | V5-4 | silent manifest write failure | failure-manifest write/hash failure emits a **loud stderr** warning ("AUDIT EVIDENCE INCOMPLETE"); original nonzero exit preserved |
 
 ## Durable execution binding (WorkItem contract)
 
-Bind + run by **content**: `greg/hubfix0-build-capture` : `docs/runbooks/hubfix0-build-capture.sh` :
+Bind + run the **EXACT steve-approved commit** (immutable — **NOT** the mutable branch HEAD):
+`fffd74ac7145da89790542df6416d0b677d023b9` : `docs/runbooks/hubfix0-build-capture.sh` :
 `sha256=80b4f7b17b573b3d96f6fa5509e7b61c5a625a801f3bd6014a4aa8b9bad64ac0`. Materialize those exact bytes
-(the branch HEAD commit carrying that blob) into a clean temp, **verify the sha256**, then `bash <path>`
-(blob mode `100644`, no exec-bit); `APPROVED_SELF_SHA` = that sha; the script self-refuses on mismatch.
-Never a mutable worktree copy. (sha256-primary avoids the per-revision stale-commit trap V5-3 flagged.)
+from that commit into a clean temp, **verify the sha256**, then `bash <path>` (blob mode `100644`, no
+exec-bit); `APPROVED_SELF_SHA` = that sha; the script self-refuses on mismatch. Never a mutable
+branch/worktree copy. (The approved commit is itself immutable; the sha256 is the content-verify.)
 
 ## Receipt → consumer map
 
