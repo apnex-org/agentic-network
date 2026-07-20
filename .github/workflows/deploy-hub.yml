@@ -31,21 +31,38 @@ jobs:
       OIS_ENV: prod
       CI: 'true'
     steps:
-      - uses: actions/checkout@v4
+      # hubfix0 (bug-307 FULL-RESTORE / idea-591): every action is pinned to an exact commit
+      # sha (no floating @vN), and the Cloud SDK version is pinned. This is DETERMINISM — a
+      # floating dependency can never again silently change client behavior underneath the
+      # deploy (FM-1 was setup-gcloud@v2 auto-installing a newer gcloud). Pinning does NOT by
+      # itself prove or permanently prevent key-expiry enforcement; the KEYLESS WIF auth below
+      # removes the static-key-expiry class entirely. Acceptance is a real WIF-authenticated
+      # green deploy-hub run, never the pin alone.
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           # bug-195 (2): full history so the roll-confirm gate can do the
           # gitSha>=expected ancestry check against a superseding deploy.
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
 
-      - uses: google-github-actions/auth@v2
+      # KEYLESS auth: GitHub OIDC -> GCP Workload Identity Federation (idea-591). No static SA
+      # key (secrets.GCP_SA_KEY retired) -> ends the 90-day static-cred-expiry class that was
+      # FM-1's root. NO key material in this workflow. Prerequisites (provisioned separately,
+      # idea-591): a WIF pool + provider bound to the repo/branch, a tightly-scoped deployer SA
+      # the provider may impersonate, and the two repo vars below. `permissions.id-token: write`
+      # (above) mints the OIDC token.
+      - uses: google-github-actions/auth@c200f3691d83b41bf9bbd8638997a462592937ed # v2
         with:
-          credentials_json: '${{ secrets.GCP_SA_KEY }}'
+          workload_identity_provider: ${{ vars.HUB_WIF_PROVIDER }}
+          service_account: ${{ vars.HUB_DEPLOY_SA }}
 
-      - uses: google-github-actions/setup-gcloud@v2
+      - uses: google-github-actions/setup-gcloud@e427ad8a34f8676edf47cf7d7925499adf3eb74f # v2
+        with:
+          # Exact Cloud SDK pin (current/supported at pin time). Bump deliberately — never floating.
+          version: '512.0.0'
 
       - name: Build + push Hub container via build-hub.sh
         run: ./scripts/local/build-hub.sh
