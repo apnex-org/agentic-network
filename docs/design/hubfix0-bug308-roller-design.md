@@ -124,7 +124,7 @@ The **one-writer invariant** dominates zero-gap availability: watchtower is remo
 
 ## 2. Poll / detect loop  [GREG]
 
-- **Run model:** systemd timer (`OnBootSec` + `OnUnitActiveSec`, reviewed cadence — proposed 5 min, matching watchtower's prior `--interval 300`), one-shot service per tick. No long-lived daemon.
+- **Run model (FROZEN cadence, S4):** systemd timer with **`OnBootSec=60s` + `OnUnitActiveSec=300s`** (5 min, matching watchtower's prior `--interval 300`) — ruby's §1.2 unit CITES these exact values authoritatively; one-shot service per tick, no long-lived daemon. A tick that overruns the 300s cadence is flock-no-op'd by its successor (ruby's §1.2 `TimeoutStartSec=600` > worst-case roll+rollback ≈ 300s, so a slow run is NEVER killed mid-rollback; `TimeoutStopSec=30`).
 - **Exclusive lock (F6 two-roller-prevention + causality):** acquire `flock -n` on `/run/hub-roller.lock` at tick start; if held, **exit no-op** (another tick/instance owns it). The held flock is also the exclusive-service-lock causality evidence (§4).
 - **Detect (candidate) — FROZEN, GCLOUD-FREE (R4; COS has NO gcloud):** `docker pull <REGISTRY>/hub:latest` (via the docker gcr-helper creds — the proven §B.3 path; idempotent, no-op if unchanged), THEN read the pulled image's `.RepoDigests` and require EXACTLY ONE canonical `<REGISTRY>/hub@sha256:<64hex>` match → operate ONLY on that captured digest. NO `docker manifest inspect` / direct-helper registry-HEAD (unproven / conflicts with the no-direct-helper rule). `hub-detect` emits that single ref on stdout + exit 0; **nonzero + no stdout** on pull-failure / zero-or-multiple-match / regex-fail (never a partial or ambiguous ref). This IS ruby's resolver step-1 (§1.3), which then TYPES it (R1: only `fresh_candidate` advances a periodic tick).
 - **New-vs-running:** running digest = `docker inspect ois-hub-prod --format '{{.Image}}'` → `docker image inspect <id> --format '{{json .RepoDigests}}'` → **membership** test of the AR `reg@sha256` ref (never index-0). If the `:latest` candidate ref ∈ running RepoDigests → **no-op** (already current). Else → NEW candidate → validate (§3) → roll (§1 engine).
@@ -137,13 +137,14 @@ Before rolling a candidate `D_ci`, validate it (never roll a foreign/broken imag
 - `docker create <D_ci>` → `docker cp :/repo/hub/build-info.json - | tar -xO` → `docker rm` (no image exec); assert build-info is an object with `gitSha` (40-hex) + `builtAt` (exact UTC `YYYY-MM-DDTHH:MM:SSZ`, round-trip valid);
 - record the candidate `{digest, gitSha, builtAt}` in the roll receipt (provenance).
 - **ci_greenrun coupling:** for the ci_greenrun proof the candidate's `gitSha` must == `D_src` (the bridge-pin+roller-fix merge descendant). The roller records the candidate gitSha; the `== D_src` equality is verify_autoroll's binding — the roller provides the evidence, doesn't self-certify.
+- **Boot-reachable provenance (S1 seam):** this SAME no-exec provenance validation is on the BOOT/cold-start path, not only the periodic roller tick — ruby's §9.1 boot FSM sources §3 before launching a fresh candidate; a merely regex-valid digest is **NEVER** launched straight from the resolver without §3 provenance **+** the post-launch §1.5 health check (fresh-candidate boot goes provenance → launch → health, else loud-manual). A candidate that FAILS provenance is **quarantined** (S7 seam → ruby's §1.8 `D_bad` ingests it), **NOT** re-pulled/re-validated every cadence.
 
 ## 4. Causality evidence  [GREG]  (steve's bar — roller manifest is necessary but NOT sufficient)
 
 The roll manifest (create-once, hashed, BUILD-capture discipline) must bind — so causality is proven, **never inferred from final digest equality alone**:
 - **before-state:** `D_manual` = running digest before the roll + its gitSha;
 - **candidate:** `D_ci` digest + its build-info `builtAt` (CI build time) + the AR push/update time;
-- **roller timestamps (UTC):** candidate-observed → lock-acquired → stop → rm → create → start → health-complete;
+- **roller timestamps (UTC):** candidate-observed → lock-acquired → stop → rm → create → start → health-complete (the post-start `/health` poll uses ruby's §1.5 FROZEN health-window — up to 120s, every 5s, ≤24 attempts);
 - **Docker facts:** daemon ID; old+new container IDs + `.State.StartedAt`; `docker events` for the stop/rm/create/start of `ois-hub-prod` over the interval;
 - **service identity:** the systemd unit name + the journal entries for the tick (the roll ran under the roller service, not an interactive shell);
 - **after-state:** external cache-busted `/health` gitSha + the running RepoDigest;
@@ -151,7 +152,11 @@ The roll manifest (create-once, hashed, BUILD-capture discipline) must bind — 
 
 ## 5. Sandbox-parity environment  [GREG]
 
-Mirror the prod-relevant surface to validate the roller BEFORE any prod deploy (autonomous authority → a throwaway GCE VM or a throwaway container-host, NEVER prod):
+Mirror the prod-relevant surface to validate the roller BEFORE any prod deploy — autonomous authority → an **EXACT COS-parity throwaway GCE VM** (NOT a container-host: it MUST reproduce metadata-SA + systemd + reboot + Terraform equivalently), NEVER prod. **FROZEN environment (S8):**
+- **VM:** `e2-small`, zone `australia-southeast1-a`, boot image = the **OBSERVED live Hub-VM COS identity** — ruby's §1.1/§9 captures the exact `cos-*` build (via `/etc/os-release` at impl time) and binds it as the compat baseline; the sandbox pins the **SAME** image (no floating `cos-stable`) — plus a throwaway SA carrying the same metadata-SA shape (`artifactregistry.reader` on a throwaway AR repo).
+- **Test images (throwaway AR, NEVER `:latest`/prod):** a stand-in `hub-sbx` image serving `/health` with a settable build-info `gitSha` (pinned by digest); stand-in postgres `postgres:16-alpine` (pinned by digest); a stand-in `watchtower` (for the no-relaunch + non-interference proofs); two distinct prior/next stand-in digests `D_prev_sbx`/`D_new_sbx` for the roll/rollback mutation tests.
+- **Runtime versions:** exactly those shipped on the bound COS milestone — `docker` + `systemd` + `docker-credential-gcr` as present on that COS baseline (ruby §1.1); the sandbox asserts these match before any test.
+- **Timer parity:** the sandbox `hub-roller.timer` uses the SAME frozen cadence (`OnUnitActiveSec=300s` / `OnBootSec=60s`, §2) + the §1.5 health-window (120s/5s, ≤24), so cadence + health timing are proven at parity, not approximated.
 - **Parity (must match):** `docker-credential-gcr` → **metadata → SA → AR reader** (the exact prod auth path — the load-bearing unknown to prove: does the gcr-helper AR **`docker pull :latest` + exact-single-RepoDigest detect (§2 FROZEN)** AND pull-by-digest work end-to-end on COS); a throwaway AR repo/tag; the **Hub-ONLY launcher** (`hub-launch.sh` — recreates ONLY ois-hub-prod from the startup.sh:107-119 shared snippet, ruby §1 — NOT the full startup runner); the flock; the systemd timer/service; a stand-in "hub" container exposing `/health` reporting a build-info gitSha; stand-in postgres + watchtower containers to prove non-interference.
 - **Documented non-parity:** the real hub image + real postgres are stand-ins — but a stand-in PG container asserts the roll does **not touch PG** (validates ruby's PG-invariant, §1).
 - **Detect note:** the frozen detect is docker-CLI-only (no gcloud on COS); the sandbox proves the `docker pull :latest` → exactly-one canonical RepoDigest path on the COS-parity host.
@@ -161,7 +166,7 @@ Mirror the prod-relevant surface to validate the roller BEFORE any prod deploy (
 - **POSITIVE:** `:latest` → new valid `D_ci` ⇒ detect → validate → roll → `/health` = D_ci gitSha + running == D_ci ⇒ full causality manifest. PASS.
 - **NEGATIVE no-op:** `:latest` == running ⇒ no roll, no churn. PASS.
 - **NEGATIVE bad candidate:** `:latest` → image with missing/invalid build-info ⇒ provenance REFUSES ⇒ stays on D_manual. PASS (fail-closed).
-- **NEGATIVE health-miss → rollback:** roll to D_ci, `/health` never reports D_ci gitSha in the bounded window ⇒ **rollback to dynamic D_prev** ⇒ `/health` back to D_prev ⇒ rollback receipt. PASS (fail-closed).
+- **NEGATIVE health-miss → rollback:** roll to D_ci, `/health` never reports D_ci gitSha within the §1.5 FROZEN health-window (up to 120s, poll every 5s, ≤24 attempts) ⇒ **rollback to dynamic D_prev** ⇒ `/health` back to D_prev within the same window ⇒ rollback receipt. PASS (fail-closed).
 - **MUTATION-proof (steve's bar, the v8 8/8 pattern):** delete/neuter each guard ⇒ a specific test goes RED — remove provenance ⇒ bad-candidate rolls (caught); remove flock ⇒ two-roller test detonates; remove health-check ⇒ health-miss doesn't roll back; remove D_prev capture ⇒ rollback targets wrong/empty; remove membership ⇒ index-0 false-match. Each mutation → one RED test.
 - **TWO-ROLLER:** two ticks race ⇒ flock ⇒ exactly one rolls, the other no-ops.
 - **HUB-ONLY recreate:** the Hub-launcher recreates ONLY ois-hub-prod ⇒ the stand-in postgres + watchtower containers are **untouched** (same container ID/StartedAt across the roll). PASS (F3/PG-invariant).
@@ -175,7 +180,7 @@ Aligns with ruby's R3 no-overlap cutover (§9): the roller is installed **DISABL
 ## 8. Secret-exclusion tests  [GREG]
 
 - No static token anywhere (gcr-helper mints per-pull from metadata — never a config.json token file, unlike the retired bug-107 refresh.sh).
-- **SENTINEL tests (R10):** in the SANDBOX inject unique planted sentinel secret values (e.g. into the SA/token path + env) and prove the sentinels NEVER occur in the receipt, stdout/stderr, the journal, the roll manifests, any Terraform plan/summary, or test artifacts. A generic grep can miss unknown formats AND can itself expose a match, so the planted sentinels are the positive control (they PROVE the exclusion actually catches a secret). PRODUCTION receipts are no-secret by construction; NEVER scan or publish real secret values — sentinels are sandbox-only.
+- **SENTINEL tests (R10, S8):** in the SANDBOX inject controlled **FAKE** sentinel secret values **into the launcher path the roller actually reads** — the SA-key/token file `hub-launch.sh` consumes + its `-e` env — and prove the planted sentinels NEVER occur in the receipt, stdout/stderr, the journal, the roll manifests, any Terraform plan/summary, or test artifacts. The planted FAKE sentinels are the POSITIVE CONTROL (they PROVE the exclusion actually catches a secret shape); a generic grep can miss unknown formats AND can itself expose a match, so we rely on the known planted values, not a blind scan. PRODUCTION receipts are no-secret by construction; **NEVER search, scan, or print real production secret values — the sandbox FAKE-injection is the ONLY positive control, sandbox-only.**
 
 ## F-item mapping (to complete with ruby/steve against the gate-fail F-list)
 
