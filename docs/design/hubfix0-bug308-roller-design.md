@@ -86,7 +86,7 @@ The in-place metadata change affects only FUTURE boots; it does NOT stop the RUN
 
 - **Run model:** systemd timer (`OnBootSec` + `OnUnitActiveSec`, reviewed cadence — proposed 5 min, matching watchtower's prior `--interval 300`), one-shot service per tick. No long-lived daemon.
 - **Exclusive lock (F6 two-roller-prevention + causality):** acquire `flock -n` on `/run/hub-roller.lock` at tick start; if held, **exit no-op** (another tick/instance owns it). The held flock is also the exclusive-service-lock causality evidence (§4).
-- **Detect (candidate) — GCLOUD-FREE (COS has NO gcloud):** resolve `:latest`'s current digest via the docker gcr-helper creds, never gcloud — candidate methods, the sandbox (§5) proving WHICH works on COS (a load-bearing unknown): (i) `docker manifest inspect <REGISTRY>/hub:latest` → the manifest digest; (ii) a registry v2 `HEAD /v2/<repo>/manifests/latest` with a bearer token minted by `docker-credential-gcr` (correct challenge handling — the exact auth watchtower's parser botches → `Docker-Content-Digest`); (iii) `docker pull <REGISTRY>/hub:latest` (idempotent, no-op if current) then read its RepoDigest. Canonical `reg@sha256:<64hex>` (validate the regex).
+- **Detect (candidate) — FROZEN, GCLOUD-FREE (R4; COS has NO gcloud):** `docker pull <REGISTRY>/hub:latest` (via the docker gcr-helper creds — the proven §B.3 path; idempotent, no-op if unchanged), THEN read the pulled image's `.RepoDigests` and require EXACTLY ONE canonical `<REGISTRY>/hub@sha256:<64hex>` match → operate ONLY on that captured digest. NO `docker manifest inspect` / direct-helper registry-HEAD (unproven / conflicts with the no-direct-helper rule). `hub-detect` emits that single ref on stdout + exit 0; **nonzero + no stdout** on pull-failure / zero-or-multiple-match / regex-fail (never a partial or ambiguous ref). This IS ruby's resolver step-1 (§1.3), which then TYPES it (R1: only `fresh_candidate` advances a periodic tick).
 - **New-vs-running:** running digest = `docker inspect ois-hub-prod --format '{{.Image}}'` → `docker image inspect <id> --format '{{json .RepoDigests}}'` → **membership** test of the AR `reg@sha256` ref (never index-0). If the `:latest` candidate ref ∈ running RepoDigests → **no-op** (already current). Else → NEW candidate → validate (§3) → roll (§1 engine).
 - **Idempotent + fail-closed:** any detect error (AR query fails, ambiguous) → no-op + log (never roll on uncertainty). Only an authenticated, unambiguous new-digest advances to a roll.
 
@@ -107,14 +107,14 @@ The roll manifest (create-once, hashed, BUILD-capture discipline) must bind — 
 - **Docker facts:** daemon ID; old+new container IDs + `.State.StartedAt`; `docker events` for the stop/rm/create/start of `ois-hub-prod` over the interval;
 - **service identity:** the systemd unit name + the journal entries for the tick (the roll ran under the roller service, not an interactive shell);
 - **after-state:** external cache-busted `/health` gitSha + the running RepoDigest;
-- **INDEPENDENT no-manual-assist (interval):** (a) GCP IAP/SSH audit-log **absence** of any human session on ois-hub-prod during the roll window; (b) the exclusive roller **flock** held throughout (no concurrent manual roll).
+- **EVIDENCE-BOUNDED no-manual-assist (R5 — a roller flock does NOT exclude a manual root that ignores it; this is bounded evidence, not mathematical absence):** bind (a) the roll process's systemd **PID/PPID/cgroup** == the `hub-roller` service unit's (the roll ran under the roller, not an interactive shell or other unit); (b) `docker events` actor/attributes for the stop/rm/create/start (daemon-side record); (c) ALL queryable human/automation ACCESS-audit surfaces for the interval — GCP IAP/SSH audit logs, **serial-console** access, OS-Login/sshd sessions, and any metadata/startup-script runs — showing no other writer; (d) the shared **flock** (every sanctioned roll/launcher path acquires `/run/hub-roller.lock` — coordination among sanctioned writers, NOT exclusion of an unsanctioned root). Result phrased as: no sanctioned OR audited path other than this roller mutated ois-hub-prod in the window.
 
 ## 5. Sandbox-parity environment  [GREG]
 
 Mirror the prod-relevant surface to validate the roller BEFORE any prod deploy (autonomous authority → a throwaway GCE VM or a throwaway container-host, NEVER prod):
-- **Parity (must match):** `docker-credential-gcr` → **metadata → SA → AR reader** (the exact prod auth path — the load-bearing unknown to prove: does the gcr-helper AR pull-by-digest AND the gcloud-free **detect** (§2 (i)/(ii)/(iii)) work end-to-end on COS); a throwaway AR repo/tag; the **Hub-ONLY launcher** (`hub-launch.sh` — recreates ONLY ois-hub-prod from the startup.sh:107-119 shared snippet, ruby §1 — NOT the full startup runner); the flock; the systemd timer/service; a stand-in "hub" container exposing `/health` reporting a build-info gitSha; stand-in postgres + watchtower containers to prove non-interference.
+- **Parity (must match):** `docker-credential-gcr` → **metadata → SA → AR reader** (the exact prod auth path — the load-bearing unknown to prove: does the gcr-helper AR **`docker pull :latest` + exact-single-RepoDigest detect (§2 FROZEN)** AND pull-by-digest work end-to-end on COS); a throwaway AR repo/tag; the **Hub-ONLY launcher** (`hub-launch.sh` — recreates ONLY ois-hub-prod from the startup.sh:107-119 shared snippet, ruby §1 — NOT the full startup runner); the flock; the systemd timer/service; a stand-in "hub" container exposing `/health` reporting a build-info gitSha; stand-in postgres + watchtower containers to prove non-interference.
 - **Documented non-parity:** the real hub image + real postgres are stand-ins — but a stand-in PG container asserts the roll does **not touch PG** (validates ruby's PG-invariant, §1).
-- **Digest source note:** `fully_qualified_digest` is confirmed for gcloud 512; the sandbox re-confirms on its client.
+- **Detect note:** the frozen detect is docker-CLI-only (no gcloud on COS); the sandbox proves the `docker pull :latest` → exactly-one canonical RepoDigest path on the COS-parity host.
 
 ## 6. Positive / negative / MUTATION tests  [GREG]
 
@@ -126,16 +126,16 @@ Mirror the prod-relevant surface to validate the roller BEFORE any prod deploy (
 - **TWO-ROLLER:** two ticks race ⇒ flock ⇒ exactly one rolls, the other no-ops.
 - **HUB-ONLY recreate:** the Hub-launcher recreates ONLY ois-hub-prod ⇒ the stand-in postgres + watchtower containers are **untouched** (same container ID/StartedAt across the roll). PASS (F3/PG-invariant).
 - **NO-WT-RELAUNCH (F3):** with legacy watchtower removed, re-run startup.sh **AND** reboot the sandbox VM ⇒ watchtower is **NOT** relaunched (the roller owns auto-roll). PASS.
-- **GCLOUD-FREE detect:** the §2 detect resolves `:latest`→digest with NO gcloud on the COS-parity host (proves the chosen method (i)/(ii)/(iii) works). PASS.
+- **FROZEN detect (R4):** the §2 detect (`docker pull :latest` → exactly-one canonical RepoDigest, no gcloud) resolves on the COS-parity host; a zero-or-multiple-match input ⇒ `hub-detect` exits nonzero + no stdout (fail-closed, no roll). PASS.
 
 ## 7. Live-canary plan  [GREG]
 
-Before roller-deploy flips to active auto-roll: **detect-only canary** first — deploy the roller in dry-run (poll + detect + validate + LOG the candidate, **do not roll**) → confirm detect + gcr-helper auth + provenance work in prod without a prod roll. Then the first controlled roll under lily's supervision (rollback-ready). Canary evidence = detect-only logs + the first roll's causality manifest.
+Aligns with ruby's R3 no-overlap cutover (§9): the roller is installed **DISABLED / detect-only**; legacy watchtower is stopped+removed and its absence PROVEN first; THEN one explicitly non-mutating **detect-only canary** (poll + detect + validate + LOG the candidate, **no roll**) confirms detect + gcr-helper auth + provenance in prod with NO writer overlap; THEN the roller is enabled + a first controlled roll under lily's supervision (rollback-ready). Canary evidence = the WT-absence proof + detect-only logs + the first roll's causality manifest. A bounded manual-only gap during cutover is acceptable + auditable; overlapping writers are not.
 
 ## 8. Secret-exclusion tests  [GREG]
 
 - No static token anywhere (gcr-helper mints per-pull from metadata — never a config.json token file, unlike the retired bug-107 refresh.sh).
-- Grep the roller script + roll manifest + journal/logs + sandbox artifacts for token/key/credential patterns ⇒ MUST be empty. The receipt carries only digests/gitSha/timestamps/container-IDs — no secrets.
+- **SENTINEL tests (R10):** in the SANDBOX inject unique planted sentinel secret values (e.g. into the SA/token path + env) and prove the sentinels NEVER occur in the receipt, stdout/stderr, the journal, the roll manifests, any Terraform plan/summary, or test artifacts. A generic grep can miss unknown formats AND can itself expose a match, so the planted sentinels are the positive control (they PROVE the exclusion actually catches a secret). PRODUCTION receipts are no-secret by construction; NEVER scan or publish real secret values — sentinels are sandbox-only.
 
 ## F-item mapping (to complete with ruby/steve against the gate-fail F-list)
 
