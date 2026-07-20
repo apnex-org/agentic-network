@@ -3,10 +3,13 @@
 **Node:** `hubfix0 BUILD` (engineer / greg). **Executable:** `docs/runbooks/hubfix0-build-capture.sh`
 — approval binds its exact sha256 **`58e533db80c2aebb4c732d3e93a56d116e04b96dab95f66b2544ffd3b5f6cd53`**,
 published durably on branch `greg/hubfix0-build-capture` (committed raw bytes). **Addresses** v1 B1–B8,
-v2 V2-1…7, v3 V3-1…6, v4 V4-1…4, v5 V5-1…4; **v7** = line-23 `${ATTEMPT_ID:?…}` message-only fix (removed
-the `{1,64}` braces that bash closes the parameter-expansion on — the v6 first-execution defect, **bug-309**).
-ZERO logic change; semantic tests in `hubfix0-build-capture.test.sh` (valid preserved byte-for-byte;
-unset/empty fail; invalid shape fails at the unchanged line-47 regex).
+v2 V2-1…7, v3 V3-1…6, v4 V4-1…4, v5 V5-1…4; **v7** = an intentional semantic fix to line 23's
+`${ATTEMPT_ID:?…}` guard — the error-message text no longer contains `{1,64}`, which bash was closing the
+parameter-expansion on (appending a literal `}` to the value; the **bug-309** first-execution defect). The
+line-47 validation regex is unchanged. **Source-PASSed by steve** at commit
+`0a2a6d5e206e7975ff4957001641e413a3b05f78` (review rv 56424611); semantic coverage in
+`hubfix0-build-capture.test.sh` — valid input preserved byte-for-byte, unset/empty rejected at the guard,
+invalid shape rejected at line 47.
 
 Builds the immutable idea-528 Hub image + emits an **immutable, complete receipt** — frozen input to ROLL
 (ruby binds it) and LIVE-VERIFY (steve).

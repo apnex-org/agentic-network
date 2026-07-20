@@ -36,7 +36,7 @@ run(){
     empty) e+=(ATTEMPT_ID=) ;;
     *)     e+=(ATTEMPT_ID="$mode") ;;
   esac
-  env "${e[@]}" bash -x "$SUT" 2>&1
+  env -u ATTEMPT_ID "${e[@]}" bash -x "$SUT" 2>&1   # -u makes the unset case hermetic (drops any inherited ATTEMPT_ID; set cases re-add it)
 }
 
 echo "SUT: $SUT"
