@@ -1,46 +1,54 @@
-# hubfix0 — BUILD-capture runbook (frozen artifact, v4)
+# hubfix0 — BUILD-capture runbook (frozen artifact, v5)
 
 **Node:** `hubfix0 BUILD` (engineer / greg). **Executable:** `docs/runbooks/hubfix0-build-capture.sh`
-— approval binds its exact sha256 **`3ce006b6b6cfca7c0bcb930ff612bd1d844bf6dcfb6446c6f8727e5eb70f92ff`**,
-published durably at branch `greg/hubfix0-build-capture` (committed raw bytes; this Markdown is explanation
-only). **Addresses** v1 B1–B8, v2 V2-1…7, v3 V3-1…6.
+— approval binds its exact sha256 **`527a59ad7503cacb1dffaebc6d22f1448e568af72fb3b29c6384d835d01dd346`**,
+published durably on branch `greg/hubfix0-build-capture` (committed raw bytes; this Markdown is explanation).
+**Addresses** v1 B1–B8, v2 V2-1…7, v3 V3-1…6, v4 V4-1…4.
 
-Builds the immutable idea-528 Hub image and emits an **immutable, complete receipt** — frozen input to
+Builds the immutable idea-528 Hub image and emits an **immutable, complete receipt** — the frozen input to
 ROLL (ruby binds it) and LIVE-VERIFY (steve's strong contract).
 
-## Credential model: consume + bind a governed fresh-exchange preflight
+## Pinned (V4-1 — changing any requires re-review)
 
-This script is **credential-mode-agnostic** and does **not** establish credentials. A separate **governed
-credential preflight** (Director/architect-run) must:
+`IDEA528_SHA=db27857f0fa06d498baaef456988b3e8f93adaf4`, `EXPECT_SA=terraform@labops-389703.iam.gserviceaccount.com`,
+`GCP_PROJECT=labops-389703`, `GCP_REGION=australia-southeast1` (AR), `CB_LOCATION=global` (Cloud Build —
+build-hub submits global; `builds describe` is pinned to it, never silently inherited). These are `readonly`
+constants, not env-overridable.
 
-1. establish an **isolated, already-authenticated** env — throwaway `HOME` (no `hub.env`), `CLOUDSDK_CONFIG`
-   authed as terraform@ (bridge-key **or** WIF), docker AR-configured; and
-2. **prove a FRESH token exchange** (a clean-config mint — an AR read alone can pass on a cached token and
-   is NOT a fresh-mint proof), emitting a receipt.
+## Credential model + required preflight-receipt schema
 
-This script **binds** that preflight receipt (`CRED_PREFLIGHT_RECEIPT` + expected `CRED_PREFLIGHT_SHA`,
-carried in the BUILD receipt) and **re-proves** principal/project/AR-authorization as **liveness**, not
-fresh-mint. Consequences: no secret material enters this script/log/receipt; the artifact is approvable
-independent of the bridge-vs-WIF ruling — only the preflight differs by mode.
+Credential-mode-agnostic; **consumes** a governed preflight env, does not establish creds. The governed
+preflight (Director/architect) must establish an isolated authed env **and prove a FRESH token exchange**
+(a clean-config mint — a cached/AR read is not acceptance), emitting a receipt this script **validates by
+schema** (not just hash) and carries:
 
-## Invariants
+```json
+{ "status": "PASS", "credential_mode": "wif|bridge-key",
+  "principal": "terraform@labops-389703.iam.gserviceaccount.com", "project": "labops-389703",
+  "isolated_config": "<config identity>",
+  "fresh_exchange": { "at": "YYYY-MM-DDTHH:MM:SSZ", "method": "<clean-config jwt mint>" },
+  "no_secret_material": true, "durable_ref": "<Hub/entity ref>" }
+```
 
-- **NO prod touch.** ONE **create-once, one-shot, non-idempotent** tag `…/hub:hubfix0-<40hex>-<attempt>`;
-  never `:latest`, never the VM. A failed/partial attempt *consumes* its tag → a **distinct successor** tag.
-- **NEVER executes the image** — `docker create` + `docker cp` only.
-- **Self-verifying** — refuses unless own sha256 == external `APPROVED_SELF_SHA`, before any GCP call.
-- **Fail-closed** — create-once uses a *successful* `tags list` zero-match (never human stderr).
+BUILD binds `CRED_PREFLIGHT_RECEIPT` + `CRED_PREFLIGHT_SHA`, asserts the schema above, carries
+`{sha256, durable_ref}` in the BUILD receipt, and re-proves principal/project/AR-authorization as
+**liveness only**. A cached-only cred (no valid fresh-exchange receipt) makes BUILD **refuse** to proceed.
 
-## v3 residuals addressed
+## v4 residuals addressed
 
-| # | v3 residual | v4 fix |
+| # | v4 residual | v5 fix |
 |---|---|---|
-| V3-1 | create-once inferred from human stderr | `gcloud artifacts docker tags list --format=json` must **succeed**; assert zero exact matches; any query failure aborts |
-| V3-2 | projectNumber SA inference | authoritative `gcloud builds get-default-service-account` (raw lookup retained); strict principal regex |
-| V3-3 | evidence deleted on failure | phase-tracked: once a build is **submitted**, `EVIDENCE_DIR` is preserved regardless of outcome + a create-only `terminal-status.json` manifest; only an untouched preflight dir is discarded |
-| V3-4 | "AR read defeats stale-cache" false | corrected: AR probe is **liveness/authorization only**; the **fresh-mint proof is the governed preflight's receipt**, bound + carried |
-| V3-5 | executable not durable | committed raw bytes at `greg/hubfix0-build-capture`; approval binds path/rev + decoded sha256 (not a `get_document` read — bug-302) |
-| V3-6 | timestamp / receipt semantics | `builtAt` round-tripped through GNU `date` (rejects calendar-invalid); receipt sha256 + terminal status on **both** success and post-submit failure; **Hub evidence refs required before BUILD completion + before ROLL** |
+| V4-1 | identities/location overridable | `IDEA528_SHA`, `EXPECT_SA`, project/region, `CB_LOCATION=global` pinned `readonly` |
+| V4-2 | cred receipt hash-only | full schema asserted (PASS/principal/project/fresh_exchange/no_secret/durable_ref) + carried |
+| V4-3 | weak failure manifest | create-only failure manifest binds frozen inputs, tag, self-hash, cred sha+ref, interval, available evidence hashes; emits its **own** `.sha256`; companion no longer claims a success "receipt sha256" on failure |
+| V4-4 | default-SA lookup not hashed | `default-cb-sa.json` sha256 computed when used (null when unused), in the evidence map |
+
+## V4-5 — WorkItem durable execution binding (for the node contract)
+
+The BUILD WorkItem must bind and run **`8b664c5…`→ v5 commit** : `docs/runbooks/hubfix0-build-capture.sh`
+: `sha256=527a59ad…`. **Materialize** those bytes from the commit into a clean temp path, **verify sha256**,
+then execute with `bash <path>` (blob mode `100644`, not executable). Never run a mutable branch-worktree copy.
+`APPROVED_SELF_SHA` = that sha; the script self-refuses on mismatch.
 
 ## Receipt → consumer map
 
@@ -50,10 +58,10 @@ independent of the bridge-vs-WIF ruling — only the preflight differs by mode.
 | `build_info.builtAt` / `build_interval` | ROLL `EXPECTED_BUILT_AT` + provenance |
 | `build_info.sha256` / `build_info.base64` | ROLL `EXPECTED_BUILD_INFO_SHA256` (recomputable) |
 | `canonical_pushed_digest` / `cloud_build_result_digest` / `repo_digests[]` | ROLL retag; LIVE-VERIFY RepoDigests **membership** |
-| `cred_preflight_receipt_sha256` / `cloud_build_id` / `submitted_by_sa` / `cloud_build_service_account` / `executable_hashes` / `evidence` | provenance / tamper-evidence |
+| `cred_preflight` / `cloud_build_id` / `cloud_build_location` / SA fields / `executable_hashes` / `evidence` | provenance / tamper-evidence |
 
 ## Completion requirement
 
 Before the BUILD WorkItem completes (and before ROLL is authored): publish the receipt, `build.log`, and
-`builds-describe.json` as **Hub evidence** and record their refs. The script produces these under
-`EVIDENCE_DIR`; the completion step publishes + binds the Hub refs.
+`builds-describe.json` as **Hub evidence** and record their refs. On a submitted-but-failed attempt the
+failure manifest + its `.sha256` are likewise preserved and published, and a **distinct successor tag** is used.
