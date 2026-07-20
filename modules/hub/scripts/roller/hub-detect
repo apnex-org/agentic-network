@@ -1,0 +1,55 @@
+#!/usr/bin/env bash
+# hub-detect — gcloud-free FROZEN candidate detect (design 9548d827 §2 / §1.3, R4).
+#
+# Emits EXACTLY ONE canonical "$HUB_DETECT_REG@sha256:<64hex>" on stdout + exit 0 on a
+# clean single resolution; NONZERO + NO stdout on pull-failure / zero-or-multiple-match /
+# regex-fail (never a partial or ambiguous ref). This IS ruby's hub-resolve.sh resolver
+# STEP-1 (§1.3): the resolver consumes this raw ref and TYPES it (fresh_candidate |
+# boot_fallback | quarantined | error). hub-detect does NOT do new-vs-running, typing, or
+# any roll — those are the tick / resolver (§1, ruby). One job: resolve :latest -> the one
+# canonical pinned digest, or fail-closed.
+#
+# FROZEN method (R4; COS has NO gcloud): `docker pull "$REG:latest"` (docker CLI +
+# docker-credential-gcr — the proven §B.3 metadata->SA->AR path) -> `docker image inspect`
+# the pulled image -> require EXACTLY ONE canonical "$REG@sha256:[0-9a-f]{64}" member of
+# .RepoDigests (zero/multiple => fail-closed, NEVER index-0). NO gcloud, NO
+# `docker manifest inspect`, NO direct-helper registry-HEAD (unproven / out per R4).
+#
+# Invariants: stdout carries ONLY the single ref on success (all diagnostics -> stderr);
+# read-only w.r.t. the running Hub (a pull mutates no container); fail-closed on ANY
+# uncertainty (a caller must NEVER roll on a nonzero/empty detect).
+set -euo pipefail
+
+# Full Artifact Registry repo path to the Hub image (NO tag), caller-injected so the EXACT
+# bytes run against both prod and the §5 throwaway sandbox repo, e.g.
+#   australia-southeast1-docker.pkg.dev/<project>/cloud-run-source-deploy/hub   (prod)
+#   <region>-docker.pkg.dev/<project>/<throwaway-repo>/hub-sbx                  (§5 sandbox)
+REG="${HUB_DETECT_REG:?HUB_DETECT_REG required: full AR repo path to the Hub image (no tag)}"
+readonly REG
+
+log()  { printf '[hub-detect] %s\n' "$*" >&2; }
+fail() { log "FAIL: $*"; exit 1; }   # nonzero + NO stdout (fail-closed)
+
+# REG-anchored canonical digest regex: exact repo prefix + "@sha256:" + exactly 64 lowercase hex.
+readonly DIGEST_RE="^${REG//./\\.}@sha256:[0-9a-f]{64}\$"
+
+# 1. FROZEN pull (gcr-helper creds; idempotent, no-op if unchanged). Pull's own output ->
+#    stderr so our stdout stays clean. Any failure (auth / network / absent) => fail-closed.
+docker pull "${REG}:latest" >&2 || fail "docker pull ${REG}:latest failed (auth / network / absent)"
+
+# 2. Read the PULLED image's .RepoDigests (NO manifest-inspect, NO gcloud). Capture first so
+#    an inspect failure is caught — a failed process-substitution would not fail `mapfile`.
+RDS_RAW="$(docker image inspect "${REG}:latest" --format '{{range .RepoDigests}}{{println .}}{{end}}' 2>/dev/null)" \
+  || fail "docker image inspect ${REG}:latest failed"
+mapfile -t RDS <<<"$RDS_RAW"
+
+# 3. Require EXACTLY ONE canonical $REG@sha256:<64hex> member (zero/multiple => fail; never index-0).
+match=""; count=0
+for rd in "${RDS[@]}"; do
+  [[ -n "$rd" ]] || continue
+  if [[ "$rd" =~ $DIGEST_RE ]]; then match="$rd"; count=$(( count + 1 )); fi
+done
+(( count == 1 )) || fail "expected EXACTLY ONE canonical ${REG}@sha256:<64hex> in .RepoDigests, got ${count}"
+
+# 4. Emit the single ref on stdout + exit 0 (the ONLY line ever written to stdout).
+printf '%s\n' "$match"
