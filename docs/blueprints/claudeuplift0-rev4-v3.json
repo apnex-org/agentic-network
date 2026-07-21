@@ -25,9 +25,9 @@
         "skill_hotreload_probe",
         "opencode_cleanup",
         "citation_resolver",
-        "pB2-selfheal",
-        "pA-traction",
-        "pA-tool-actuator",
+        "pB2_selfheal",
+        "pA_traction",
+        "pA_tool_actuator",
         "verifier_gate",
         "closeout"
       ],
@@ -39,11 +39,11 @@
           "refResolvable": true
         }
       ],
-      "runbook": "Use workgraph-arc-operator. Drive only this statically seeded Rev4 V3 graph. The exact committed bytes, expectedContentSha256, selected variant, and fresh Director proof must already have passed work-317 before seed. V0 omits pB2-selfheal, pA-traction, and pA-tool-actuator; never add nodes ad hoc. Complete last after closeout.",
+      "runbook": "Use workgraph-arc-operator. Drive only this statically seeded Rev4 V3 graph. The exact committed bytes, expectedContentSha256, selected variant, and fresh Director proof must already have passed work-357 before seed. V3 includes pB2_selfheal, pA_traction, and pA_tool_actuator; it omits no optional nodes; never add nodes ad hoc. Complete last after closeout.",
       "references": [
         {
           "kind": "authority-contract",
-          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-317 verifies the resolved proof before any live seed.",
+          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-357 verifies the resolved proof before any live seed.",
           "storage": "inline",
           "mode": "read",
           "required": true
@@ -126,7 +126,7 @@
       "references": [
         {
           "kind": "authority-contract",
-          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-317 verifies the resolved proof before any live seed.",
+          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-357 verifies the resolved proof before any live seed.",
           "storage": "inline",
           "mode": "read",
           "required": true
@@ -480,7 +480,7 @@
       }
     },
     {
-      "localId": "pB2-selfheal",
+      "localId": "pB2_selfheal",
       "label": "C-full bounded worker self-heal",
       "type": "task",
       "priority": "normal",
@@ -505,7 +505,7 @@
       }
     },
     {
-      "localId": "pA-traction",
+      "localId": "pA_traction",
       "label": "current-host tools/list_changed traction proof",
       "type": "task",
       "priority": "high",
@@ -523,14 +523,14 @@
           "description": "Fresh controlled current-host run proves the host re-enumerates tools mid-session after tools/list_changed; negative evidence cannot unlock ToolActuator."
         }
       ],
-      "runbook": "Reproduce positive host traction already bound by the V2/V3 Director Decision. A negative result completes no implementation admission: block pA-tool-actuator and return to a new Decision/design revision. Do not infer support from adapter emission alone.",
+      "runbook": "Reproduce positive host traction already bound by the V2/V3 Director Decision. A negative result completes no implementation admission: block pA_tool_actuator and return to a new Decision/design revision. Do not infer support from adapter emission alone.",
       "targetRef": {
         "kind": "bug",
         "id": "bug-203"
       }
     },
     {
-      "localId": "pA-tool-actuator",
+      "localId": "pA_tool_actuator",
       "label": "ToolActuator consumer after positive host traction",
       "type": "task",
       "priority": "high",
@@ -538,7 +538,7 @@
         "engineer"
       ],
       "dependsOn": [
-        "pA-traction"
+        "pA_traction"
       ],
       "evidenceRequirements": [
         {
@@ -547,7 +547,7 @@
           "description": "Canonical implementation commit consuming the neutral control plane only after independently reproduced positive current-host traction."
         }
       ],
-      "runbook": "Implement ToolActuator only as a consumer of the neutral control plane after pA-traction independently reproduces positive current-host re-enumeration. It is not a standalone visibility cure; preserve rollback and no authority expansion.",
+      "runbook": "Implement ToolActuator only as a consumer of the neutral control plane after pA_traction independently reproduces positive current-host re-enumeration. It is not a standalone visibility cure; preserve rollback and no authority expansion.",
       "targetRef": {
         "kind": "idea",
         "id": "idea-584"
@@ -574,9 +574,9 @@
         "skill_hotreload_probe",
         "opencode_cleanup",
         "citation_resolver",
-        "pB2-selfheal",
-        "pA-traction",
-        "pA-tool-actuator"
+        "pB2_selfheal",
+        "pA_traction",
+        "pA_tool_actuator"
       ],
       "evidenceRequirements": [
         {
@@ -590,7 +590,7 @@
       "references": [
         {
           "kind": "authority-contract",
-          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-317 verifies the resolved proof before any live seed.",
+          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-357 verifies the resolved proof before any live seed.",
           "storage": "inline",
           "mode": "read",
           "required": true
@@ -631,7 +631,7 @@
       "references": [
         {
           "kind": "authority-contract",
-          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-317 verifies the resolved proof before any live seed.",
+          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-357 verifies the resolved proof before any live seed.",
           "storage": "inline",
           "mode": "read",
           "required": true

@@ -25,7 +25,7 @@
         "skill_hotreload_probe",
         "opencode_cleanup",
         "citation_resolver",
-        "pB2-selfheal",
+        "pB2_selfheal",
         "verifier_gate",
         "closeout"
       ],
@@ -37,11 +37,11 @@
           "refResolvable": true
         }
       ],
-      "runbook": "Use workgraph-arc-operator. Drive only this statically seeded Rev4 V1 graph. The exact committed bytes, expectedContentSha256, selected variant, and fresh Director proof must already have passed work-317 before seed. V0 omits pB2-selfheal, pA-traction, and pA-tool-actuator; never add nodes ad hoc. Complete last after closeout.",
+      "runbook": "Use workgraph-arc-operator. Drive only this statically seeded Rev4 V1 graph. The exact committed bytes, expectedContentSha256, selected variant, and fresh Director proof must already have passed work-357 before seed. V1 includes pB2_selfheal; it omits pA_traction and pA_tool_actuator; never add nodes ad hoc. Complete last after closeout.",
       "references": [
         {
           "kind": "authority-contract",
-          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-317 verifies the resolved proof before any live seed.",
+          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-357 verifies the resolved proof before any live seed.",
           "storage": "inline",
           "mode": "read",
           "required": true
@@ -124,7 +124,7 @@
       "references": [
         {
           "kind": "authority-contract",
-          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-317 verifies the resolved proof before any live seed.",
+          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-357 verifies the resolved proof before any live seed.",
           "storage": "inline",
           "mode": "read",
           "required": true
@@ -478,7 +478,7 @@
       }
     },
     {
-      "localId": "pB2-selfheal",
+      "localId": "pB2_selfheal",
       "label": "C-full bounded worker self-heal",
       "type": "task",
       "priority": "normal",
@@ -523,7 +523,7 @@
         "skill_hotreload_probe",
         "opencode_cleanup",
         "citation_resolver",
-        "pB2-selfheal"
+        "pB2_selfheal"
       ],
       "evidenceRequirements": [
         {
@@ -537,7 +537,7 @@
       "references": [
         {
           "kind": "authority-contract",
-          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-317 verifies the resolved proof before any live seed.",
+          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-357 verifies the resolved proof before any live seed.",
           "storage": "inline",
           "mode": "read",
           "required": true
@@ -578,7 +578,7 @@
       "references": [
         {
           "kind": "authority-contract",
-          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-317 verifies the resolved proof before any live seed.",
+          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-357 verifies the resolved proof before any live seed.",
           "storage": "inline",
           "mode": "read",
           "required": true

@@ -6,9 +6,9 @@ import process from 'node:process';
 const root=process.cwd();
 const variants={
  v0:[],
- v1:['pB2-selfheal'],
- v2:['pA-traction','pA-tool-actuator'],
- v3:['pB2-selfheal','pA-traction','pA-tool-actuator'],
+ v1:['pB2_selfheal'],
+ v2:['pA_traction','pA_tool_actuator'],
+ v3:['pB2_selfheal','pA_traction','pA_tool_actuator'],
 };
 const base=['driver','artifact_gate','rail_gate','drift_fixture','schema_policy','dispatch_tolerance','drift_alert','bug203_track','footer','frequency_calibration','estate_provenance','na_pin','specstore','skill_hotreload_probe','opencode_cleanup','citation_resolver','verifier_gate','closeout'];
 function fail(message){throw new Error(message)}
@@ -16,7 +16,10 @@ for(const [variant,optional] of Object.entries(variants)){
  const file=path.join(root,'docs/blueprints',`claudeuplift0-rev4-${variant}.json`);
  const doc=JSON.parse(fs.readFileSync(file,'utf8'));
  if(doc.runId!==`claudeuplift0_rev4_${variant}`) fail(`${variant}: runId`);
+ const legalId=/^[A-Za-z0-9_]+$/;
+ if(!legalId.test(doc.runId)) fail(`${variant}: runId must be alphanumeric/underscore`);
  const ids=doc.nodes.map(n=>n.localId), set=new Set(ids);
+ for(const id of ids) if(!legalId.test(id)) fail(`${variant}: localId ${id} must be alphanumeric/underscore`);
  if(set.size!==ids.length) fail(`${variant}: duplicate localId`);
  const expected=[...base.slice(0,-2),...optional,...base.slice(-2)];
  if(JSON.stringify(ids)!==JSON.stringify(expected)) fail(`${variant}: node set/order mismatch`);
@@ -39,8 +42,8 @@ for(const [variant,optional] of Object.entries(variants)){
  const vg=byId.verifier_gate;
  if(vg.type!=='verifier-gate'||JSON.stringify(vg.roleEligibility)!==JSON.stringify(['verifier'])) fail(`${variant}: stable verifier gate`);
  if(JSON.stringify(byId.closeout.dependsOn)!==JSON.stringify(['verifier_gate'])) fail(`${variant}: closeout edge`);
- if(optional.includes('pA-tool-actuator')&&!byId['pA-tool-actuator'].dependsOn.includes('pA-traction'))fail(`${variant}: actuator traction edge`);
+ if(optional.includes('pA_tool_actuator')&&!byId['pA_tool_actuator'].dependsOn.includes('pA_traction'))fail(`${variant}: actuator traction edge`);
  for(const o of optional) if(!vg.dependsOn.includes(o)||!driver.completionDependsOn.includes(o))fail(`${variant}: optional edge ${o}`);
- if(!optional.includes('pA-traction') && ids.some(x=>x.startsWith('pA-')))fail(`${variant}: pA omission`);
+ if(!optional.includes('pA_traction') && ids.some(x=>x.startsWith('pA-')))fail(`${variant}: pA omission`);
 }
 console.log('claudeuplift Rev4 blueprints: 4/4 valid finite DAGs; node sets 18/19/20/21; admission authority and optional edges PASS');

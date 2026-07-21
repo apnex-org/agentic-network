@@ -46,23 +46,23 @@ All variants are complete static graphs. Omitted nodes are absent from `nodes[]`
 
 `{driver, artifact_gate, rail_gate, drift_fixture, schema_policy, dispatch_tolerance, drift_alert, bug203_track, footer, frequency_calibration, estate_provenance, na_pin, specstore, skill_hotreload_probe, opencode_cleanup, citation_resolver, verifier_gate, closeout}`
 
-Optional set: `{}`. Omits `{pB2-selfheal, pA-traction, pA-tool-actuator}`.
+Optional set: `{}`. Omits `{pB2_selfheal, pA_traction, pA_tool_actuator}`.
 
 ### V1 / option `rev4-selfheal` — 19 nodes
 
-V0 plus `{pB2-selfheal}`. Omits `{pA-traction, pA-tool-actuator}`.
+V0 plus `{pB2_selfheal}`. Omits `{pA_traction, pA_tool_actuator}`.
 
 ### V2 / option `rev4-actuator` — 20 nodes
 
-V0 plus **both** `{pA-traction, pA-tool-actuator}`. Omits `{pB2-selfheal}`.
+V0 plus **both** `{pA_traction, pA_tool_actuator}`. Omits `{pB2_selfheal}`.
 
-The Director preview must show both names. ToolActuator is not offered as a standalone cure. V2 is legal only if the Decision also binds pre-existing positive current-host traction evidence; a negative `pA-traction` result blocks the actuator and requires a new design/Decision.
+The Director preview must show both names. ToolActuator is not offered as a standalone cure. V2 is legal only if the Decision also binds pre-existing positive current-host traction evidence; a negative `pA_traction` result blocks the actuator and requires a new design/Decision.
 
 ### V3 / option `rev4-full` — 21 nodes
 
-V0 plus all three `{pB2-selfheal, pA-traction, pA-tool-actuator}`. Omits nothing.
+V0 plus all three `{pB2_selfheal, pA_traction, pA_tool_actuator}`. Omits nothing.
 
-The Director preview must show all three names, including `pA-traction`.
+The Director preview must show all three names, including `pA_traction`.
 
 A custom answer must identify exactly one V0–V3 file identity. Any changed node set requires new committed bytes, review, dry-run, and Decision.
 
@@ -101,10 +101,10 @@ Disposed `decision-26`, pre-byte answers, mutable prose, ambiguous custom answer
 2. Independent reviewer checks every byte and complete graph (`work-315`).
 3. Protected-merge; bind canonical commit/blob/SHA-256; create exact Hub copies; perform dry-runs.
 4. Only then raise a fresh Decision whose options contain the complete previews in §3 and whose context binds those identities (`work-316`).
-5. Steve independently checks Decision authority, git bytes, Hub copy equality, dry-run receipts, expected-hash mismatch rejection, verifier live denial, and zero creation (`work-317`).
+5. Steve independently checks Decision authority, git bytes, Hub copy equality, dry-run receipts, expected-hash mismatch rejection, verifier live denial, and zero creation (`work-357`).
 6. A later mission may seed exactly one selected variant with the reviewed hash. Mission-123 itself seeds none.
 
-This sequence makes Decision authority postdate and bind the bytes. Decision-entity seed-time resolvability remains unavailable in the generic reference resolver; the combination of post-byte Decision proof, verifier-attested `rail_gate`, independent work-317, and expected-hash CAS is the fail-closed bridge. `idea-598` tracks native Decision entity-reference resolution.
+This sequence makes Decision authority postdate and bind the bytes. Decision-entity seed-time resolvability remains unavailable in the generic reference resolver; the combination of post-byte Decision proof, verifier-attested `rail_gate`, independent work-357, and expected-hash CAS is the fail-closed bridge. `idea-598` tracks native Decision entity-reference resolution.
 
 ## 6. Node/edge invariants
 
@@ -113,8 +113,8 @@ This sequence makes Decision authority postdate and bind the bytes. Decision-ent
 - Every implementation path starts after both gates, directly or through an ancestor.
 - `verifier_gate` has stable local id, type `verifier-gate`, and verifier-only eligibility.
 - `closeout` depends on `verifier_gate`.
-- V1 adds `pB2-selfheal` after drift alert/calibration and adds it to verifier/driver edges.
-- V2 adds `pA-traction → pA-tool-actuator` and adds both to verifier/driver edges.
+- V1 adds `pB2_selfheal` after drift alert/calibration and adds it to verifier/driver edges.
+- V2 adds `pA_traction → pA_tool_actuator` and adds both to verifier/driver edges.
 - V3 applies both deltas.
 - Every node has one fixed evidence requirement kind; the two admission requirements additionally separate verifier authority.
 - `skill_hotreload_probe` is a terminal binary probe, never a conditional watcher implementation.
@@ -126,8 +126,8 @@ This sequence makes Decision authority postdate and bind the bytes. Decision-ent
 | B1 exact bytes inaccessible; verifier could not dry-run | Four full files are committed; commit/blob/SHA-256 reported; deployed policy permits verifier `dryRun=true`. |
 | B2 mutable `nodesRef` / TOCTOU | Hub content hash/resourceVersion are recorded; live seed requires matching `expectedContentSha256`; mismatch creates zero. |
 | B3 artifact admission was architect prose | `artifact_admission` is structurally `verifier-attestation`; executor evidence cannot satisfy it. |
-| B4 Decision predates/does not bind bytes; V2/V3 previews omitted traction | Fresh Decision is raised only post-merge and binds exact identities; V2/V3 previews explicitly include `pA-traction` and `pA-tool-actuator`. |
-| B5 Decision existence not seed-time resolvable | Post-byte Decision proof is independently checked in work-317 and structurally rechecked by verifier-attested `rail_gate`; exact expected-hash CAS binds seeded bytes. Native resolver support remains honestly tracked by idea-598. |
+| B4 Decision predates/does not bind bytes; V2/V3 previews omitted traction | Fresh Decision is raised only post-merge and binds exact identities; V2/V3 previews explicitly include `pA_traction` and `pA_tool_actuator`. |
+| B5 Decision existence not seed-time resolvable | Post-byte Decision proof is independently checked in work-357 and structurally rechecked by verifier-attested `rail_gate`; exact expected-hash CAS binds seeded bytes. Native resolver support remains honestly tracked by idea-598. |
 
 ## 8. Preserved non-claims
 
