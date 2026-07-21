@@ -18,7 +18,8 @@ Verifier/producer rehearsal adds `--dry-run`. A partial-release continuation req
 
 ```json
 {
-  "protocolVersion": 2,
+  "protocolVersion": 3,
+  "registry": "https://registry.npmjs.org/",
   "npmCliVersion": "11.6.2",
   "libnpmpublishVersion": "11.1.2",
   "executor": {
@@ -60,27 +61,29 @@ Verifier/producer rehearsal adds `--dry-run`. A partial-release continuation req
 }
 ```
 
-The freeze node replaces every placeholder with immutable values and preserves the manifest beside the read-only tarballs. Protocol version 2 deliberately rejects corrective2 manifests. The Director decision must bind the manifest bytes, source commit/tree, all hashes/integrities/gitHeads, executor/npm identity, npm and bundled `libnpmpublish` versions, programmatic Buffer transport, fixed order, latest-tag movement, and partial-failure boundary.
+The freeze node replaces every placeholder with immutable values and preserves the manifest beside the read-only tarballs. Protocol version 3 deliberately rejects prior manifests. The production manifest registry is exactly the normalized canonical endpoint `https://registry.npmjs.org/` (the protocol accepts `http://127.0.0.1:<port>/` only for disposable loopback falsifiers). The Director decision must bind the manifest bytes, registry, source commit/tree, all hashes/integrities/gitHeads, executor/npm identity, npm and bundled `libnpmpublish` versions, single frozen config snapshot, programmatic Buffer transport, fixed order, latest-tag movement, and partial-failure boundary.
+
+Before dependency-order builds, verify the detached canonical source is clean and export `OIS_BUILD_SHA=<full 40-hex canonical commit>` and `OIS_BUILD_DIRTY=false` (plus the recorded branch). After packing, extract every shipped `package/dist/build-info.json` and require `commitSha` to equal that full canonical commit and `dirty` to be exactly `false`; separately require every packed `package.json.gitHead` to equal the same full commit. Freeze fails before producing authority evidence if any runtime package violates either predicate.
 
 ## Fail-closed sequence
 
-1. Match runtime seat to `lily` / `architect`, npm CLI to the manifest, and npm's bundled `libnpmpublish` to the manifest.
-2. Run `npm whoami`; failure or identity mismatch stops before registry mutation. Programmatic publication loads npm's own flattened credential/registry configuration and OTP retry helper from that same pinned installation.
-3. Open and re-hash **all** tarballs for the initial preflight; inspect each descriptor-derived packed `package.json` for exact name/version/full `gitHead` and internal dependency lineage before the first registry probe.
-4. Probe all three exact versions. Fresh mode requires vacancy.
+1. Match runtime seat to `lily` / `architect`, npm CLI to the manifest, and npm's bundled `libnpmpublish` to the manifest. Normalize the manifest registry and require the production value `https://registry.npmjs.org/`.
+2. Load npm configuration exactly once and freeze its flattened options. Its effective normalized registry must equal the manifest before any identity/vacancy call. The same immutable options drive `npm-registry-fetch` identity, `pacote` vacancy/recovery reads, OTP, and `libnpmpublish`; no later CLI/config reload may choose a mutation destination.
+3. Open and re-hash **all** tarballs for the initial preflight; inspect each descriptor-derived packed `package.json` for exact name/version/full `gitHead` and internal dependency lineage, and packed `dist/build-info.json` for the full canonical commit plus `dirty:false`, before the first registry read.
+4. Call `/-/whoami` with the frozen options; failure or identity mismatch stops. Probe all three exact versions through that same snapshot. Fresh mode requires vacancy.
 5. Before the first mutation, open every pending manifest path once with `O_NOFOLLOW`; re-identify SHA-256, SHA-512, packed manifest, exact internal dependencies, and full `gitHead` from each held descriptor; copy every complete descriptor-derived byte sequence into a Buffer; retain all descriptors and Buffers.
 6. Publish the Buffers in fixed order:
    1. cognitive-layer `0.1.4`
    2. network-adapter `0.1.14`
    3. Claude plugin `0.1.16`
-7. The only mutation operation is npm 11.6.2's own bundled API:
+7. Immediately before mutation, re-check the frozen and OTP-derived effective registry against the immutable manifest target. The only mutation operation is npm 11.6.2's own bundled API:
 
    ```js
    otplease(npm, options, opts =>
      libnpmpublish.publish(packedManifest, exactVerifiedTarballBuffer, opts))
    ```
 
-   `options` is npm's own loaded configuration with `access: "public"` and `defaultTag: "latest"`. Immediately before each call, the protocol copies and re-hashes the already verified Buffer. No artifact pathname, symlink, `/proc/self/fd` locator, directory, workspace, repack, or child-process argv is supplied to the npm consumer. A swap before final open fails identity before mutation; a swap after final open cannot alter the in-memory bytes supplied to `libnpmpublish`.
+   `options` is the one frozen npm configuration snapshot with `access: "public"`, `defaultTag: "latest"`, and the exact manifest registry. Immediately before each call, the protocol copies and re-hashes the already verified Buffer. No artifact pathname, symlink, `/proc/self/fd` locator, directory, workspace, repack, or child-process argv is supplied to the npm consumer. A swap before final open fails identity before mutation; a swap after final open cannot alter the in-memory bytes supplied to `libnpmpublish`. Replacing npm config from loopback R1 to R2 after launch either leaves the held R1 snapshot authoritative or fails before PUT; R2 must receive zero PUTs.
 8. `--dry-run` performs the complete identity, vacancy, toolchain-load, Buffer-binding, order, and state checks but skips the registry PUT.
 9. Stop on first failure and preserve the state JSON. Do not unpublish, deprecate, or move a dist-tag as rollback.
 10. Recovery requires fresh authority. `--recover` accepts only an already-published **prefix** whose registry integrity and full `gitHead` exactly match the manifest, then continues at the first vacant step. Any mismatch or hole stops.
