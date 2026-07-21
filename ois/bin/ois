@@ -46,7 +46,7 @@ PROMPT_HANDLERS="${OIS_PROMPT_HANDLERS:-$CFG/prompt-handlers.json}"
 # npmdeliver0 (idea-492): the Claude agent-adapter plugin ships via the npm registry
 # (single channel; the Channel-2 GitHub-Release tarball is retired). EXACT pin — never
 # @latest (silent drift); deploy.sh can grep-guard this token.
-CLAUDE_PLUGIN_VERSION="0.1.15"
+CLAUDE_PLUGIN_VERSION="0.1.16"
 _CLAUDE_PLUGIN_MP=""   # process-cached npm-installed marketplace dir (set by claude_npm_ensure)
 
 fatal() { echo "ois: FATAL: $*" >&2; exit 1; }

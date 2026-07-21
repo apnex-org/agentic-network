@@ -26,10 +26,11 @@ describe("claude-plugin package/install integrity", () => {
     expect(pkg.scripts.prepack).toBe("node ../../scripts/build/write-build-info.js --assert");
   });
 
-  it("package dependencies honor the Claude facade boundary", () => {
+  it("package dependencies honor the Claude facade boundary with exact runtime lineage", () => {
     const deps = readJson("package.json").dependencies;
     expect(deps["@modelcontextprotocol/sdk"]).toBe("1.29.0");
-    expect(deps["@apnex/network-adapter"]).toBe("*");
+    expect(deps["@apnex/network-adapter"]).toBe("0.1.14");
+    expect(deps["@apnex/network-adapter"]).not.toMatch(/[~^*xX><=| ]/);
     expect(deps["@apnex/cognitive-layer"]).toBeUndefined();
     expect(deps["@apnex/message-router"]).toBeUndefined();
   });
