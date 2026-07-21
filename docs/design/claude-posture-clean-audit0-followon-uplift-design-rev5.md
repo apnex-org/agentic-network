@@ -1,6 +1,6 @@
 # Claude follow-on uplift design — Revision 5
 
-**WorkItem:** `work-412`
+**WorkItem:** `work-418`
 **Status:** design and finite blueprints only; no uplift implementation or seed
 **Supersedes for future consideration:** Rev 4, while preserving Rev 3, Rev 4, `work-363`, and `work-381` immutable **FAIL / NOT SEED-APPROVED** verdicts
 **Authority boundary:** disposed `decision-26` is historical only. A fresh Decision may be raised only after canonical Rev 5 bytes exist.
@@ -101,20 +101,20 @@ Disposed `decision-26`, pre-byte answers, mutable prose, ambiguous custom answer
 
 ### 5.1 Immutable rejected lineage
 
-`work-398 → work-399 → work-400 → work-401 → work-402` and `work-405 → work-406 → work-407 → work-408 → work-409` are historical rejected/retired lineages only. `work-399` and `work-406` preserve their CHANGES_REQUESTED verdicts; their downstream nodes cannot authorize these bytes. No item in either old chain is a current operational prerequisite.
+`work-398 → work-399 → work-400 → work-401 → work-402`, `work-405 → work-406 → work-407 → work-408 → work-409`, and `work-412 → work-413 → work-414 → work-415 → work-416` are historical rejected/retired lineages only. `work-399`, `work-406`, and `work-413` preserve their CHANGES_REQUESTED verdicts; their downstream nodes cannot authorize these bytes. No item in any old chain is a current operational prerequisite.
 
 ### 5.2 Current operational sequence
 
-1. Commit the complete corrected Rev 5 files on the immutable PR head (`work-412`).
-2. An independent reviewer checks every byte, complete graph, authority string, and validator expectation on the exact PR head (`work-413`).
-3. Protected-merge; bind canonical commit/blob/SHA-256, create new non-overwriting Hub copies, and obtain four expected-hash dry-run PASS receipts with exact Hub hash/resourceVersion (`work-414`).
-4. Only then raise a fresh Decision whose options contain the complete previews in §3 and whose context binds those identities (`work-415`).
-5. Steve independently checks Decision authority, git bytes, Hub copy equality, dry-run receipts, expected-hash mismatch rejection, verifier live denial, and zero creation (`work-416`).
+1. Commit the complete corrected Rev 5 files on the immutable PR head (`work-418`).
+2. An independent reviewer checks every byte, complete graph, authority string, and validator expectation on the exact PR head (`work-419`).
+3. Protected-merge; bind canonical commit/blob/SHA-256, create new non-overwriting Hub copies, and obtain four expected-hash dry-run PASS receipts with exact Hub hash/resourceVersion (`work-420`).
+4. Only then raise a fresh Decision whose options contain the complete previews in §3 and whose context binds those identities (`work-421`).
+5. Steve independently checks Decision authority, git bytes, Hub copy equality, dry-run receipts, expected-hash mismatch rejection, verifier live denial, and zero creation (`work-422`).
 6. A later mission may seed exactly one selected variant with the reviewed hash. Mission-123 itself seeds none.
 
-`work-416` is the pre-created, structurally resolvable distinct verifier successor. Every exact variant names it; no variant names failed `work-363`. If `work-416` fails, these bytes become unseedable and require another distinct correction.
+`work-422` is the pre-created, structurally resolvable distinct verifier successor. Every exact variant names it; no variant names failed `work-363`. If `work-422` fails, these bytes become unseedable and require another distinct correction.
 
-This sequence makes Decision authority postdate and bind the bytes. Decision-entity seed-time resolvability remains unavailable in the generic reference resolver; the combination of post-byte Decision proof, verifier-attested `rail_gate`, independent work-416, and expected-hash CAS is the fail-closed bridge. `idea-598` tracks native Decision entity-reference resolution.
+This sequence makes Decision authority postdate and bind the bytes. Decision-entity seed-time resolvability remains unavailable in the generic reference resolver; the combination of post-byte Decision proof, verifier-attested `rail_gate`, independent work-422, and expected-hash CAS is the fail-closed bridge. `idea-598` tracks native Decision entity-reference resolution.
 
 ## 6. Node/edge invariants
 
@@ -137,8 +137,8 @@ This sequence makes Decision authority postdate and bind the bytes. Decision-ent
 | B2 mutable `nodesRef` / TOCTOU | Hub content hash/resourceVersion are recorded; live seed requires matching `expectedContentSha256`; mismatch creates zero. |
 | B3 artifact admission was architect prose | `artifact_admission` is structurally `verifier-attestation`; executor evidence cannot satisfy it. |
 | B4 Decision predates/does not bind bytes; V2/V3 previews omitted traction | Fresh Decision is raised only post-merge and binds exact identities; V2/V3 previews explicitly include `pA_traction` and `pA_tool_actuator`. |
-| B5 Decision existence not seed-time resolvable | Post-byte Decision proof is independently checked in work-416 and structurally rechecked by verifier-attested `rail_gate`; exact expected-hash CAS binds seeded bytes. Native resolver support remains honestly tracked by idea-598. |
-| B6 exact variants hard-coded failed `work-363` as required PASS | Every distinct Rev 5 execution contract names pre-created verifier successor `work-416`; the validator rejects `work-363`, `work-381`, and retired correction ids. A failed `work-416` makes these bytes unseedable rather than aliasing authority. |
+| B5 Decision existence not seed-time resolvable | Post-byte Decision proof is independently checked in work-422 and structurally rechecked by verifier-attested `rail_gate`; exact expected-hash CAS binds seeded bytes. Native resolver support remains honestly tracked by idea-598. |
+| B6 exact variants hard-coded failed `work-363` as required PASS | Every distinct Rev 5 execution contract names pre-created verifier successor `work-422`; the validator rejects `work-363`, `work-381`, and retired correction ids. A failed `work-422` makes these bytes unseedable rather than aliasing authority. |
 
 ## 8. Preserved non-claims
 

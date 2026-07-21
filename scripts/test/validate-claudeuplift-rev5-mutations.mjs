@@ -22,15 +22,17 @@ function expectPass(label){const r=run();if(r.status!==0)throw new Error(`${labe
 function expectFail(label,mutate){const doc=structuredClone(baseline);mutate(doc);fs.writeFileSync(v0Path,JSON.stringify(doc,null,2)+'\n');const r=run();if(r.status===0)throw new Error(`${label}: validator false-PASS\n${r.stdout}`);console.log(`PASS mutation rejected: ${label}`);fs.writeFileSync(v0Path,JSON.stringify(baseline,null,2)+'\n');}
 function expectDesignFail(label,mutate){fs.writeFileSync(designPath,mutate(baselineDesign));const r=run();if(r.status===0)throw new Error(`${label}: validator false-PASS\n${r.stdout}`);console.log(`PASS mutation rejected: ${label}`);fs.writeFileSync(designPath,baselineDesign);}
 function node(doc,id){return doc.nodes.find(n=>n.localId===id)}
-function replaceRef(n){const r=n.references.find(r=>typeof r.ref==='string'&&r.ref.includes('work-416'));if(!r)throw new Error(`missing authority ref ${n.localId}`);r.ref=r.ref.replace('work-416','work-999')}
+function replaceRef(n){const r=n.references.find(r=>typeof r.ref==='string'&&r.ref.includes('work-422'));if(!r)throw new Error(`missing authority ref ${n.localId}`);r.ref=r.ref.replace('work-422','work-999')}
 try{
  expectPass('baseline');
- expectDesignFail('design current lineage reverts to retired work-409',s=>s.replace('(`work-416`).\n6. A later mission','(`work-409`).\n6. A later mission'));
+ for(const id of ['work-418','work-419','work-420','work-421','work-422']){
+   expectDesignFail(`numbered lifecycle location rejects arbitrary id: ${id}`,s=>s.replace(`(\`${id}\`).`, '(`work-999`).'));
+ }
  expectFail('admission ancestry removal: footer.dependsOn=[]',d=>{node(d,'footer').dependsOn=[]});
- expectFail('driver runbook authority removal',d=>{node(d,'driver').runbook=node(d,'driver').runbook.replace('work-416','work-999')});
+ expectFail('driver runbook authority removal',d=>{node(d,'driver').runbook=node(d,'driver').runbook.replace('work-422','work-999')});
  expectFail('driver authority reference removal',d=>replaceRef(node(d,'driver')));
  expectFail('rail authority reference removal',d=>replaceRef(node(d,'rail_gate')));
  expectFail('verifier authority reference removal',d=>replaceRef(node(d,'verifier_gate')));
  expectFail('closeout authority reference removal',d=>replaceRef(node(d,'closeout')));
- console.log('claudeuplift Rev5 mutation suite: 8/8 PASS');
+ console.log('claudeuplift Rev5 mutation suite: 12/12 PASS');
 } finally {fs.rmSync(temp,{recursive:true,force:true})}
