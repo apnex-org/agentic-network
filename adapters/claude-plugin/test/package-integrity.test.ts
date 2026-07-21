@@ -34,10 +34,11 @@ describe("claude-plugin package/install integrity", () => {
     expect(deps["@apnex/message-router"]).toBeUndefined();
   });
 
-  it("MCP declaration points Claude at the packaged shim dist entry", () => {
+  it("MCP declaration uses Claude plugin .mcp.json shape and points at the packaged shim dist entry", () => {
     const mcp = readJson(".mcp.json");
-    expect(mcp.mcpServers.proxy.command).toBe("node");
-    expect(mcp.mcpServers.proxy.args).toEqual(["${CLAUDE_PLUGIN_ROOT}/dist/shim.js"]);
+    expect(mcp).not.toHaveProperty("mcpServers");
+    expect(mcp.proxy.command).toBe("node");
+    expect(mcp.proxy.args).toEqual(["${CLAUDE_PLUGIN_ROOT}/dist/shim.js"]);
   });
 
   it("Claude plugin marketplace manifests are present and self-consistent", () => {
