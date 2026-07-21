@@ -2,13 +2,31 @@
 /**
  * Publish one authority-bound @apnex release from already-frozen tarballs.
  *
- * This deliberately does not accept workspaces or directories. Every artifact is
- * re-identified before the first registry probe; publication is direct from the
- * absolute .tgz paths in the manifest, in the fixed three-package order.
+ * This deliberately does not accept workspaces or directories. Every manifest
+ * path is audited before registry probes. Before the first mutation, every
+ * pending artifact is opened once, re-identified from that held inode, and kept
+ * open. npm receives the same descriptor as child fd 3 through a private
+ * mode-0700 `.tgz` alias to `/proc/self/fd/3`, so it never reopens the mutable
+ * manifest pathname.
  */
 import { createHash } from "node:crypto";
-import { readFileSync, writeFileSync, renameSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import {
+  chmodSync,
+  closeSync,
+  constants as fsConstants,
+  fstatSync,
+  lstatSync,
+  mkdtempSync,
+  openSync,
+  readlinkSync,
+  readSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { basename, isAbsolute, join } from "node:path";
+import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import process from "node:process";
 
@@ -27,6 +45,9 @@ const EXPECTED_INTERNAL_DEPENDENCIES = {
     "@apnex/network-adapter": "0.1.14",
   },
 };
+const CHILD_ARTIFACT_FD = 3;
+const CHILD_ARTIFACT_PATH = `/proc/self/fd/${CHILD_ARTIFACT_FD}`;
+const DESCRIPTOR_ALIAS_PREFIX = "ois-held-inode-";
 
 function usage() {
   console.error("usage: publish-exact-frozen-tgzs.mjs <absolute-manifest.json> [--dry-run] [--recover]");
@@ -42,7 +63,13 @@ if (positional.length !== 1 || !isAbsolute(positional[0])) {
 }
 
 const manifestPath = positional[0];
-const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+const manifestFd = openSync(manifestPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+let manifest;
+try {
+  manifest = JSON.parse(readHeldBytes(manifestFd, manifestPath).bytes.toString("utf8"));
+} finally {
+  closeSync(manifestFd);
+}
 const statePath = manifest.statePath;
 if (!isAbsolute(statePath ?? "")) throw new Error("manifest.statePath must be absolute");
 
@@ -55,6 +82,8 @@ const state = {
   startedAt: new Date().toISOString(),
   steps: [],
 };
+const heldArtifacts = [];
+let descriptorAliasDir = null;
 
 function persist() {
   const tmp = `${statePath}.tmp-${process.pid}`;
@@ -62,8 +91,12 @@ function persist() {
   renameSync(tmp, statePath);
 }
 
-function run(command, args, { allowFailure = false } = {}) {
-  const result = spawnSync(command, args, { encoding: "utf8", env: process.env });
+function run(command, args, { allowFailure = false, input, inheritedFd } = {}) {
+  const options = { encoding: "utf8", env: process.env, input };
+  if (inheritedFd !== undefined) {
+    options.stdio = ["ignore", "pipe", "pipe", inheritedFd];
+  }
+  const result = spawnSync(command, args, options);
   const combined = `${result.stdout ?? ""}${result.stderr ?? ""}`;
   if (!allowFailure && result.status !== 0) {
     throw new Error(`${command} ${args.join(" ")} failed (${result.status}): ${combined.trim()}`);
@@ -71,17 +104,78 @@ function run(command, args, { allowFailure = false } = {}) {
   return { status: result.status ?? 1, stdout: (result.stdout ?? "").trim(), combined: combined.trim() };
 }
 
-function hashFile(path, algorithm) {
-  return createHash(algorithm).update(readFileSync(path)).digest(algorithm === "sha512" ? "base64" : "hex");
+function readHeldBytes(fd, label) {
+  const before = fstatSync(fd, { bigint: true });
+  if (!before.isFile()) throw new Error(`${label}: artifact must be a regular file`);
+  if (before.size > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error(`${label}: artifact is too large`);
+  const bytes = Buffer.alloc(Number(before.size));
+  let offset = 0;
+  while (offset < bytes.length) {
+    const count = readSync(fd, bytes, offset, bytes.length - offset, offset);
+    if (count === 0) throw new Error(`${label}: unexpected EOF while reading held inode`);
+    offset += count;
+  }
+  const after = fstatSync(fd, { bigint: true });
+  for (const field of ["dev", "ino", "size", "mtimeNs", "ctimeNs"]) {
+    if (before[field] !== after[field]) throw new Error(`${label}: held inode changed during identification (${field})`);
+  }
+  return {
+    bytes,
+    inode: {
+      dev: before.dev.toString(),
+      ino: before.ino.toString(),
+      size: before.size.toString(),
+      mtimeNs: before.mtimeNs.toString(),
+      ctimeNs: before.ctimeNs.toString(),
+    },
+  };
 }
 
-function packedManifest(path) {
-  const result = run("tar", ["-xOf", path, "package/package.json"]);
+function openArtifact(path) {
+  if (process.platform !== "linux") throw new Error("held-inode publication requires Linux /proc/self/fd semantics");
+  return openSync(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+}
+
+function packedManifest(bytes) {
+  const result = run("tar", ["-xzOf", "-", "package/package.json"], { input: bytes });
   return JSON.parse(result.stdout);
 }
 
 function requireExact(actual, expected, label) {
   if (actual !== expected) throw new Error(`${label}: expected ${expected}, got ${actual}`);
+}
+
+function identifyArtifact(fd, artifact, name, version, boundary) {
+  const identified = readHeldBytes(fd, `${name}: ${boundary}`);
+  requireExact(createHash("sha256").update(identified.bytes).digest("hex"), artifact.sha256, `${name}: ${boundary} SHA-256`);
+  requireExact(
+    `sha512-${createHash("sha512").update(identified.bytes).digest("base64")}`,
+    artifact.integrity,
+    `${name}: ${boundary} SHA-512 integrity`,
+  );
+  const packed = packedManifest(identified.bytes);
+  requireExact(packed.name, name, `${name}: ${boundary} packed name`);
+  requireExact(packed.version, version, `${name}: ${boundary} packed version`);
+  requireExact(artifact.gitHead, manifest.source.commit, `${name}: manifest gitHead/source commit`);
+  requireExact(packed.gitHead, artifact.gitHead, `${name}: ${boundary} packed gitHead`);
+  const internalDependencies = Object.fromEntries(
+    Object.entries(packed.dependencies ?? {}).filter(([dependency]) => dependency.startsWith("@apnex/")),
+  );
+  requireExact(
+    JSON.stringify(internalDependencies),
+    JSON.stringify(EXPECTED_INTERNAL_DEPENDENCIES[name]),
+    `${name}: ${boundary} packed internal dependency lineage`,
+  );
+  return identified.inode;
+}
+
+function identifyPath(artifact, name, version, boundary) {
+  const fd = openArtifact(artifact.path);
+  try {
+    return identifyArtifact(fd, artifact, name, version, boundary);
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function registryRecord(spec) {
@@ -116,7 +210,7 @@ try {
     throw new Error(`manifest must contain exactly ${EXPECTED_ORDER.length} artifacts`);
   }
 
-  // Re-identify every frozen byte before the first registry read or mutation.
+  // Initial all-artifact preflight, before the first registry read or mutation.
   for (let i = 0; i < EXPECTED_ORDER.length; i += 1) {
     const artifact = manifest.artifacts[i];
     const [name, version] = EXPECTED_ORDER[i];
@@ -125,22 +219,8 @@ try {
     if (!isAbsolute(artifact.path) || !artifact.path.endsWith(".tgz")) {
       throw new Error(`${name}: artifact path must be an absolute .tgz path`);
     }
-    requireExact(hashFile(artifact.path, "sha256"), artifact.sha256, `${name}: SHA-256`);
-    requireExact(`sha512-${hashFile(artifact.path, "sha512")}`, artifact.integrity, `${name}: SHA-512 integrity`);
-    const packed = packedManifest(artifact.path);
-    requireExact(packed.name, name, `${name}: packed name`);
-    requireExact(packed.version, version, `${name}: packed version`);
-    requireExact(artifact.gitHead, manifest.source.commit, `${name}: manifest gitHead/source commit`);
-    requireExact(packed.gitHead, artifact.gitHead, `${name}: packed gitHead`);
-    const internalDependencies = Object.fromEntries(
-      Object.entries(packed.dependencies ?? {}).filter(([dependency]) => dependency.startsWith("@apnex/")),
-    );
-    requireExact(
-      JSON.stringify(internalDependencies),
-      JSON.stringify(EXPECTED_INTERNAL_DEPENDENCIES[name]),
-      `${name}: packed internal dependency lineage`,
-    );
-    state.steps.push({ name, version, path: artifact.path, status: "bytes-verified" });
+    const inode = identifyPath(artifact, name, version, "initial preflight");
+    state.steps.push({ name, version, path: artifact.path, status: "bytes-verified", preflightInode: inode });
   }
   persist();
 
@@ -163,15 +243,49 @@ try {
   }
   persist();
 
+  // Final use boundary: open and re-identify every artifact still to be published,
+  // then keep every verified descriptor open before the first npm invocation.
+  // A pre-open pathname swap fails before any publish. A later pathname swap
+  // cannot redirect npm because npm receives the already-held inode as fd 3.
   for (let i = 0; i < manifest.artifacts.length; i += 1) {
-    const artifact = manifest.artifacts[i];
     if (state.steps[i].status === "verified-existing") continue;
+    const artifact = manifest.artifacts[i];
+    const [name, version] = EXPECTED_ORDER[i];
+    const fd = openArtifact(artifact.path);
+    try {
+      const inode = identifyArtifact(fd, artifact, name, version, "final held-inode use boundary");
+      heldArtifacts.push({ index: i, artifact, fd });
+      state.steps[i].status = "use-bytes-verified";
+      state.steps[i].useInode = inode;
+    } catch (error) {
+      closeSync(fd);
+      throw error;
+    }
+  }
+  if (heldArtifacts.length > 0) {
+    descriptorAliasDir = mkdtempSync(join(tmpdir(), DESCRIPTOR_ALIAS_PREFIX));
+    chmodSync(descriptorAliasDir, 0o700);
+    for (const held of heldArtifacts) {
+      const aliasPath = join(descriptorAliasDir, `${held.index + 1}-${basename(held.artifact.path)}`);
+      symlinkSync(CHILD_ARTIFACT_PATH, aliasPath);
+      held.npmPath = aliasPath;
+      state.steps[held.index].npmPath = aliasPath;
+      state.steps[held.index].npmPathTarget = CHILD_ARTIFACT_PATH;
+    }
+  }
+  persist();
+
+  for (const held of heldArtifacts) {
+    const { index, artifact, fd, npmPath } = held;
     state.currentStep = `${artifact.name}@${artifact.version}`;
     persist();
-    const args = ["publish", artifact.path, "--access", "public", "--tag", "latest"];
+    if (!lstatSync(npmPath).isSymbolicLink() || readlinkSync(npmPath) !== CHILD_ARTIFACT_PATH) {
+      throw new Error(`${artifact.name}: private descriptor alias changed before npm use`);
+    }
+    const args = ["publish", npmPath, "--access", "public", "--tag", "latest"];
     if (dryRun) args.push("--dry-run");
-    run("npm", args);
-    state.steps[i].status = dryRun ? "dry-run-validated" : "published";
+    run("npm", args, { inheritedFd: fd });
+    state.steps[index].status = dryRun ? "dry-run-validated" : "published";
     state.currentStep = null;
     persist();
   }
@@ -186,5 +300,12 @@ try {
   state.completedAt = new Date().toISOString();
   try { persist(); } catch { /* retain original failure */ }
   console.error(`[publish-exact] FAIL: ${state.error}`);
-  process.exit(1);
+  process.exitCode = 1;
+} finally {
+  for (const held of heldArtifacts) {
+    try { closeSync(held.fd); } catch { /* all publication work is already complete or failed */ }
+  }
+  if (descriptorAliasDir !== null) {
+    try { rmSync(descriptorAliasDir, { recursive: true, force: true }); } catch { /* preserve primary outcome */ }
+  }
 }
