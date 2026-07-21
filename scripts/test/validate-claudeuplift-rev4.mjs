@@ -5,14 +5,15 @@ import process from 'node:process';
 
 const root=process.cwd();
 const variants={
- v0:[],
- v1:['pB2_selfheal'],
- v2:['pA_traction','pA_tool_actuator'],
- v3:['pB2_selfheal','pA_traction','pA_tool_actuator'],
+ v0:{optional:[], closeout:'V0 includes no optional nodes; keep pB2_selfheal, pA_traction, and pA_tool_actuator explicitly out of scope.'},
+ v1:{optional:['pB2_selfheal'], closeout:'V1 includes pB2_selfheal; keep pA_traction and pA_tool_actuator explicitly out of scope.'},
+ v2:{optional:['pA_traction','pA_tool_actuator'], closeout:'V2 includes pA_traction and pA_tool_actuator; keep pB2_selfheal explicitly out of scope.'},
+ v3:{optional:['pB2_selfheal','pA_traction','pA_tool_actuator'], closeout:'V3 includes pB2_selfheal, pA_traction, and pA_tool_actuator; no optional track is omitted.'},
 };
 const base=['driver','artifact_gate','rail_gate','drift_fixture','schema_policy','dispatch_tolerance','drift_alert','bug203_track','footer','frequency_calibration','estate_provenance','na_pin','specstore','skill_hotreload_probe','opencode_cleanup','citation_resolver','verifier_gate','closeout'];
 function fail(message){throw new Error(message)}
-for(const [variant,optional] of Object.entries(variants)){
+for(const [variant,contract] of Object.entries(variants)){
+ const {optional,closeout}=contract;
  const file=path.join(root,'docs/blueprints',`claudeuplift0-rev4-${variant}.json`);
  const doc=JSON.parse(fs.readFileSync(file,'utf8'));
  if(doc.runId!==`claudeuplift0_rev4_${variant}`) fail(`${variant}: runId`);
@@ -42,6 +43,13 @@ for(const [variant,optional] of Object.entries(variants)){
  const vg=byId.verifier_gate;
  if(vg.type!=='verifier-gate'||JSON.stringify(vg.roleEligibility)!==JSON.stringify(['verifier'])) fail(`${variant}: stable verifier gate`);
  if(JSON.stringify(byId.closeout.dependsOn)!==JSON.stringify(['verifier_gate'])) fail(`${variant}: closeout edge`);
+ if(!byId.closeout.runbook.includes(`finite ${variant.toUpperCase()} graph`)||!byId.closeout.runbook.includes(closeout)) fail(`${variant}: truthful closeout contract`);
+ for(const id of ['driver','drift_alert','frequency_calibration','verifier_gate','closeout']) {
+   const text=`${byId[id].runbook??''} ${byId[id].evidenceRequirements?.[0]?.description??''}`;
+   if(!text.includes(variant.toUpperCase())) fail(`${variant}/${id}: variant-specific contract`);
+ }
+ const serialized=JSON.stringify(doc);
+ if(!serialized.includes('work-363')||serialized.match(/work-(315|316|317|335|336|337|355|356|357)/)) fail(`${variant}: stale/current authority reference`);
  if(optional.includes('pA_tool_actuator')&&!byId['pA_tool_actuator'].dependsOn.includes('pA_traction'))fail(`${variant}: actuator traction edge`);
  for(const o of optional) if(!vg.dependsOn.includes(o)||!driver.completionDependsOn.includes(o))fail(`${variant}: optional edge ${o}`);
  if(!optional.includes('pA_traction') && ids.some(x=>x.startsWith('pA-')))fail(`${variant}: pA omission`);

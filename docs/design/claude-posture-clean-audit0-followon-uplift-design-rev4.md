@@ -93,18 +93,18 @@ The Decision must bind:
 - positive host-traction evidence for V2/V3;
 - no npm publication or unrelated execution authority.
 
-Disposed `decision-26`, pre-byte answers, mutable prose, ambiguous custom answers, and mismatched hashes fail closed.
+Disposed `decision-26`, pre-byte answers, mutable prose, ambiguous custom answers, and mismatched hashes fail closed. Earlier execution nodes `work-314`–`work-317`, `work-334`–`work-337`, and `work-354`–`work-357` are historical correction/rejection lineage only; they are not current authority routes.
 
 ## 5. Pre-seed authority sequence
 
-1. Commit complete Rev 4 files and open immutable review PR (`work-314`).
-2. Independent reviewer checks every byte and complete graph (`work-315`).
-3. Protected-merge; bind canonical commit/blob/SHA-256; create exact Hub copies; perform dry-runs.
-4. Only then raise a fresh Decision whose options contain the complete previews in §3 and whose context binds those identities (`work-316`).
-5. Steve independently checks Decision authority, git bytes, Hub copy equality, dry-run receipts, expected-hash mismatch rejection, verifier live denial, and zero creation (`work-357`).
+1. Commit the complete corrected Rev 4 files on the immutable PR head (`work-360`).
+2. An independent reviewer checks every byte and complete graph, creates exact Hub copies, and obtains four deployed dry-run PASS receipts (`work-361`).
+3. Protected-merge; bind canonical commit/blob/SHA-256 and the reviewed Hub hash/resourceVersion receipts (`work-362`).
+4. Only then raise a fresh Decision whose options contain the complete previews in §3 and whose context binds those identities (`work-362`).
+5. Steve independently checks Decision authority, git bytes, Hub copy equality, dry-run receipts, expected-hash mismatch rejection, verifier live denial, and zero creation (`work-363`).
 6. A later mission may seed exactly one selected variant with the reviewed hash. Mission-123 itself seeds none.
 
-This sequence makes Decision authority postdate and bind the bytes. Decision-entity seed-time resolvability remains unavailable in the generic reference resolver; the combination of post-byte Decision proof, verifier-attested `rail_gate`, independent work-357, and expected-hash CAS is the fail-closed bridge. `idea-598` tracks native Decision entity-reference resolution.
+This sequence makes Decision authority postdate and bind the bytes. Decision-entity seed-time resolvability remains unavailable in the generic reference resolver; the combination of post-byte Decision proof, verifier-attested `rail_gate`, independent work-363, and expected-hash CAS is the fail-closed bridge. `idea-598` tracks native Decision entity-reference resolution.
 
 ## 6. Node/edge invariants
 
@@ -127,7 +127,7 @@ This sequence makes Decision authority postdate and bind the bytes. Decision-ent
 | B2 mutable `nodesRef` / TOCTOU | Hub content hash/resourceVersion are recorded; live seed requires matching `expectedContentSha256`; mismatch creates zero. |
 | B3 artifact admission was architect prose | `artifact_admission` is structurally `verifier-attestation`; executor evidence cannot satisfy it. |
 | B4 Decision predates/does not bind bytes; V2/V3 previews omitted traction | Fresh Decision is raised only post-merge and binds exact identities; V2/V3 previews explicitly include `pA_traction` and `pA_tool_actuator`. |
-| B5 Decision existence not seed-time resolvable | Post-byte Decision proof is independently checked in work-357 and structurally rechecked by verifier-attested `rail_gate`; exact expected-hash CAS binds seeded bytes. Native resolver support remains honestly tracked by idea-598. |
+| B5 Decision existence not seed-time resolvable | Post-byte Decision proof is independently checked in work-363 and structurally rechecked by verifier-attested `rail_gate`; exact expected-hash CAS binds seeded bytes. Native resolver support remains honestly tracked by idea-598. |
 
 ## 8. Preserved non-claims
 
