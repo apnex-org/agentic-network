@@ -57,6 +57,15 @@ contains() { local desc="$1" hay="$2" needle="$3"; [[ "$hay" == *"$needle"* ]] &
 not_contains() { local desc="$1" hay="$2" needle="$3"; [[ "$hay" != *"$needle"* ]] && ok "$desc" || { fail "$desc"; echo "        unexpected: $needle"; }; }
 eq() { local desc="$1" exp="$2" got="$3"; [[ "$exp" == "$got" ]] && ok "$desc" || { fail "$desc"; echo "        expected: [$exp]"; echo "        actual:   [$got]"; }; }
 
+claude_pin="$(sed -n 's/^CLAUDE_PLUGIN_VERSION="\([^"]*\)"/\1/p' "$OIS")"
+claude_pkg_version="$(node -p "require('$REPO/adapters/claude-plugin/package.json').version")"
+claude_lock_version="$(node -p "require('$REPO/package-lock.json').packages['adapters/claude-plugin'].version")"
+cognitive_pkg_version="$(node -p "require('$REPO/packages/cognitive-layer/package.json').version")"
+cognitive_lock_version="$(node -p "require('$REPO/package-lock.json').packages['packages/cognitive-layer'].version")"
+eq "OIS exact Claude pin matches canonical package version" "$claude_pkg_version" "$claude_pin"
+eq "Claude package lock version matches canonical package version" "$claude_pkg_version" "$claude_lock_version"
+eq "cognitive-layer lock version matches canonical package version" "$cognitive_pkg_version" "$cognitive_lock_version"
+
 pi_env="$(OIS_INSTANCE_ID=stale HOME="$TDIR/home" "$OIS" env greg pi)"
 claude_env="$(OIS_INSTANCE_ID=stale HOME="$TDIR/home" "$OIS" env greg claude)"
 contains "pi env renders canonical OIS_AGENT_NAME" "$pi_env" "OIS_AGENT_NAME=greg"

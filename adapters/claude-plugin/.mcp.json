@@ -1,8 +1,6 @@
 {
-  "mcpServers": {
-    "proxy": {
-      "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/shim.js"]
-    }
+  "proxy": {
+    "command": "node",
+    "args": ["${CLAUDE_PLUGIN_ROOT}/dist/shim.js"]
   }
 }
