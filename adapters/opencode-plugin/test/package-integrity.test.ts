@@ -75,7 +75,7 @@ describe("opencode-plugin package/bundle integrity", () => {
     expect(publishScript).toMatch(/"@apnex\/claude-plugin"[\s\S]*"@apnex\/opencode-plugin"[\s\S]*"@apnex\/pi-plugin"/);
 
     const publishWorkflow = readRepoText(".github/workflows/publish-npm.yml");
-    expect(publishWorkflow).toContain("--workspace=@apnex/opencode-plugin");
+    expect(publishWorkflow).toContain("npm ci --no-audit --no-fund --ignore-scripts");
     expect(publishWorkflow).toContain("( cd adapters/opencode-plugin && npm run build )");
 
     const networkAdapterVersion = JSON.parse(

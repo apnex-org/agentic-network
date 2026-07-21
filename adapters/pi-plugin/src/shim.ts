@@ -38,8 +38,6 @@ import {
   loadConfig,
   loadHarnessManifest,
   readRequiredAgentName,
-  readPackageVersion,
-  readBuildInfo,
   createFileLogger,
   appendNotification,
   buildPendingTaskNotification,
@@ -49,7 +47,6 @@ import {
   isEagerWarmupEnabled,
   parseClaimSessionResponse,
   formatSessionClaimedLogLine,
-  UNKNOWN_BUILD_INFO,
   type HubConfig,
   type FileLogger,
   type SharedDispatcher,
@@ -57,8 +54,8 @@ import {
   type HandshakeFatalError,
   type HandshakeResponse,
   type TelemetryEvent,
-  type BuildInfo,
 } from "@apnex/network-adapter";
+import { EMBEDDED_BUILD_INFO, EMBEDDED_IDENTITY } from "./embedded-identity.js";
 import { buildPiNotificationHooks } from "./wake.js";
 import { installFooter, type FooterController } from "./footer-install.js";
 import { runSwarmPoll } from "./footer-poll.js";
@@ -70,41 +67,13 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 // ── Version + build identity ─────────────────────────────────────────
+// Compile identity into the bundle; package-path resolution is neither required
+// nor permitted for a self-contained runtime.
 const __shimDir = dirname(fileURLToPath(import.meta.url));
-const PI_PLUGIN_PKG_VERSION = readPackageVersion(
-  resolve(__shimDir, "..", "package.json"),
-  "unknown",
-);
-let NETWORK_ADAPTER_PKG_VERSION = PI_PLUGIN_PKG_VERSION;
-const { createRequire } = await import("node:module");
-const __require = createRequire(import.meta.url);
-try {
-  NETWORK_ADAPTER_PKG_VERSION = readPackageVersion(
-    __require.resolve("@apnex/network-adapter/package.json"),
-    PI_PLUGIN_PKG_VERSION,
-  );
-} catch {
-  /* dev/bundle path — fall back to shim version */
-}
-const PROXY_VERSION = PI_PLUGIN_PKG_VERSION;
-const SDK_VERSION = `@apnex/network-adapter@${NETWORK_ADAPTER_PKG_VERSION}`;
-// Build identity: write-build-info.js (prebuild) emits dist/build-info.json for
-// BOTH this shim and @apnex/network-adapter. Read the shim's for proxy* and the
-// resolvable kernel's for sdk* (mirrors the claude-plugin pattern). Falls back
-// to UNKNOWN on the dev/tsx path where no dist/build-info.json exists — keeps the
-// handshake honest (no phantom sha; bug-183 class). __shimDir = dist/ at runtime.
-const PROXY_BUILD_INFO: BuildInfo = readBuildInfo(
-  resolve(__shimDir, "build-info.json"),
-);
-const SDK_BUILD_INFO: BuildInfo = (() => {
-  try {
-    return readBuildInfo(
-      __require.resolve("@apnex/network-adapter/dist/build-info.json"),
-    );
-  } catch {
-    return UNKNOWN_BUILD_INFO;
-  }
-})();
+const PROXY_VERSION = EMBEDDED_IDENTITY.packageVersion;
+const SDK_VERSION = `bundled@${EMBEDDED_IDENTITY.sourceCommit}`;
+const PROXY_BUILD_INFO = EMBEDDED_BUILD_INFO;
+const SDK_BUILD_INFO = EMBEDDED_BUILD_INFO;
 
 // ── Harness manifest (bug-266) ───────────────────────────────────────
 // Per-harness config as schema-validated DATA (not hardcoded inline), loaded once

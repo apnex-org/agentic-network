@@ -31,13 +31,16 @@
     "adapter-config"
   ],
   "exportsRetiredInstanceId": false,
-  "_selfWrites": "claude owns everything under CLAUDE_CONFIG_DIR (.claude.json, settings.json, plugins/) \u2014 ois seeds once + repairs trust flag only; never diffs the rest",
+  "_selfWrites": "claude owns everything under CLAUDE_CONFIG_DIR (.claude.json, settings.json, plugins/) — ois seeds once + repairs trust flag only; never diffs the rest",
   "_configDirNote": "Sovereign dirs hold non-regenerable login-class state; seeding repairs the workspace trust flag only and never touches credentials.",
   "statusLine": "~/.config/apnex-agents/bin/claude-statusline.sh",
-  "_statusLineWhy": "Estate-owned copy of the operator statusline (cwd/model/ctx/rate-limit burn) \u2014 sovereign configs must not reference the operator config dir. Seeded into settings.json; seed also repairs the field if absent.",
+  "_statusLineWhy": "Estate-owned copy of the operator statusline (cwd/model/ctx/rate-limit burn) — sovereign configs must not reference the operator config dir. Seeded into settings.json; seed also repairs the field if absent.",
   "claudeSettings": {
     "ultracode": true,
     "enableWorkflows": true,
     "model": "opus"
-  }
+  },
+  "pluginVersion": "0.1.18",
+  "pluginIntegrity": "PENDING_PUBLICATION",
+  "publicationAttestation": "PENDING_PUBLICATION"
 }

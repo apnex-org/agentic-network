@@ -61,6 +61,19 @@ PACKAGES=(
   "@apnex/pi-plugin"
 )
 
+# The minimal aligned candidates are fresh identities. Occupancy is a hard burn,
+# never the legacy "already published => skip" behavior.
+if [[ "${OIS_REQUIRE_FRESH_CANDIDATES:-0}" == "1" ]]; then
+  for candidate in "@apnex/claude-plugin@0.1.18" "@apnex/pi-plugin@0.1.9"; do
+    if npm view "$candidate" version --json >/dev/null 2>&1; then
+      echo "[publish-packages] ✗ fresh candidate already occupied: $candidate" >&2
+      exit 1
+    fi
+  done
+fi
+PROVENANCE_FLAG=""
+[[ "${OIS_NPM_PROVENANCE:-0}" == "1" && -z "$DRY_RUN" ]] && PROVENANCE_FLAG="--provenance"
+
 # Pre-flight: verify NPM_TOKEN sourced (skip in dry-run; npm publish --dry-run doesn't auth)
 if [ -z "$DRY_RUN" ] && [ -z "${NPM_TOKEN:-}" ]; then
   echo "[publish-packages] ✗ NPM_TOKEN not set"
@@ -209,7 +222,7 @@ for pkg in "${PACKAGES[@]}"; do
     continue
   fi
 
-  if npm publish --workspace="$pkg" --access public $DRY_RUN; then
+  if npm publish --workspace="$pkg" --access public $PROVENANCE_FLAG $DRY_RUN; then
     echo "[publish-packages] ✓ $pkg"
   else
     rc=$?

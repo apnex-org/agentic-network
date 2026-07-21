@@ -19,8 +19,8 @@ fail=0
 fail_case() { echo "  FAIL: $*"; fail=1; }
 ok_case() { echo "  ok: $*"; }
 
-CELL='{"cellAgent":"greg","piSettings":{"theme":"dark","defaultProvider":"openai-codex","defaultModel":"gpt-5.5","defaultThinkingLevel":"xhigh","terminal":{"showTerminalProgress":true},"transport":"auto","compaction":{"enabled":true,"reserveTokens":32000,"keepRecentTokens":24000},"packages":["npm:pi-tool-display","npm:pi-web-access"]}}'
-CELL_RESERVE='{"cellAgent":"greg","piReserveTokens":160000,"piKeepRecentTokens":24000,"piSettings":{"theme":"dark","defaultProvider":"openai-codex","defaultModel":"gpt-5.5","defaultThinkingLevel":"xhigh","terminal":{"showTerminalProgress":true},"transport":"auto","compaction":{"enabled":true,"reserveTokens":32000,"keepRecentTokens":24000},"packages":["npm:pi-tool-display","npm:pi-web-access"]}}'
+CELL='{"cellAgent":"greg","piSettings":{"theme":"dark","defaultProvider":"openai-codex","defaultModel":"gpt-5.5","defaultThinkingLevel":"xhigh","terminal":{"showTerminalProgress":true},"transport":"auto","compaction":{"enabled":true,"reserveTokens":32000,"keepRecentTokens":24000},"packages":[]}}'
+CELL_RESERVE='{"cellAgent":"greg","piReserveTokens":160000,"piKeepRecentTokens":24000,"piSettings":{"theme":"dark","defaultProvider":"openai-codex","defaultModel":"gpt-5.5","defaultThinkingLevel":"xhigh","terminal":{"showTerminalProgress":true},"transport":"auto","compaction":{"enabled":true,"reserveTokens":32000,"keepRecentTokens":24000},"packages":[]}}'
 NO_SETTINGS_CELL='{"cellAgent":"greg"}'
 BAD_CELL='{"cellAgent":"greg","piSettings":{"theme":"light","defaultProvider":"openai-codex","defaultModel":"gpt-5.5","defaultThinkingLevel":"xhigh","terminal":{"showTerminalProgress":true},"compaction":{"enabled":true,"reserveTokens":32000,"keepRecentTokens":24000}}}'
 SEAT="$TDIR/seat-pi"
@@ -36,7 +36,7 @@ write_good_settings() {
   "terminal": { "showTerminalProgress": true },
   "transport": "auto",
   "compaction": { "enabled": true, "reserveTokens": 32000, "keepRecentTokens": 24000 },
-  "packages": ["npm:pi-tool-display", "npm:pi-web-access"]
+  "packages": []
 }
 JSON
 }
@@ -51,7 +51,7 @@ write_extra_settings() {
   "terminal": { "showTerminalProgress": true },
   "transport": "auto",
   "compaction": { "enabled": true, "reserveTokens": 32000, "keepRecentTokens": 24000 },
-  "packages": ["npm:pi-tool-display", "npm:pi-web-access"],
+  "packages": [],
   "unknownLocalPolicy": true
 }
 JSON

@@ -1,6 +1,6 @@
 {
   "harness": "pi",
-  "_why": "pi harness: hub plugin loaded ephemerally from npm each launch, pinned via piPluginSpec (the -e flag overrides any package pin in settings). Per-seat PI_CODING_AGENT_DIR/settings.json and models.json are rendered from this OIS config source; do not rely on ~/.pi/agent or workspace .pi fallback for seat-critical Pi policy.",
+  "_why": "pi harness: OIS acquires and verifies the exact npm artifact, seeds from that root, and passes its canonical dist/index.js path through -e. Pi-native npm acquisition is forbidden.",
   "exec": [
     "pi",
     "-e",
@@ -11,7 +11,7 @@
     "{piModel}",
     "--continue"
   ],
-  "piPluginSpec": "npm:@apnex/pi-plugin@0.1.7",
+  "piPluginSpec": "@apnex/pi-plugin@0.1.9",
   "piKeepRecentTokens": 24000,
   "envTemplate": {
     "OIS_EAGER_SESSION_CLAIM": "{eagerFlag}",
@@ -36,10 +36,7 @@
       "reserveTokens": 32000,
       "keepRecentTokens": 24000
     },
-    "packages": [
-      "npm:pi-tool-display",
-      "npm:pi-web-access"
-    ]
+    "packages": []
   },
   "piModels": {
     "providers": {
@@ -51,5 +48,8 @@
         }
       }
     }
-  }
+  },
+  "pluginVersion": "0.1.9",
+  "pluginIntegrity": "PENDING_PUBLICATION",
+  "publicationAttestation": "PENDING_PUBLICATION"
 }
