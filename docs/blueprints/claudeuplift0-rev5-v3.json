@@ -39,11 +39,11 @@
           "refResolvable": true
         }
       ],
-      "runbook": "Use workgraph-arc-operator. Drive only this statically seeded Rev5 V3 graph. The exact committed bytes, expectedContentSha256, selected variant, and fresh Director proof must already have passed work-409 before seed. V3 includes pB2_selfheal, pA_traction, and pA_tool_actuator; it omits no optional nodes; never add nodes ad hoc. Complete last after closeout.",
+      "runbook": "Use workgraph-arc-operator. Drive only this statically seeded Rev5 V3 graph. The exact committed bytes, expectedContentSha256, selected variant, and fresh Director proof must already have passed work-416 before seed. V3 includes pB2_selfheal, pA_traction, and pA_tool_actuator; it omits no optional nodes; never add nodes ad hoc. Complete last after closeout.",
       "references": [
         {
           "kind": "authority-contract",
-          "ref": "Fresh post-Rev5 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-409 verifies the resolved proof before any live seed.",
+          "ref": "Fresh post-Rev5 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-416 verifies the resolved proof before any live seed.",
           "storage": "inline",
           "mode": "read",
           "required": true
@@ -126,7 +126,7 @@
       "references": [
         {
           "kind": "authority-contract",
-          "ref": "Fresh post-Rev5 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-409 verifies the resolved proof before any live seed.",
+          "ref": "Fresh post-Rev5 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-416 verifies the resolved proof before any live seed.",
           "storage": "inline",
           "mode": "read",
           "required": true
@@ -590,7 +590,7 @@
       "references": [
         {
           "kind": "authority-contract",
-          "ref": "Fresh post-Rev5 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-409 verifies the resolved proof before any live seed.",
+          "ref": "Fresh post-Rev5 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-416 verifies the resolved proof before any live seed.",
           "storage": "inline",
           "mode": "read",
           "required": true
@@ -631,7 +631,7 @@
       "references": [
         {
           "kind": "authority-contract",
-          "ref": "Fresh post-Rev5 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-409 verifies the resolved proof before any live seed.",
+          "ref": "Fresh post-Rev5 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-416 verifies the resolved proof before any live seed.",
           "storage": "inline",
           "mode": "read",
           "required": true

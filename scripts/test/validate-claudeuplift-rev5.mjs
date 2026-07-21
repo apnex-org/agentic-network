@@ -12,6 +12,17 @@ const variants={
 };
 const base=['driver','artifact_gate','rail_gate','drift_fixture','schema_policy','dispatch_tolerance','drift_alert','bug203_track','footer','frequency_calibration','estate_provenance','na_pin','specstore','skill_hotreload_probe','opencode_cleanup','citation_resolver','verifier_gate','closeout'];
 function fail(message){throw new Error(message)}
+
+// The prose authority rail is load-bearing too: reject a graph whose design still
+// directs operators through an abandoned predecessor chain.
+const design=fs.readFileSync(path.join(root,'docs/design/claude-posture-clean-audit0-followon-uplift-design-rev5.md'),'utf8');
+if(!design.includes('**WorkItem:** `work-412`')) fail('design: work-412 source binding required');
+const sequence=design.match(/### 5\.2 Current operational sequence\n([\s\S]*?)\n## 6\./)?.[1];
+if(!sequence) fail('design: current operational sequence required');
+for(const id of ['work-412','work-413','work-414','work-415','work-416']) if(!sequence.includes(id)) fail(`design: current sequence missing ${id}`);
+if(/work-(398|399|400|401|402|405|406|407|408|409|410|411)\b/.test(sequence)) fail('design: rejected/retired work id in current operational sequence');
+if(!design.includes('`work-398 → work-399 → work-400 → work-401 → work-402`')||!design.includes('`work-405 → work-406 → work-407 → work-408 → work-409`')) fail('design: immutable rejected lineage must remain explicit');
+
 for(const [variant,contract] of Object.entries(variants)){
  const {optional,closeout}=contract;
  const file=path.join(root,'docs/blueprints',`claudeuplift0-rev5-${variant}.json`);
@@ -61,14 +72,14 @@ for(const [variant,contract] of Object.entries(variants)){
    if(!ancestors.has('artifact_gate')||!ancestors.has('rail_gate')) fail(`${variant}/${id}: both admission gates required in transitive dependsOn ancestry`);
  }
  // Authority is location-bound, never satisfied by a compensating duplicate elsewhere.
- const hasAuthorityRef=node=>(node.references??[]).some(r=>typeof r.ref==='string'&&r.ref.includes('work-409'));
- if(!driver.runbook.includes('work-409')) fail(`${variant}/driver: work-409 pre-seed runbook authority required`);
- if(!hasAuthorityRef(driver)) fail(`${variant}/driver: work-409 authority reference required`);
- if(!hasAuthorityRef(byId.rail_gate)) fail(`${variant}/rail_gate: work-409 authority reference required`);
- if(!hasAuthorityRef(vg)) fail(`${variant}/verifier_gate: work-409 authority reference required`);
- if(!hasAuthorityRef(byId.closeout)) fail(`${variant}/closeout: work-409 authority reference required`);
+ const hasAuthorityRef=node=>(node.references??[]).some(r=>typeof r.ref==='string'&&r.ref.includes('work-416'));
+ if(!driver.runbook.includes('work-416')) fail(`${variant}/driver: work-416 pre-seed runbook authority required`);
+ if(!hasAuthorityRef(driver)) fail(`${variant}/driver: work-416 authority reference required`);
+ if(!hasAuthorityRef(byId.rail_gate)) fail(`${variant}/rail_gate: work-416 authority reference required`);
+ if(!hasAuthorityRef(vg)) fail(`${variant}/verifier_gate: work-416 authority reference required`);
+ if(!hasAuthorityRef(byId.closeout)) fail(`${variant}/closeout: work-416 authority reference required`);
  const serialized=JSON.stringify(doc);
- if(serialized.includes('work-363')||serialized.includes('work-381')||serialized.includes('work-402')||serialized.match(/work-(315|316|317|335|336|337|355|356|357)/)) fail(`${variant}: stale authority reference`);
+ if(serialized.includes('work-363')||serialized.includes('work-381')||serialized.includes('work-402')||serialized.includes('work-409')||serialized.match(/work-(315|316|317|335|336|337|355|356|357)/)) fail(`${variant}: stale authority reference`);
  if(optional.includes('pA_tool_actuator')&&!byId['pA_tool_actuator'].dependsOn.includes('pA_traction'))fail(`${variant}: actuator traction edge`);
  for(const o of optional) if(!vg.dependsOn.includes(o)||!driver.completionDependsOn.includes(o))fail(`${variant}: optional edge ${o}`);
  if(!optional.includes('pA_traction') && ids.some(x=>x.startsWith('pA-')))fail(`${variant}: pA omission`);
