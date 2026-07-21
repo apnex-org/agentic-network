@@ -88,4 +88,13 @@ Before dependency-order builds, verify the detached canonical source is clean an
 9. Stop on first failure and preserve the state JSON. Do not unpublish, deprecate, or move a dist-tag as rollback.
 10. Recovery requires fresh authority. `--recover` accepts only an already-published **prefix** whose registry integrity and full `gitHead` exactly match the manifest, then continues at the first vacant step. Any mismatch or hole stops.
 
+## Required committed timing regressions
+
+The canonical suite must execute two distinct successful disposable-loopback publication cases, not infer one from the other:
+
+1. **Post-vacancy config replacement:** load R1 once, complete R1 whoami and all three E404 vacancy reads, then atomically replace the active npmrc with R2 endpoint/credentials during R1's first PUT. Assert the ambient file now names R2 while all three exact Buffer PUTs, bearer auth, top-level state registry, and `npmConsumer.registry` remain R1; R2 must receive zero PUTs. Any post-vacancy ambient reload/retarget must fail this case.
+2. **Artifact-path replacement:** independently replace the next artifact source pathname during a first PUT and prove the already-held Buffer remains the original verified bytes.
+
+The test output and frozen log must contain two successful `published-complete` executions, and reports must name each case separately.
+
 Read-only files and least-permissive parent directories remain defense in depth. Byte identity comes from final descriptor-derived Buffer verification and direct programmatic consumption. Corrective2's private suffix-bearing alias, bare descriptor paths, the legacy `scripts/publish-packages.sh`, `npm publish --workspace`, directory publication, pathname publication, and repacking are forbidden because they leave a mutable path boundary or do not preserve verifier-bound bytes.

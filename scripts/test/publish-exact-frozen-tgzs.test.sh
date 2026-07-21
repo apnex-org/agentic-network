@@ -236,13 +236,35 @@ if SWAP_ON_ROOT_TARGET="$TDIR/active.npmrc" SWAP_REPLACEMENT="$TDIR/r2.npmrc" SW
 grep -q 'loaded npm config target registry' "$TDIR/config-swap.out"
 [[ "$(jq length "$TDIR/r2-captures.json")" == 0 ]]
 
-# Real npm/libnpmpublish receives exact held Buffers. R2 swaps the network source
-# pathname during the first PUT; captured network bytes remain the original.
+# Committed bug-313 timing: one snapshot completes R1 whoami plus all three
+# E404 vacancy reads. During R1's first PUT, the registry atomically replaces
+# the ambient npmrc with R2 endpoint/credentials. All exact Buffer mutations
+# must remain on the held R1 snapshot, with R1 state/auth and R2 receiving zero.
+cp "$TDIR/r1.npmrc" "$TDIR/active.npmrc"
+cp "$NETWORK_ORIGINAL" "$NETWORK"
+jq --arg target "$TDIR/active.npmrc" --arg replacement "$TDIR/r2.npmrc" \
+  '.prefix=0|.swapOnFirstPut=true|.swapTarget=$target|.swapReplacement=$replacement' \
+  <<<"$BASE_CONTROL" > "$TDIR/r1-control.json"
+jq --arg statePath "$TDIR/post-vacancy-state.json" '.statePath=$statePath' \
+  "$TDIR/manifest.json" > "$TDIR/post-vacancy-manifest.json"
+node "$PROTOCOL" "$TDIR/post-vacancy-manifest.json" | tee "$TDIR/post-vacancy-publication.log"
+[[ "$(jq -r .status "$TDIR/post-vacancy-state.json")" == published-complete ]]
+[[ "$(jq -r .registry "$TDIR/post-vacancy-state.json")" == "$R1" ]]
+[[ "$(jq -r .npmConsumer.registry "$TDIR/post-vacancy-state.json")" == "$R1" ]]
+[[ "$(sed -n 's/^registry=//p' "$TDIR/active.npmrc")" == "$R2" ]]
+[[ "$(jq length "$TDIR/r1-captures.json")" == 3 ]]
+[[ "$(jq length "$TDIR/r2-captures.json")" == 0 ]]
+[[ "$(jq -r 'all(.authorization == "Bearer r1-token")' "$TDIR/r1-captures.json")" == true ]]
+grep -q '\[publish-exact\] published-complete:' "$TDIR/post-vacancy-publication.log"
+CONFIG_TIMING_PUBLICATION_EXECUTED=1
+
+# Distinct artifact-path case: real npm/libnpmpublish receives exact held
+# Buffers while R2 replaces NETWORK's source pathname during the first PUT.
 cp "$TDIR/r2.npmrc" "$TDIR/active.npmrc"
 cp "$NETWORK_ORIGINAL" "$NETWORK"
 jq --arg target "$NETWORK" --arg replacement "$NETWORK_ALT" '.prefix=0|.swapOnFirstPut=true|.swapTarget=$target|.swapReplacement=$replacement' <<<"$BASE_CONTROL" > "$TDIR/r2-control.json"
 jq --arg statePath "$TDIR/live-state.json" '.statePath=$statePath' "$TDIR/r2-manifest.json" > "$TDIR/live-manifest.json"
-node "$PROTOCOL" "$TDIR/live-manifest.json"
+node "$PROTOCOL" "$TDIR/live-manifest.json" | tee "$TDIR/artifact-path-publication.log"
 [[ "$(jq -r .status "$TDIR/live-state.json")" == published-complete ]]
 [[ "$(sha256sum "$NETWORK" | awk '{print $1}')" == "$ALTERNATE_NETWORK_SHA" ]]
 [[ "$(jq length "$TDIR/r2-captures.json")" == 3 ]]
@@ -250,5 +272,8 @@ node "$PROTOCOL" "$TDIR/live-manifest.json"
 [[ "$(jq -r '.[1].sha256' "$TDIR/r2-captures.json")" == "$ORIGINAL_NETWORK_SHA" ]]
 [[ "$(jq -r '.[1].sha256' "$TDIR/r2-captures.json")" != "$ALTERNATE_NETWORK_SHA" ]]
 [[ "$(jq -r 'all(.authorization == "Bearer r2-token")' "$TDIR/r2-captures.json")" == true ]]
+grep -q '\[publish-exact\] published-complete:' "$TDIR/artifact-path-publication.log"
+ARTIFACT_PATH_PUBLICATION_EXECUTED=1
+[[ "$CONFIG_TIMING_PUBLICATION_EXECUTED" == 1 && "$ARTIFACT_PATH_PUBLICATION_EXECUTED" == 1 ]]
 
-echo 'PASS: exact frozen-tgz protocol binds one registry/config snapshot, clean full-SHA provenance, and alias-free Buffers'
+echo 'PASS: committed post-vacancy config swap and distinct artifact-path publication both preserve exact bound Buffers'
