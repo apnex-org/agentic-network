@@ -1,0 +1,573 @@
+{
+  "runId": "claudeuplift0_rev4_v0",
+  "nodes": [
+    {
+      "localId": "driver",
+      "label": "claudeuplift0 Rev 4 V0 arc driver",
+      "type": "task",
+      "priority": "critical",
+      "roleEligibility": [
+        "architect"
+      ],
+      "completionDependsOn": [
+        "artifact_gate",
+        "rail_gate",
+        "drift_fixture",
+        "schema_policy",
+        "dispatch_tolerance",
+        "drift_alert",
+        "bug203_track",
+        "footer",
+        "frequency_calibration",
+        "estate_provenance",
+        "na_pin",
+        "specstore",
+        "skill_hotreload_probe",
+        "opencode_cleanup",
+        "citation_resolver",
+        "verifier_gate",
+        "closeout"
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "closeout_doc",
+          "kind": "doc",
+          "description": "Final closeout document; driver completes last.",
+          "refResolvable": true
+        }
+      ],
+      "runbook": "Use workgraph-arc-operator. Drive only this statically seeded Rev4 V0 graph. The exact committed bytes, expectedContentSha256, selected variant, and fresh Director proof must already have passed work-363 before seed. V0 includes no optional nodes; it omits pB2_selfheal, pA_traction, and pA_tool_actuator; never add nodes ad hoc. Complete last after closeout.",
+      "references": [
+        {
+          "kind": "authority-contract",
+          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-363 verifies the resolved proof before any live seed.",
+          "storage": "inline",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "prior-fail",
+          "ref": "docs/reviews/claude-clean-artifact-corrective0-rev3-design-gate-fail.md",
+          "storage": "hub-doc",
+          "mode": "triangulate-against",
+          "required": true
+        }
+      ],
+      "targetRef": {
+        "kind": "idea",
+        "id": "idea-584"
+      }
+    },
+    {
+      "localId": "artifact_gate",
+      "label": "canonical published artifact prerequisite",
+      "type": "task",
+      "priority": "critical",
+      "roleEligibility": [
+        "architect"
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "artifact_admission",
+          "kind": "doc",
+          "description": "Exact corrective closeout/admission report proving canonical published bytes, registry-seeded uniform fleet, bug-297 resolution, and independent successor verifier PASS.",
+          "evidenceAuthority": "verifier-attestation"
+        }
+      ],
+      "runbook": "Use workgraph-arc-participant. Fail closed until mission-123 is complete, bug-297 is resolved from registry-only reproduction, published artifacts bind canonical gitHead/integrity, OIS and all target caches are registry-seeded, the fleet is uniform, and the independent successor gates PASS. Author the exact admission report separately. Claim/start this gate and call complete_work with no executor evidence bound to artifact_admission; the verifier-attestation hard fence must park the leaf in review. An independent verifier reads the report and calls attest_evidence on artifact_admission using a load-bearing related entity ref (the target Mission/mission-123) plus the report in the note. Only verifier PASS advances done. Do not implement uplift features here.",
+      "references": [
+        {
+          "kind": "mission",
+          "ref": "mission-123",
+          "storage": "entity",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "bug",
+          "ref": "bug-297",
+          "storage": "entity",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "prior-fail",
+          "ref": "docs/reviews/claude-posture-clean-audit0-verifier-gate.md",
+          "storage": "hub-doc",
+          "mode": "triangulate-against",
+          "required": true
+        }
+      ],
+      "targetRef": {
+        "kind": "mission",
+        "id": "mission-123"
+      }
+    },
+    {
+      "localId": "rail_gate",
+      "label": "Director variant resolution admission",
+      "type": "task",
+      "priority": "critical",
+      "roleEligibility": [
+        "architect"
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "rail_admission",
+          "kind": "doc",
+          "description": "Fresh post-Rev4 Director Decision proof binding this exact committed variant path/blob/SHA-256, complete node set, and expectedContentSha256 seed identity.",
+          "evidenceAuthority": "verifier-attestation"
+        }
+      ],
+      "runbook": "Fresh-read the post-Rev4 Decision and its Director-grade proof. It must bind this exact variant path, git commit, git blob, file SHA-256, complete node-set preview, and the expectedContentSha256 used at seed. Author a separate rail-admission report. Claim/start this gate and call complete_work with no executor evidence bound to rail_admission; the verifier-attestation hard fence must park the leaf in review. An independent verifier reads the report and calls attest_evidence using a load-bearing related entity ref (the target Idea/idea-584) plus the report/Decision proof in the note. Any unresolved, pre-byte, mismatched, ambiguous, or non-Director-grade state blocks. Decision-26 is disposed and forbidden.",
+      "references": [
+        {
+          "kind": "authority-contract",
+          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-363 verifies the resolved proof before any live seed.",
+          "storage": "inline",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "prior-fail",
+          "ref": "docs/reviews/claude-clean-artifact-corrective0-rev3-design-gate-fail.md",
+          "storage": "hub-doc",
+          "mode": "triangulate-against",
+          "required": true
+        }
+      ],
+      "targetRef": {
+        "kind": "idea",
+        "id": "idea-584"
+      }
+    },
+    {
+      "localId": "drift_fixture",
+      "label": "synthetic schema-drift fixture",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": [
+        "engineer"
+      ],
+      "dependsOn": [
+        "artifact_gate",
+        "rail_gate"
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "fixture_tests",
+          "kind": "test-run",
+          "description": "Fresh test run proving param-level mid-session schema drift and omitted-required-argument cases are deterministic."
+        }
+      ],
+      "runbook": "Build only the reusable deterministic test fixture derived from bug-298/Greg-Ruby reproduction. It must distinguish session-init snapshot from fresh disk schema and cover param-level changes. No production behavior change.",
+      "references": [
+        {
+          "kind": "bug",
+          "ref": "bug-298",
+          "storage": "entity",
+          "mode": "read",
+          "required": true
+        }
+      ],
+      "targetRef": {
+        "kind": "bug",
+        "id": "bug-298"
+      }
+    },
+    {
+      "localId": "schema_policy",
+      "label": "E additive/lazy schema evolution",
+      "type": "task",
+      "priority": "critical",
+      "roleEligibility": [
+        "engineer"
+      ],
+      "dependsOn": [
+        "drift_fixture"
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "schema_policy_tests",
+          "kind": "test-run",
+          "description": "Fresh tests prove a pre-change session does not hard-stall during the grace window after a synthetic required-param evolution."
+        }
+      ],
+      "runbook": "Implement the Hub additive-only/lazily-enforced work-verb schema evolution contract with a bounded grace window and explicit rollback. Never weaken authority or fabricate semantic values.",
+      "targetRef": {
+        "kind": "bug",
+        "id": "bug-298"
+      }
+    },
+    {
+      "localId": "dispatch_tolerance",
+      "label": "D dispatch drift tolerance",
+      "type": "task",
+      "priority": "critical",
+      "roleEligibility": [
+        "engineer"
+      ],
+      "dependsOn": [
+        "drift_fixture"
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "dispatch_tests",
+          "kind": "test-run",
+          "description": "Fresh tests prove safe-default backfill only where declared and precise actionable failure otherwise; no hard stall."
+        }
+      ],
+      "runbook": "Implement dispatch-time argument-vs-fresh-schema comparison in shared core. Backfill only explicitly declared safe defaults; otherwise return a precise actionable error. Feature-flag rollback.",
+      "targetRef": {
+        "kind": "bug",
+        "id": "bug-298"
+      }
+    },
+    {
+      "localId": "drift_alert",
+      "label": "C-minimal session-init drift alert",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": [
+        "engineer"
+      ],
+      "dependsOn": [
+        "drift_fixture"
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "alert_tests",
+          "kind": "test-run",
+          "description": "Fresh tests prove param-level mid-session harmful drift produces an actionable notification and stable schema produces no alert."
+        }
+      ],
+      "runbook": "Implement alert-grade detection anchored to the session-init tool snapshot, never readServedRevision. Emit through notification-surface with no automatic restart in V0.",
+      "targetRef": {
+        "kind": "bug",
+        "id": "bug-298"
+      }
+    },
+    {
+      "localId": "bug203_track",
+      "label": "upstream tools/list_changed track",
+      "type": "task",
+      "priority": "normal",
+      "roleEligibility": [
+        "architect",
+        "engineer"
+      ],
+      "dependsOn": [
+        "artifact_gate",
+        "rail_gate"
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "upstream_record",
+          "kind": "doc",
+          "description": "Document binding upstream issue/status and confirming the adapter still emits tools/list_changed correctly.",
+          "refResolvable": true
+        }
+      ],
+      "runbook": "Pursue or refresh the upstream host issue for tools/list_changed. This is tracking, not a claim that the host fix landed. Preserve adapter behavior.",
+      "targetRef": {
+        "kind": "bug",
+        "id": "bug-203"
+      }
+    },
+    {
+      "localId": "footer",
+      "label": "Claude swarm footer census",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": [
+        "engineer"
+      ],
+      "dependsOn": [
+        "artifact_gate",
+        "rail_gate"
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "footer_tests",
+          "kind": "test-run",
+          "description": "Fresh tests/live harness run prove honest read-only peer, Hub FSM, and needs-you rendering with failure-state honesty."
+        }
+      ],
+      "runbook": "Implement the additive Claude statusLine census using read-only Hub state and the PI footer honesty cascade. Never fabricate health and never mutate Hub state.",
+      "targetRef": {
+        "kind": "idea",
+        "id": "idea-584"
+      }
+    },
+    {
+      "localId": "frequency_calibration",
+      "label": "schema-change frequency calibration",
+      "type": "task",
+      "priority": "normal",
+      "roleEligibility": [
+        "architect",
+        "engineer"
+      ],
+      "dependsOn": [
+        "artifact_gate",
+        "rail_gate"
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "frequency_doc",
+          "kind": "doc",
+          "description": "Reproducible bounded measurement of harmful schema-change frequency and C-full break-even assumptions.",
+          "refResolvable": true
+        }
+      ],
+      "runbook": "Measure param-level/harmful tool-schema change frequency from bounded repository/Hub history without transcript surveillance. This banks evidence for a future C-full decision; V0 still omits self-heal.",
+      "targetRef": {
+        "kind": "idea",
+        "id": "idea-584"
+      }
+    },
+    {
+      "localId": "estate_provenance",
+      "label": "estate config provenance",
+      "type": "task",
+      "priority": "normal",
+      "roleEligibility": [
+        "engineer"
+      ],
+      "dependsOn": [
+        "artifact_gate",
+        "rail_gate"
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "estate_commit",
+          "kind": "commit",
+          "description": "Canonical commit making estate configuration repo-auditable."
+        }
+      ],
+      "runbook": "Move the bounded estate configuration source of truth into reviewable repository provenance with rollback documentation.",
+      "targetRef": {
+        "kind": "idea",
+        "id": "idea-584"
+      }
+    },
+    {
+      "localId": "na_pin",
+      "label": "network-adapter pin unification",
+      "type": "task",
+      "priority": "normal",
+      "roleEligibility": [
+        "engineer"
+      ],
+      "dependsOn": [
+        "artifact_gate",
+        "rail_gate"
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "pin_commit",
+          "kind": "commit",
+          "description": "Canonical commit replacing floating/latest network-adapter bootstrap with one explicit pin across harnesses."
+        }
+      ],
+      "runbook": "Unify network-adapter bootstrap pins across Claude and PI; remove @latest drift while preserving explicit rollback.",
+      "targetRef": {
+        "kind": "idea",
+        "id": "idea-584"
+      }
+    },
+    {
+      "localId": "specstore",
+      "label": "disk-backed SpecStore",
+      "type": "task",
+      "priority": "normal",
+      "roleEligibility": [
+        "engineer"
+      ],
+      "dependsOn": [
+        "artifact_gate",
+        "rail_gate"
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "specstore_tests",
+          "kind": "test-run",
+          "description": "Fresh cold-restart test proves specs persist and restore without stale or corrupt state."
+        }
+      ],
+      "runbook": "Implement the declared SpecPersistencePort with bounded disk persistence, migration/rollback behavior, and cold-start durability tests.",
+      "targetRef": {
+        "kind": "idea",
+        "id": "idea-584"
+      }
+    },
+    {
+      "localId": "skill_hotreload_probe",
+      "label": "Claude skill hot-reload precondition probe",
+      "type": "task",
+      "priority": "normal",
+      "roleEligibility": [
+        "engineer"
+      ],
+      "dependsOn": [
+        "artifact_gate",
+        "rail_gate"
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "skill_probe_tests",
+          "kind": "test-run",
+          "description": "Fresh controlled harness run records whether Claude re-reads skills mid-session."
+        }
+      ],
+      "runbook": "Probe only the host skill hot-reload precondition. Record PASS or FAIL as test evidence. Do not conditionally implement a watcher inside this node; a PASS may justify a separately designed successor arc, while FAIL records pre-stage-only behavior.",
+      "targetRef": {
+        "kind": "idea",
+        "id": "idea-584"
+      }
+    },
+    {
+      "localId": "opencode_cleanup",
+      "label": "OpenCode declarative manifest cleanup",
+      "type": "task",
+      "priority": "low",
+      "roleEligibility": [
+        "engineer"
+      ],
+      "dependsOn": [
+        "artifact_gate",
+        "rail_gate"
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "opencode_commit",
+          "kind": "commit",
+          "description": "Canonical commit adding declarative OpenCode manifest and removing architect-hub prompt fossil."
+        }
+      ],
+      "runbook": "Co-deliver the bounded OpenCode manifest and prompt fossil removal; no unrelated overhaul.",
+      "targetRef": {
+        "kind": "idea",
+        "id": "idea-584"
+      }
+    },
+    {
+      "localId": "citation_resolver",
+      "label": "escalation citation resolver",
+      "type": "task",
+      "priority": "low",
+      "roleEligibility": [
+        "engineer"
+      ],
+      "dependsOn": [
+        "artifact_gate",
+        "rail_gate"
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "citation_commit",
+          "kind": "commit",
+          "description": "Canonical commit adding path:line provenance to escalation logs."
+        }
+      ],
+      "runbook": "Implement idea-582's bounded path:line citation resolver with redaction and failure honesty.",
+      "targetRef": {
+        "kind": "idea",
+        "id": "idea-582"
+      }
+    },
+    {
+      "localId": "verifier_gate",
+      "label": "stable independent PI verifier gate",
+      "type": "verifier-gate",
+      "priority": "critical",
+      "roleEligibility": [
+        "verifier"
+      ],
+      "dependsOn": [
+        "schema_policy",
+        "dispatch_tolerance",
+        "drift_alert",
+        "bug203_track",
+        "footer",
+        "frequency_calibration",
+        "estate_provenance",
+        "na_pin",
+        "specstore",
+        "skill_hotreload_probe",
+        "opencode_cleanup",
+        "citation_resolver"
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "verifier_report",
+          "kind": "doc",
+          "description": "Independent binary PASS/FAIL report reproducing every node's evidence and checking V0 omissions and anti-scope.",
+          "refResolvable": true
+        }
+      ],
+      "runbook": "Use independent PI verifier posture. Reproduce load-bearing tests and inspect canonical commits. Confirm artifact_gate and rail_gate were each advanced only by valid verifier attestations; confirm the fresh Decision bound this exact variant path/blob/SHA-256 and complete node set; confirm expectedContentSha256 matched at seed; police omissions and anti-scope. Author no remediation.",
+      "references": [
+        {
+          "kind": "authority-contract",
+          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-363 verifies the resolved proof before any live seed.",
+          "storage": "inline",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "prior-fail",
+          "ref": "docs/reviews/claude-clean-artifact-corrective0-rev3-design-gate-fail.md",
+          "storage": "hub-doc",
+          "mode": "triangulate-against",
+          "required": true
+        }
+      ],
+      "targetRef": {
+        "kind": "idea",
+        "id": "idea-584"
+      }
+    },
+    {
+      "localId": "closeout",
+      "label": "claudeuplift0 closeout",
+      "type": "task",
+      "priority": "high",
+      "roleEligibility": [
+        "architect"
+      ],
+      "dependsOn": [
+        "verifier_gate"
+      ],
+      "evidenceRequirements": [
+        {
+          "id": "closeout_doc",
+          "kind": "doc",
+          "description": "Closeout reconciling graph, PRs, evidence, verifier verdict, residuals, rollback, and Director variant.",
+          "refResolvable": true
+        }
+      ],
+      "runbook": "Use workgraph-arc-closeout. Close only the finite V0 graph. V0 includes no optional nodes; keep pB2_selfheal, pA_traction, and pA_tool_actuator explicitly out of scope. Preserve FAILs and reconcile bugs, ideas, and Decisions.",
+      "references": [
+        {
+          "kind": "authority-contract",
+          "ref": "Fresh post-Rev4 Director Decision must bind the selected committed blueprint path, blob id, SHA-256, complete node-set preview, and seed expectedContentSha256; verifier work-363 verifies the resolved proof before any live seed.",
+          "storage": "inline",
+          "mode": "read",
+          "required": true
+        },
+        {
+          "kind": "prior-fail",
+          "ref": "docs/reviews/claude-clean-artifact-corrective0-rev3-design-gate-fail.md",
+          "storage": "hub-doc",
+          "mode": "triangulate-against",
+          "required": true
+        }
+      ],
+      "targetRef": {
+        "kind": "idea",
+        "id": "idea-584"
+      }
+    }
+  ]
+}
