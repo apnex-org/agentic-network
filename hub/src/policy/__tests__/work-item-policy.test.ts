@@ -8,6 +8,7 @@
  * Uses a focused stub IWorkItemStore so each behavior (return / throw each error class)
  * is exercised deterministically through the real PolicyRouter dispatch path.
  */
+import { createHash } from "node:crypto";
 import { describe, it, expect, beforeEach } from "vitest";
 import { z } from "zod";
 import { PolicyRouter } from "../router.js";
@@ -1191,11 +1192,26 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     expect(bpCalls(stub.calls).length).toBe(0); // fail-closed: nothing materialized
   });
 
-  it("RBAC: an ENGINEER is denied at the [Architect] gate (no nodes created)", async () => {
+  it("RBAC: an ENGINEER is denied at the [Architect|Verifier] gate (no nodes created)", async () => {
     const stub = expandStub();
     const r = await router.handle("seed_blueprint", { runId: "r1", nodes: [node()] }, ctxFor(stub, "engineer"));
     expect(r.isError).toBe(true);
     expect(bpCalls(stub.calls).length).toBe(0);
+  });
+
+  it("RBAC: a VERIFIER may dry-run but a verifier LIVE seed is denied before create", async () => {
+    const dryStub = expandStub();
+    const dry = await router.handle("seed_blueprint", { runId: "verify1", nodes: [node()], dryRun: true }, ctxFor(dryStub, "verifier"));
+    expect(dry.isError).toBeFalsy();
+    expect(body(dry)).toMatchObject({ dryRun: true, valid: true, runId: "verify1" });
+    expect(bpCalls(dryStub.calls)).toHaveLength(0);
+
+    const liveStub = expandStub();
+    const live = await router.handle("seed_blueprint", { runId: "verify2", nodes: [node()] }, ctxFor(liveStub, "verifier"));
+    expect(live.isError).toBe(true);
+    expect(body(live).errorKind).toBe("authorization_denied");
+    expect(String(body(live).error)).toMatch(/dryRun=true.*architect-only/);
+    expect(bpCalls(liveStub.calls)).toHaveLength(0);
   });
 
   it("invalid runId (non-charset) → reject, zero created", async () => {
@@ -1403,14 +1419,24 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
 
   // ── C4 (idea-393): nodesRef server-side resolution ─────────────────────────────
   // A large/committed blueprint can be seeded by POINTER (a Hub Document id) instead
-  // of inlining ~39KB. The resolved nodes feed the SAME whole-graph validator — the
-  // ref is only a fetch+parse in front of the existing expander (zero new trust surface).
+  // of inlining ~39KB. Content + revision are read atomically, hash-bound, and the
+  // resolved nodes still feed the SAME whole-graph validator as inline input.
   describe("nodesRef server-side resolution (C4 / idea-393)", () => {
-    // Inject a Document store keyed by id → raw content string (what the Hub resolves).
+    const contentSha256 = (content: string) => createHash("sha256").update(content, "utf8").digest("hex");
+    const liveRefArgs = (nodesRef: string, content: string, extra: Record<string, unknown> = {}) => ({
+      ...extra,
+      nodesRef,
+      expectedContentSha256: contentSha256(content),
+    });
+
+    // Inject a Document store keyed by id → one-snapshot raw content + revision.
     const ctxWithDocs = (store: IWorkItemStore, docs: Record<string, string>, role = "architect") => {
       const ctx = ctxFor(store, role);
       (ctx.stores as unknown as { document: unknown }).document = {
         get: async (id: string) => (id in docs ? { id, content: docs[id] } : null),
+        getWithRevision: async (id: string) => (id in docs
+          ? { document: { id, content: docs[id] }, resourceVersion: `rv-${contentSha256(docs[id]).slice(0, 8)}` }
+          : null),
       };
       return ctx;
     };
@@ -1422,7 +1448,7 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
       });
       const r = await router.handle(
         "seed_blueprint",
-        { runId: "rref", nodesRef: "doc-bp" },
+        liveRefArgs("doc-bp", content, { runId: "rref" }),
         ctxWithDocs(stub, { "doc-bp": content }),
       );
       expect(r.isError).toBeFalsy();
@@ -1431,12 +1457,107 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
       expect(arcCall.completionDependsOn).toEqual(["work-bp-rref-leaf"]); // same edge-translation path
     });
 
-    it("accepts a BARE node array as the doc content", async () => {
+    it("verifier dry-run and architect exact live seed return the SAME one-snapshot content/revision binding", async () => {
       const stub = expandStub();
+      const content = JSON.stringify({ nodes: [archNode({ localId: "bound" })] });
+      const docs = { "doc-bound": content };
+
+      const dry = await router.handle(
+        "seed_blueprint",
+        { runId: "bound1", nodesRef: "doc-bound", dryRun: true },
+        ctxWithDocs(stub, docs, "verifier"),
+      );
+      expect(dry.isError).toBeFalsy();
+      const dryBody = body(dry);
+      expect(dryBody).toMatchObject({
+        dryRun: true,
+        nodesRef: "doc-bound",
+        contentSha256: contentSha256(content),
+        resourceVersion: `rv-${contentSha256(content).slice(0, 8)}`,
+      });
+      expect(bpCalls(stub.calls)).toHaveLength(0);
+
+      const live = await router.handle(
+        "seed_blueprint",
+        { runId: "bound1", nodesRef: "doc-bound", expectedContentSha256: dryBody.contentSha256 },
+        ctxWithDocs(stub, docs, "architect"),
+      );
+      expect(live.isError).toBeFalsy();
+      expect(body(live)).toMatchObject({
+        nodesRef: dryBody.nodesRef,
+        contentSha256: dryBody.contentSha256,
+        resourceVersion: dryBody.resourceVersion,
+      });
+      expect(bpCalls(stub.calls)).toHaveLength(1);
+    });
+
+    it("live nodesRef seed requires expectedContentSha256 and creates zero when omitted", async () => {
+      const stub = expandStub();
+      const content = JSON.stringify({ nodes: [archNode({ localId: "missinghash" })] });
       const r = await router.handle(
         "seed_blueprint",
-        { runId: "rbare", nodesRef: "doc-arr" },
-        ctxWithDocs(stub, { "doc-arr": JSON.stringify([node({ localId: "solo" })]) }),
+        { runId: "missinghash", nodesRef: "doc-missinghash" },
+        ctxWithDocs(stub, { "doc-missinghash": content }),
+      );
+      expect(body(r).errorKind).toBe("expected_content_hash_required");
+      expect(bpCalls(stub.calls)).toHaveLength(0);
+    });
+
+    it("content-hash mismatch fails before validation/create with zero nodes", async () => {
+      const stub = expandStub();
+      const content = JSON.stringify({ nodes: [archNode({ localId: "mismatch" })] });
+      const r = await router.handle(
+        "seed_blueprint",
+        { runId: "mismatch", nodesRef: "doc-mismatch", expectedContentSha256: "0".repeat(64) },
+        ctxWithDocs(stub, { "doc-mismatch": content }),
+      );
+      expect(body(r).errorKind).toBe("blueprint_content_mismatch");
+      expect(String(body(r).error)).toMatch(new RegExp(contentSha256(content)));
+      expect(bpCalls(stub.calls)).toHaveLength(0);
+    });
+
+    it("mutable-doc TOCTOU: bytes changed after verifier dry-run make architect live seed fail closed", async () => {
+      const stub = expandStub();
+      const reviewed = JSON.stringify({ nodes: [archNode({ localId: "reviewed" })] });
+      const changed = JSON.stringify({ nodes: [archNode({ localId: "changed" })] });
+      let read = 0;
+      const ctxWithMutableDoc = (role: string) => {
+        const ctx = ctxFor(stub, role);
+        (ctx.stores as unknown as { document: unknown }).document = {
+          get: async () => null,
+          getWithRevision: async (id: string) => {
+            const content = read++ === 0 ? reviewed : changed;
+            return { document: { id, content }, resourceVersion: read === 1 ? "rv-reviewed" : "rv-changed" };
+          },
+        };
+        return ctx;
+      };
+
+      const dry = await router.handle(
+        "seed_blueprint",
+        { runId: "toctou", nodesRef: "doc-mutable", dryRun: true },
+        ctxWithMutableDoc("verifier"),
+      );
+      expect(dry.isError).toBeFalsy();
+      expect(body(dry)).toMatchObject({ contentSha256: contentSha256(reviewed), resourceVersion: "rv-reviewed" });
+
+      const live = await router.handle(
+        "seed_blueprint",
+        { runId: "toctou", nodesRef: "doc-mutable", expectedContentSha256: body(dry).contentSha256 },
+        ctxWithMutableDoc("architect"),
+      );
+      expect(body(live).errorKind).toBe("blueprint_content_mismatch");
+      expect(String(body(live).error)).toMatch(/rv-changed/);
+      expect(bpCalls(stub.calls)).toHaveLength(0);
+    });
+
+    it("accepts a BARE node array as the doc content", async () => {
+      const stub = expandStub();
+      const content = JSON.stringify([node({ localId: "solo" })]);
+      const r = await router.handle(
+        "seed_blueprint",
+        liveRefArgs("doc-arr", content, { runId: "rbare" }),
+        ctxWithDocs(stub, { "doc-arr": content }),
       );
       expect(r.isError).toBeFalsy();
       expect(body(r).localIdToWorkId).toEqual({ solo: "work-bp-rbare-solo" });
@@ -1445,7 +1566,7 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     it("uses the doc's top-level runId when the arg omits it", async () => {
       const stub = expandStub();
       const content = JSON.stringify({ runId: "docrun", nodes: [node({ localId: "a" })] });
-      const r = await router.handle("seed_blueprint", { nodesRef: "doc-rr" }, ctxWithDocs(stub, { "doc-rr": content }));
+      const r = await router.handle("seed_blueprint", liveRefArgs("doc-rr", content), ctxWithDocs(stub, { "doc-rr": content }));
       expect(r.isError).toBeFalsy();
       expect(body(r).localIdToWorkId).toEqual({ a: "work-bp-docrun-a" });
     });
@@ -1453,7 +1574,7 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     it("the explicit runId arg WINS over the doc's runId (caller controls the idempotency key)", async () => {
       const stub = expandStub();
       const content = JSON.stringify({ runId: "docrun", nodes: [node({ localId: "a" })] });
-      const r = await router.handle("seed_blueprint", { runId: "argrun", nodesRef: "doc-rr" }, ctxWithDocs(stub, { "doc-rr": content }));
+      const r = await router.handle("seed_blueprint", liveRefArgs("doc-rr", content, { runId: "argrun" }), ctxWithDocs(stub, { "doc-rr": content }));
       expect(r.isError).toBeFalsy();
       expect(body(r).localIdToWorkId).toEqual({ a: "work-bp-argrun-a" }); // argrun, not docrun
     });
@@ -1479,14 +1600,16 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
 
     it("nodesRef content not valid JSON → invalid_blueprint", async () => {
       const stub = expandStub();
-      const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-bad" }, ctxWithDocs(stub, { "doc-bad": "{not json" }));
+      const content = "{not json";
+      const r = await router.handle("seed_blueprint", liveRefArgs("doc-bad", content, { runId: "r1" }), ctxWithDocs(stub, { "doc-bad": content }));
       expect(body(r).errorKind).toBe("invalid_blueprint");
       expect(bpCalls(stub.calls).length).toBe(0);
     });
 
     it("nodesRef content neither array nor { nodes } → invalid_blueprint", async () => {
       const stub = expandStub();
-      const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-shape" }, ctxWithDocs(stub, { "doc-shape": JSON.stringify({ foo: 1 }) }));
+      const content = JSON.stringify({ foo: 1 });
+      const r = await router.handle("seed_blueprint", liveRefArgs("doc-shape", content, { runId: "r1" }), ctxWithDocs(stub, { "doc-shape": content }));
       expect(body(r).errorKind).toBe("invalid_blueprint");
     });
 
@@ -1499,7 +1622,7 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     it("resolved nodes get the FULL whole-graph validation (a cycle in the doc → cycle_detected, zero created)", async () => {
       const stub = expandStub();
       const content = JSON.stringify({ nodes: [node({ localId: "a", dependsOn: ["b"] }), node({ localId: "b", dependsOn: ["a"] })] });
-      const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-cyc" }, ctxWithDocs(stub, { "doc-cyc": content }));
+      const r = await router.handle("seed_blueprint", liveRefArgs("doc-cyc", content, { runId: "r1" }), ctxWithDocs(stub, { "doc-cyc": content }));
       expect(body(r).errorKind).toBe("cycle_detected");
       expect(bpCalls(stub.calls).length).toBe(0);
     });
@@ -1511,7 +1634,7 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     it("ref-path schema parity: a node MISSING required `type` → invalid_blueprint, zero created", async () => {
       const stub = expandStub();
       const content = JSON.stringify({ runId: "bad", nodes: [{ localId: "n1" }] }); // no `type`
-      const r = await router.handle("seed_blueprint", { nodesRef: "doc-notype" }, ctxWithDocs(stub, { "doc-notype": content }));
+      const r = await router.handle("seed_blueprint", liveRefArgs("doc-notype", content), ctxWithDocs(stub, { "doc-notype": content }));
       expect(body(r).errorKind).toBe("invalid_blueprint");
       expect(String(body(r).error)).toMatch(/schema validation/);
       expect(bpCalls(stub.calls).length).toBe(0); // never reaches createBlueprintNode with type=undefined
@@ -1520,7 +1643,7 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     it("ref-path schema parity: an INVALID enum `type` → invalid_blueprint, zero created", async () => {
       const stub = expandStub();
       const content = JSON.stringify({ nodes: [{ localId: "n1", type: "not-a-real-type" }] });
-      const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-badenum" }, ctxWithDocs(stub, { "doc-badenum": content }));
+      const r = await router.handle("seed_blueprint", liveRefArgs("doc-badenum", content, { runId: "r1" }), ctxWithDocs(stub, { "doc-badenum": content }));
       expect(body(r).errorKind).toBe("invalid_blueprint");
       expect(bpCalls(stub.calls).length).toBe(0);
     });
@@ -1528,7 +1651,7 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     it("ref-path schema parity: a NON-ARRAY dependsOn (malformed field shape) → invalid_blueprint", async () => {
       const stub = expandStub();
       const content = JSON.stringify({ nodes: [{ localId: "n1", type: "task", dependsOn: "a" }] }); // string, not array
-      const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-baddep" }, ctxWithDocs(stub, { "doc-baddep": content }));
+      const r = await router.handle("seed_blueprint", liveRefArgs("doc-baddep", content, { runId: "r1" }), ctxWithDocs(stub, { "doc-baddep": content }));
       expect(body(r).errorKind).toBe("invalid_blueprint");
       expect(bpCalls(stub.calls).length).toBe(0);
     });
@@ -1536,7 +1659,7 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     it("ref-path schema parity: a NON-ARRAY references (malformed field shape) → invalid_blueprint", async () => {
       const stub = expandStub();
       const content = JSON.stringify({ nodes: [{ localId: "n1", type: "task", references: "nope" }] });
-      const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-badref" }, ctxWithDocs(stub, { "doc-badref": content }));
+      const r = await router.handle("seed_blueprint", liveRefArgs("doc-badref", content, { runId: "r1" }), ctxWithDocs(stub, { "doc-badref": content }));
       expect(body(r).errorKind).toBe("invalid_blueprint");
       expect(bpCalls(stub.calls).length).toBe(0);
     });
@@ -1544,7 +1667,7 @@ describe("work-item-policy seed_blueprint expander (work-87)", () => {
     it("ref-path schema parity: an UNKNOWN node field (strict) → invalid_blueprint", async () => {
       const stub = expandStub();
       const content = JSON.stringify({ nodes: [{ localId: "n1", type: "task", bogusField: 1 }] });
-      const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-strict" }, ctxWithDocs(stub, { "doc-strict": content }));
+      const r = await router.handle("seed_blueprint", liveRefArgs("doc-strict", content, { runId: "r1" }), ctxWithDocs(stub, { "doc-strict": content }));
       expect(body(r).errorKind).toBe("invalid_blueprint");
       expect(bpCalls(stub.calls).length).toBe(0);
     });
@@ -1810,10 +1933,13 @@ describe("bug-301 authoring validator (work-276) — policy seam", () => {
   it("seed_blueprint (via nodesRef) REJECTS the bad-shape node (invalid_evidence_requirements, zero created)", async () => {
     const stub = bpStub();
     const ctx = ctxFor(stub, "architect");
+    const content = JSON.stringify({ nodes: [badNode] });
     (ctx.stores as unknown as { document: unknown }).document = {
-      get: async (id: string) => (id === "doc-bad" ? { id, content: JSON.stringify({ nodes: [badNode] }) } : null),
+      get: async (id: string) => (id === "doc-bad" ? { id, content } : null),
+      getWithRevision: async (id: string) => (id === "doc-bad" ? { document: { id, content }, resourceVersion: "rv-bad" } : null),
     };
-    const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-bad" }, ctx);
+    const expectedContentSha256 = createHash("sha256").update(content, "utf8").digest("hex");
+    const r = await router.handle("seed_blueprint", { runId: "r1", nodesRef: "doc-bad", expectedContentSha256 }, ctx);
     expect(body(r).errorKind).toBe("invalid_evidence_requirements");
     expect(bpCreated(stub)).toBe(0);
   });

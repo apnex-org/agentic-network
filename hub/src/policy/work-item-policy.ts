@@ -12,6 +12,7 @@
  * eligibility fail-closed; a direct claim-by-ID can't bypass it). Exact tool STRINGS +
  * the precise RBAC tags DEFER to idea-121 (working names here).
  */
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import type { PolicyRouter } from "./router.js";
@@ -983,32 +984,66 @@ function validateArchitectDriverGuard(nodes: BlueprintNode[], callerRole: string
 }
 
 async function seedBlueprint(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const caller = await resolveCreatedBy(ctx);
+  const dryRun = args.dryRun === true;
+
+  // work-311: the verifier seat may execute the exact validator, but it may NEVER
+  // materialize nodes. Router membership admits Architect|Verifier; this semantic
+  // fence rejects verifier live calls before any document read or create attempt.
+  if (caller.role === "verifier" && !dryRun) {
+    return err("authorization_denied", "Authorization denied: verifier may call seed_blueprint only with dryRun=true; live seed remains architect-only");
+  }
+
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
-  const caller = await resolveCreatedBy(ctx);
 
   // C4 (idea-393): resolve the blueprint source — inline nodes[] XOR a server-side
   // nodesRef (a Hub Document whose content is the blueprint JSON). The ref path lets
   // the architect seed a large/committed blueprint by POINTER instead of inlining
-  // ~39KB into the MCP call; the resolved nodes feed the SAME whole-graph
-  // validate-before-create expander below — zero new trust surface, the ref is only
-  // a fetch-and-parse in front of the existing validator.
+  // ~39KB into the MCP call. The ref is resolved as one content+revision snapshot,
+  // hash-bound, then fed to the SAME whole-graph validate-before-create expander.
   const nodesRef = typeof args.nodesRef === "string" ? args.nodesRef : undefined;
   const inlineNodes = args.nodes as BlueprintNode[] | undefined;
   if (nodesRef && inlineNodes) {
     return err("invalid_blueprint", "provide EITHER nodes[] inline OR nodesRef (a Hub Document holding the blueprint JSON) — not both");
   }
 
+  const expectedContentSha256 = typeof args.expectedContentSha256 === "string" ? args.expectedContentSha256 : undefined;
+  if (!nodesRef && expectedContentSha256 !== undefined) {
+    return err("invalid_blueprint", "expectedContentSha256 is valid only with nodesRef");
+  }
+
   let nodes: BlueprintNode[] = inlineNodes ?? [];
   let refRunId: string | undefined;
+  let sourceBinding: { nodesRef: string; contentSha256: string; resourceVersion: string } | undefined;
   if (nodesRef) {
     const docStore = ctx.stores.document;
     if (!docStore) return err("not_wired", "Document store is not available for nodesRef resolution");
-    const doc = await docStore.get(nodesRef);
-    if (!doc) return err("unresolvable_ref", `nodesRef document "${nodesRef}" not found`);
+
+    // One substrate snapshot supplies BOTH the exact body and its revision. Hash the
+    // verbatim UTF-8 body: formatting changes are byte changes and must invalidate a
+    // reviewed seed. The in-memory body below is the ONLY body validated/materialized,
+    // so a concurrent document overwrite cannot swap bytes after this check.
+    const resolved = await docStore.getWithRevision(nodesRef);
+    if (!resolved) return err("unresolvable_ref", `nodesRef document "${nodesRef}" not found`);
+    const contentSha256 = createHash("sha256").update(resolved.document.content, "utf8").digest("hex");
+    sourceBinding = { nodesRef, contentSha256, resourceVersion: resolved.resourceVersion };
+
+    if (!dryRun && expectedContentSha256 === undefined) {
+      return err("expected_content_hash_required", `live nodesRef seed requires expectedContentSha256 for the exact resolved document (actual ${contentSha256}, resourceVersion ${resolved.resourceVersion})`);
+    }
+    if (expectedContentSha256 !== undefined) {
+      if (!/^[0-9a-f]{64}$/.test(expectedContentSha256)) {
+        return err("invalid_blueprint", "expectedContentSha256 must be exactly 64 lowercase hexadecimal characters");
+      }
+      if (expectedContentSha256 !== contentSha256) {
+        return err("blueprint_content_mismatch", `nodesRef document "${nodesRef}" content SHA-256 mismatch: expected ${expectedContentSha256}, actual ${contentSha256}, resourceVersion ${resolved.resourceVersion}; created zero nodes`);
+      }
+    }
+
     let parsed: unknown;
     try {
-      parsed = JSON.parse(doc.content);
+      parsed = JSON.parse(resolved.document.content);
     } catch (e) {
       return err("invalid_blueprint", `nodesRef document "${nodesRef}" content is not valid JSON: ${e instanceof Error ? e.message : String(e)}`);
     }
@@ -1051,7 +1086,6 @@ async function seedBlueprint(args: Record<string, unknown>, ctx: IPolicyContext)
   // runId: the explicit arg wins (caller-controlled idempotency key); else the
   // ref document's top-level runId. Emptiness is caught by the F0 check below.
   const runId = (args.runId as string | undefined) ?? refRunId ?? "";
-  const dryRun = args.dryRun === true;
 
   // ── Validate the WHOLE graph fail-closed BEFORE creating anything (all-or-nothing) ──
   // 0) run-key + non-empty + node-cap (F5; finite-DAG safety, design §0.5 T1)
@@ -1117,6 +1151,7 @@ async function seedBlueprint(args: Record<string, unknown>, ctx: IPolicyContext)
       nodeCount: nodes.length,
       creationOrder: order,
       localIdToWorkId: Object.fromEntries(localToWork),
+      ...(sourceBinding ?? {}),
     });
   }
 
@@ -1174,6 +1209,7 @@ async function seedBlueprint(args: Record<string, unknown>, ctx: IPolicyContext)
     reused: reusedCount,     // already present from a prior run (idempotent re-run)
     creationOrder: order,
     localIdToWorkId: Object.fromEntries(localToWork),
+    ...(sourceBinding ?? {}),
   });
 }
 
@@ -1458,12 +1494,13 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "seed_blueprint",
-    "[Architect] Expand a declarative blueprint (a WorkItem-graph template) onto the queue — the seed_blueprint primitive (idea-380 S2). A FINITE DAG expander (NOT a workflow platform): nodes[] keyed by localId, dependsOn + completionDependsOn referencing OTHER localIds. Supply the nodes INLINE (nodes[]) OR by POINTER (nodesRef — a Hub Document holding the blueprint JSON, resolved server-side; idea-393, lets a large/committed blueprint seed without inlining ~39KB into the call). VALIDATES THE WHOLE GRAPH fail-closed BEFORE creating anything (dup/dangling localId; cycle across BOTH edges; per-node #416 runbook+required-refs; missing_arc_driver for multi-agent/autonomous graphs; node-cap) → any validation failure creates ZERO. Deterministic + idempotent (kubectl-apply): each node id = work-bp-{runId}-{localId}, created via createOnly, so re-running the same runId+blueprint never double-creates AND completes a crash-partial. dryRun:true validates + returns the planned create-order + would-be work-ids, creating ZERO. A mid-create infra fault compensating-deletes THIS run's creates + returns a loud id-trail.",
+    "[Architect|Verifier] Expand or independently validate a declarative WorkItem-graph blueprint. Verifier is dryRun-ONLY; live seed remains architect-only. A FINITE DAG expander (NOT a workflow platform): nodes[] keyed by localId, dependsOn + completionDependsOn referencing OTHER localIds. Supply nodes INLINE or by nodesRef. nodesRef resolves content+resourceVersion in one snapshot and returns their binding; live nodesRef seed requires matching expectedContentSha256 before validation/create. VALIDATES THE WHOLE GRAPH fail-closed BEFORE creating anything (dup/dangling localId; cycle across BOTH edges; per-node #416 runbook+required-refs; missing_arc_driver for multi-agent/autonomous graphs; node-cap) → any validation failure creates ZERO. Deterministic + idempotent: each node id = work-bp-{runId}-{localId}. dryRun:true validates + returns the planned order/ids and creates ZERO. Mid-create infra failure compensating-deletes this run's creates.",
     {
       runId: z.string().min(1).optional().describe("Deterministic run-key (alphanumeric/underscore) — keys the per-node ids work-bp-{runId}-{localId}; re-running the same runId+blueprint is idempotent (no double-create). Required inline; with nodesRef it MAY instead come from the document's top-level runId (the explicit arg wins)."),
       nodes: z.array(blueprintNodeSchema).optional().describe("The blueprint nodes (≥1, ≤cap) INLINE. Each localId-keyed; dependsOn/completionDependsOn reference other localIds in the SAME blueprint. Provide EITHER nodes[] OR nodesRef — not both."),
-      nodesRef: z.string().min(1).optional().describe("idea-393: a Hub Document id whose content is the blueprint JSON — either a bare node array or a { runId?, nodes } object. Resolved SERVER-SIDE and fed to the SAME whole-graph validator as inline nodes[]. Provide EITHER nodes[] OR nodesRef — not both."),
-      dryRun: z.boolean().optional().describe("When true: validate the whole graph + return the planned create-order + would-be work-ids, creating ZERO WorkItems (a true preview)."),
+      nodesRef: z.string().min(1).optional().describe("A Hub Document id whose exact UTF-8 content is the blueprint JSON. Resolution returns contentSha256 + resourceVersion from one snapshot. Provide EITHER nodes[] OR nodesRef — not both."),
+      expectedContentSha256: z.string().regex(/^[0-9a-f]{64}$/).optional().describe("Required for a LIVE nodesRef seed: SHA-256 of the exact document content previously reviewed/dry-run. Mismatch fails before validation/create with ZERO nodes. Optional on dryRun; if supplied it is checked."),
+      dryRun: z.boolean().optional().describe("When true: validate the whole graph + return planned order/ids, creating ZERO. Required for verifier callers; dryRun and live nodesRef responses carry the same contentSha256/resourceVersion binding."),
     },
     seedBlueprint,
   );
