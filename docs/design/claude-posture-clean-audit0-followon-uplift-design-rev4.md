@@ -1,8 +1,8 @@
 # Claude follow-on uplift design — Revision 4
 
-**WorkItem:** `work-314`  
-**Status:** design and finite blueprints only; no uplift implementation or seed  
-**Supersedes for future consideration:** Rev 3, while preserving its immutable **FAIL / NOT SEED-APPROVED** verdict  
+**WorkItem:** `work-314`
+**Status:** design and finite blueprints only; no uplift implementation or seed
+**Supersedes for future consideration:** Rev 3, while preserving its immutable **FAIL / NOT SEED-APPROVED** verdict
 **Authority boundary:** disposed `decision-26` is historical only. A fresh Decision may be raised only after canonical Rev 4 bytes exist.
 
 ## 1. Purpose and inherited mechanism
@@ -76,13 +76,13 @@ Every variant carries requirement `artifact_admission` with:
 - `evidenceAuthority=verifier-attestation`;
 - `refResolvable` deliberately omitted because SEAL verifier-attestation requirements reject executor-resolution authority mixing.
 
-The architect may claim the gate, submit the exact corrective admission report as candidate evidence, and call `complete_work`; executor evidence cannot satisfy the requirement, so the leaf parks in `review`. An independent verifier must call `attest_evidence` with a load-bearing related ref. Only a valid PASS attestation advances it to `done`, which then opens implementation dependencies.
+The architect authors the exact corrective admission report separately, then claims/starts the gate and calls `complete_work` with **no executor evidence bound to the attestation requirement**. The SEAL hard fence parks the uncovered leaf in `review`. An independent verifier reads the report and calls `attest_evidence` with a load-bearing related target entity ref plus the report in the attestation note. Only a valid PASS advances it to `done`, which then opens implementation dependencies.
 
 The report must prove mission-123 completion, bug-297 registry-only resolution, exact published gitHeads/integrities, registry-seeded OIS/fleet uniformity, and independent successor verifier PASS. Mission status or a generic done node never substitutes.
 
 ### 4.2 `rail_gate`: byte-bound Director proof plus verifier attestation
 
-Every variant also gives `rail_admission` verifier-attestation authority. The architect submits a report fresh-reading the post-Rev4 Decision and proof; the verifier independently attests it before the gate can complete.
+Every variant also gives `rail_admission` verifier-attestation authority. The architect authors a separate report fresh-reading the post-Rev4 Decision and proof, then parks the gate in review with no executor evidence bound to the attestation requirement; the verifier independently reads the report and attests before the gate can complete.
 
 The Decision must bind:
 

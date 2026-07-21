@@ -76,7 +76,7 @@
           "evidenceAuthority": "verifier-attestation"
         }
       ],
-      "runbook": "Use workgraph-arc-participant. Fail closed until mission-123 is complete, bug-297 is resolved from registry-only reproduction, published artifacts bind canonical gitHead/integrity, OIS and all target caches are registry-seeded, the fleet is uniform, and work-300/308 independently PASS. The architect submits the exact admission doc as candidate executor evidence and calls complete_work, which must park in review; an independent verifier then calls attest_evidence on artifact_admission with a load-bearing related ref. Only verifier PASS may advance this leaf to done. Do not implement uplift features here.",
+      "runbook": "Use workgraph-arc-participant. Fail closed until mission-123 is complete, bug-297 is resolved from registry-only reproduction, published artifacts bind canonical gitHead/integrity, OIS and all target caches are registry-seeded, the fleet is uniform, and the independent successor gates PASS. Author the exact admission report separately. Claim/start this gate and call complete_work with no executor evidence bound to artifact_admission; the verifier-attestation hard fence must park the leaf in review. An independent verifier reads the report and calls attest_evidence on artifact_admission using a load-bearing related entity ref (the target Mission/mission-123) plus the report in the note. Only verifier PASS advances done. Do not implement uplift features here.",
       "references": [
         {
           "kind": "mission",
@@ -121,7 +121,7 @@
           "evidenceAuthority": "verifier-attestation"
         }
       ],
-      "runbook": "Fresh-read the post-Rev4 Decision and its Director-grade proof. It must bind this exact variant path, git commit, git blob, file SHA-256, complete node-set preview, and the expectedContentSha256 used at seed. The architect submits a rail-admission report as candidate executor evidence and complete_work must park in review; an independent verifier attests rail_admission with a load-bearing related ref. Any unresolved, pre-byte, mismatched, ambiguous, or non-Director-grade state blocks. Decision-26 is disposed and forbidden.",
+      "runbook": "Fresh-read the post-Rev4 Decision and its Director-grade proof. It must bind this exact variant path, git commit, git blob, file SHA-256, complete node-set preview, and the expectedContentSha256 used at seed. Author a separate rail-admission report. Claim/start this gate and call complete_work with no executor evidence bound to rail_admission; the verifier-attestation hard fence must park the leaf in review. An independent verifier reads the report and calls attest_evidence using a load-bearing related entity ref (the target Idea/idea-584) plus the report/Decision proof in the note. Any unresolved, pre-byte, mismatched, ambiguous, or non-Director-grade state blocks. Decision-26 is disposed and forbidden.",
       "references": [
         {
           "kind": "authority-contract",
