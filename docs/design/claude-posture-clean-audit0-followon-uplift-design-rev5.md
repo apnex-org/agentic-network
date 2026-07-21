@@ -103,12 +103,12 @@ Disposed `decision-26`, pre-byte answers, mutable prose, ambiguous custom answer
 2. An independent reviewer checks every byte, complete graph, authority string, and validator expectation on the exact PR head (`work-399`).
 3. Protected-merge; bind canonical commit/blob/SHA-256, create new non-overwriting Hub copies, and obtain four expected-hash dry-run PASS receipts with exact Hub hash/resourceVersion (`work-400`).
 4. Only then raise a fresh Decision whose options contain the complete previews in §3 and whose context binds those identities (`work-401`).
-5. Steve independently checks Decision authority, git bytes, Hub copy equality, dry-run receipts, expected-hash mismatch rejection, verifier live denial, and zero creation (`work-402`).
+5. Steve independently checks Decision authority, git bytes, Hub copy equality, dry-run receipts, expected-hash mismatch rejection, verifier live denial, and zero creation (`work-409`).
 6. A later mission may seed exactly one selected variant with the reviewed hash. Mission-123 itself seeds none.
 
-`work-402` is the pre-created, structurally resolvable distinct verifier successor. Every exact variant names it; no variant names failed `work-363`. If `work-402` fails, these bytes become unseedable and require another distinct correction.
+`work-409` is the pre-created, structurally resolvable distinct verifier successor. Every exact variant names it; no variant names failed `work-363`. If `work-409` fails, these bytes become unseedable and require another distinct correction.
 
-This sequence makes Decision authority postdate and bind the bytes. Decision-entity seed-time resolvability remains unavailable in the generic reference resolver; the combination of post-byte Decision proof, verifier-attested `rail_gate`, independent work-402, and expected-hash CAS is the fail-closed bridge. `idea-598` tracks native Decision entity-reference resolution.
+This sequence makes Decision authority postdate and bind the bytes. Decision-entity seed-time resolvability remains unavailable in the generic reference resolver; the combination of post-byte Decision proof, verifier-attested `rail_gate`, independent work-409, and expected-hash CAS is the fail-closed bridge. `idea-598` tracks native Decision entity-reference resolution.
 
 ## 6. Node/edge invariants
 
@@ -131,8 +131,8 @@ This sequence makes Decision authority postdate and bind the bytes. Decision-ent
 | B2 mutable `nodesRef` / TOCTOU | Hub content hash/resourceVersion are recorded; live seed requires matching `expectedContentSha256`; mismatch creates zero. |
 | B3 artifact admission was architect prose | `artifact_admission` is structurally `verifier-attestation`; executor evidence cannot satisfy it. |
 | B4 Decision predates/does not bind bytes; V2/V3 previews omitted traction | Fresh Decision is raised only post-merge and binds exact identities; V2/V3 previews explicitly include `pA_traction` and `pA_tool_actuator`. |
-| B5 Decision existence not seed-time resolvable | Post-byte Decision proof is independently checked in work-402 and structurally rechecked by verifier-attested `rail_gate`; exact expected-hash CAS binds seeded bytes. Native resolver support remains honestly tracked by idea-598. |
-| B6 exact variants hard-coded failed `work-363` as required PASS | Every distinct Rev 5 execution contract names pre-created verifier successor `work-402`; the validator rejects `work-363`, `work-381`, and retired correction ids. A failed `work-402` makes these bytes unseedable rather than aliasing authority. |
+| B5 Decision existence not seed-time resolvable | Post-byte Decision proof is independently checked in work-409 and structurally rechecked by verifier-attested `rail_gate`; exact expected-hash CAS binds seeded bytes. Native resolver support remains honestly tracked by idea-598. |
+| B6 exact variants hard-coded failed `work-363` as required PASS | Every distinct Rev 5 execution contract names pre-created verifier successor `work-409`; the validator rejects `work-363`, `work-381`, and retired correction ids. A failed `work-409` makes these bytes unseedable rather than aliasing authority. |
 
 ## 8. Preserved non-claims
 

@@ -48,9 +48,27 @@ for(const [variant,contract] of Object.entries(variants)){
    const text=`${byId[id].runbook??''} ${byId[id].evidenceRequirements?.[0]?.description??''}`;
    if(!text.includes(variant.toUpperCase())) fail(`${variant}/${id}: variant-specific contract`);
  }
+ // Every non-root node must have BOTH admission gates in transitive dependsOn ancestry.
+ const ancestorMemo=new Map();
+ function dependsAncestors(id){
+   if(ancestorMemo.has(id)) return ancestorMemo.get(id);
+   const out=new Set();
+   for(const dep of byId[id].dependsOn??[]){out.add(dep);for(const a of dependsAncestors(dep))out.add(a)}
+   ancestorMemo.set(id,out);return out;
+ }
+ for(const id of ids.filter(id=>!['driver','artifact_gate','rail_gate'].includes(id))){
+   const ancestors=dependsAncestors(id);
+   if(!ancestors.has('artifact_gate')||!ancestors.has('rail_gate')) fail(`${variant}/${id}: both admission gates required in transitive dependsOn ancestry`);
+ }
+ // Authority is location-bound, never satisfied by a compensating duplicate elsewhere.
+ const hasAuthorityRef=node=>(node.references??[]).some(r=>typeof r.ref==='string'&&r.ref.includes('work-409'));
+ if(!driver.runbook.includes('work-409')) fail(`${variant}/driver: work-409 pre-seed runbook authority required`);
+ if(!hasAuthorityRef(driver)) fail(`${variant}/driver: work-409 authority reference required`);
+ if(!hasAuthorityRef(byId.rail_gate)) fail(`${variant}/rail_gate: work-409 authority reference required`);
+ if(!hasAuthorityRef(vg)) fail(`${variant}/verifier_gate: work-409 authority reference required`);
+ if(!hasAuthorityRef(byId.closeout)) fail(`${variant}/closeout: work-409 authority reference required`);
  const serialized=JSON.stringify(doc);
- if(!serialized.includes('work-402')||serialized.includes('work-363')||serialized.match(/work-(315|316|317|335|336|337|355|356|357|381)/)) fail(`${variant}: stale/current authority reference`);
- if((serialized.match(/work-402/g)??[]).length < 5) fail(`${variant}: work-402 must bind driver, rail, verifier and closeout authority contracts`);
+ if(serialized.includes('work-363')||serialized.includes('work-381')||serialized.includes('work-402')||serialized.match(/work-(315|316|317|335|336|337|355|356|357)/)) fail(`${variant}: stale authority reference`);
  if(optional.includes('pA_tool_actuator')&&!byId['pA_tool_actuator'].dependsOn.includes('pA_traction'))fail(`${variant}: actuator traction edge`);
  for(const o of optional) if(!vg.dependsOn.includes(o)||!driver.completionDependsOn.includes(o))fail(`${variant}: optional edge ${o}`);
  if(!optional.includes('pA_traction') && ids.some(x=>x.startsWith('pA-')))fail(`${variant}: pA omission`);
