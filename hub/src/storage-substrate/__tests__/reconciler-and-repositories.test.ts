@@ -289,11 +289,14 @@ describe("Reconciler", () => {
 // ─── 6 new repository stubs CRUD round-trip ────────────────────────────────
 
 describe("New repository stubs (W2.4; W4 full refactor pending)", () => {
-  it("DocumentRepository: put + get + list + delete round-trip", async () => {
+  it("DocumentRepository: put + get + getWithRevision + list + delete round-trip", async () => {
     const repo = new DocumentRepository(substrate);
-    await repo.put({ id: "doc-1", category: "architecture", content: "# Test\nbody" });
+    const put = await repo.put({ id: "doc-1", category: "architecture", content: "# Test\nbody" });
     const got = await repo.get("doc-1");
     expect(got?.content).toContain("Test");
+    const snapshot = await repo.getWithRevision("doc-1");
+    expect(snapshot?.document.content).toBe("# Test\nbody");
+    expect(snapshot?.resourceVersion).toBe(put.resourceVersion);
     const list = await repo.list({ category: "architecture" });
     expect(list.length).toBeGreaterThanOrEqual(1);
     await repo.delete("doc-1");

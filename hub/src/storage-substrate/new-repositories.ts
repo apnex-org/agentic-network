@@ -65,6 +65,10 @@ export interface Document extends BaseEntity {
 
 export interface IDocumentStore {
   get(id: string): Promise<Document | null>;
+  /** Read content and its substrate revision from one snapshot. Consumers that bind
+   *  mutable document bytes (for example seed_blueprint) must use this rather than
+   *  racing a content read against a separate revision read. */
+  getWithRevision(id: string): Promise<{ document: Document; resourceVersion: string } | null>;
   put(doc: Document): Promise<{ id: string; resourceVersion: string }>;
   delete(id: string): Promise<void>;
   list(opts?: { category?: string }): Promise<Document[]>;
@@ -76,6 +80,11 @@ export class DocumentRepository implements IDocumentStore {
   async get(id: string): Promise<Document | null> {
     const raw = await this.substrate.get<Document>("Document", id);
     return raw ? decodeDocument(raw) : null;
+  }
+
+  async getWithRevision(id: string): Promise<{ document: Document; resourceVersion: string } | null> {
+    const raw = await this.substrate.getWithRevision<Document>("Document", id);
+    return raw ? { document: decodeDocument(raw.entity), resourceVersion: raw.resourceVersion } : null;
   }
 
   async put(doc: Document): Promise<{ id: string; resourceVersion: string }> {
