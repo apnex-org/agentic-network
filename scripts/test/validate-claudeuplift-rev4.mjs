@@ -34,7 +34,7 @@ for(const [variant,optional] of Object.entries(variants)){
  if(driver.completionDependsOn.length!==ids.length-1 || !ids.filter(x=>x!=='driver').every(x=>driver.completionDependsOn.includes(x))) fail(`${variant}: driver must complete-gate every other node`);
  for(const gateId of ['artifact_gate','rail_gate']){
    const req=byId[gateId].evidenceRequirements[0];
-   if(req.kind!=='doc'||req.refResolvable!==true||req.evidenceAuthority!=='verifier-attestation') fail(`${variant}/${gateId}: verifier-attestation doc required`);
+   if(req.kind!=='doc'||req.refResolvable===true||req.evidenceAuthority!=='verifier-attestation') fail(`${variant}/${gateId}: verifier-attestation doc without refResolvable required`);
  }
  const vg=byId.verifier_gate;
  if(vg.type!=='verifier-gate'||JSON.stringify(vg.roleEligibility)!==JSON.stringify(['verifier'])) fail(`${variant}: stable verifier gate`);

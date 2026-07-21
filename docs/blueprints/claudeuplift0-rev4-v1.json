@@ -72,7 +72,6 @@
           "id": "artifact_admission",
           "kind": "doc",
           "description": "Exact corrective closeout/admission report proving canonical published bytes, registry-seeded uniform fleet, bug-297 resolution, and independent successor verifier PASS.",
-          "refResolvable": true,
           "evidenceAuthority": "verifier-attestation"
         }
       ],
@@ -118,7 +117,6 @@
           "id": "rail_admission",
           "kind": "doc",
           "description": "Fresh post-Rev4 Director Decision proof binding this exact committed variant path/blob/SHA-256, complete node set, and expectedContentSha256 seed identity.",
-          "refResolvable": true,
           "evidenceAuthority": "verifier-attestation"
         }
       ],

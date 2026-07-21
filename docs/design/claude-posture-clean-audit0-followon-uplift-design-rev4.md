@@ -73,8 +73,8 @@ A custom answer must identify exactly one V0–V3 file identity. Any changed nod
 Every variant carries requirement `artifact_admission` with:
 
 - `kind=doc`;
-- `refResolvable=true`;
-- `evidenceAuthority=verifier-attestation`.
+- `evidenceAuthority=verifier-attestation`;
+- `refResolvable` deliberately omitted because SEAL verifier-attestation requirements reject executor-resolution authority mixing.
 
 The architect may claim the gate, submit the exact corrective admission report as candidate evidence, and call `complete_work`; executor evidence cannot satisfy the requirement, so the leaf parks in `review`. An independent verifier must call `attest_evidence` with a load-bearing related ref. Only a valid PASS attestation advances it to `done`, which then opens implementation dependencies.
 
