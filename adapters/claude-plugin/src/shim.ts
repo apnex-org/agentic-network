@@ -15,9 +15,6 @@ import {
   buildPendingTaskNotification,
   readRequiredAgentName,
   loadConfig,
-  readPackageVersion,
-  readBuildInfo,
-  UNKNOWN_BUILD_INFO,
   buildPromptText,
   makeStdioFatalHalt,
   createSharedDispatcher,
@@ -46,8 +43,8 @@ import {
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { createRequire } from "node:module";
 
+import { EMBEDDED_BUILD_INFO, EMBEDDED_IDENTITY } from "./embedded-identity.js";
 import { isPulseEvent } from "./source-attribute.js";
 import { surfacePendingActionItem } from "./notification-surface.js";
 import { createClaudeRuntime } from "./runtime.js";
@@ -72,33 +69,12 @@ const WORK_DIR = process.env.WORK_DIR || process.cwd();
 const LOG_FILE = join(WORK_DIR, ".ois", "claude-notifications.log");
 const SHUTDOWN_TIMEOUT_MS = 3000;
 
-// mission-66 #40 closure: version-source-of-truth consolidation.
-// PROXY_VERSION reads claude-plugin/package.json; SDK_VERSION reads
-// @apnex/network-adapter/package.json. Pre-mission-66 these were
-// hardcoded ("1.2.0" + "@apnex/network-adapter@2.1.0") and drifted
-// from the npm package.json values (0.1.4 + 0.1.2 respectively).
-// Hub-side canonical projection (deriveAdvisoryTags) surfaces these via
-// advisoryTags.sdkVersion (kernel) + shimVersion (this plugin) to all
-// consumers (idea-355 SLICE-4 retired the old mislabeled adapterVersion key).
+// Package/build identity is compiled into the self-contained runtime. Runtime
+// package-path discovery would reintroduce an ambient dependency and silently
+// degrade to `unknown` once the workspace packages are bundled.
 const __shimDir = dirname(fileURLToPath(import.meta.url));
-const __require = createRequire(import.meta.url);
-
-// readPackageVersion / readBuildInfo / BuildInfo hoisted to the kernel
-// (@apnex/network-adapter) in idea-355 SLICE-1. The shim keeps only its
-// host-specific path resolution + the derived version/build-info constants.
-const CLAUDE_PLUGIN_PKG_VERSION = readPackageVersion(
-  resolve(__shimDir, "..", "package.json"),
-  "unknown",
-);
-const NETWORK_ADAPTER_PKG_VERSION = (() => {
-  try {
-    return readPackageVersion(__require.resolve("@apnex/network-adapter/package.json"), "unknown");
-  } catch {
-    return "unknown";
-  }
-})();
-const PROXY_VERSION = CLAUDE_PLUGIN_PKG_VERSION;
-const SDK_VERSION = `@apnex/network-adapter@${NETWORK_ADAPTER_PKG_VERSION}`;
+const PROXY_VERSION = EMBEDDED_IDENTITY.packageVersion;
+const SDK_VERSION = `bundled@${EMBEDDED_IDENTITY.sourceCommit}`;
 
 // M-Adapter-Modernization P1b: the per-harness STANDARD config (proxyName /
 // transport / serverName / tool-prefix / injection-mechanism / the 3-valued
@@ -109,22 +85,9 @@ const SDK_VERSION = `@apnex/network-adapter@${NETWORK_ADAPTER_PKG_VERSION}`;
 // never hold a raw secret).
 const MANIFEST = loadHarnessManifest(resolve(__shimDir, "..", "agent-adapter.manifest.json"));
 
-// M-Build-Identity-AdvisoryTag (idea-256): code-identity source-of-truth.
-// Each package's prepack hook (scripts/build/write-build-info.js) writes
-// dist/build-info.json at pack-time; shim reads both at startup and emits
-// via the existing mission-66 #40 wire-pattern (clientMetadata propagation
-// → Hub deriveAdvisoryTags projection → AgentAdvisoryTags). Surfaces in
-// get-agents as SHIM_COMMIT + ADAPTER_COMMIT columns.
-const PROXY_BUILD_INFO = readBuildInfo(resolve(__shimDir, "build-info.json"));
-const SDK_BUILD_INFO = (() => {
-  try {
-    return readBuildInfo(
-      __require.resolve("@apnex/network-adapter/dist/build-info.json"),
-    );
-  } catch {
-    return UNKNOWN_BUILD_INFO;
-  }
-})();
+// The shim and bundled kernel are produced from one reviewed source/tree.
+const PROXY_BUILD_INFO = EMBEDDED_BUILD_INFO;
+const SDK_BUILD_INFO = EMBEDDED_BUILD_INFO;
 
 // OIS_COGNITIVE_BYPASS=1 → pass cognitive=undefined to McpAgentClient.
 // Operator-facing kill-switch for the cognitive pipeline; mcp-agent-client

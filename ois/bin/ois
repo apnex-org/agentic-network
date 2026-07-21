@@ -43,11 +43,18 @@ _OIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -r "$_OIS_DIR/prompt-resolve.sh" ]]; then source "$_OIS_DIR/prompt-resolve.sh"; fi
 PROMPT_HANDLERS="${OIS_PROMPT_HANDLERS:-$CFG/prompt-handlers.json}"
 
-# npmdeliver0 (idea-492): the Claude agent-adapter plugin ships via the npm registry
-# (single channel; the Channel-2 GitHub-Release tarball is retired). EXACT pin — never
-# @latest (silent drift); deploy.sh can grep-guard this token.
-CLAUDE_PLUGIN_VERSION="0.1.16"
-_CLAUDE_PLUGIN_MP=""   # process-cached npm-installed marketplace dir (set by claude_npm_ensure)
+# Minimal aligned delivery: fresh exact normal-npm identities. Registry integrity plus
+# a late publication attestation are mandatory before OIS will materialize either one.
+CLAUDE_PLUGIN_VERSION="0.1.18"
+PI_PLUGIN_VERSION="0.1.9"
+EXPECTED_NODE_SHA256="16143bdaa79716e871d3d9b2f50ce680bca293eba7f0c3fc1d004ed2258fc839"
+EXPECTED_NPM_CLI_SHA256="8e5f6f3429f8cdbe693cdc29904e9d5a7b127a494bd15c804bd54c7403bfcbe7"
+VERIFIED_PLUGIN_INSTALLER="$_OIS_DIR/verified-plugin-install.mjs"
+_CLAUDE_PLUGIN_MP=""
+_PI_PLUGIN_MP=""
+_PI_PLUGIN_ENTRY=""
+_PLUGIN_AVR_PATH=""
+_PLUGIN_ITR_STARTED="0"
 
 fatal() { echo "ois: FATAL: $*" >&2; exit 1; }
 expand() { local p="${1:-}"; [[ "$p" == "~/"* ]] && p="$HOME/${p#\~/}"; printf '%s' "$p"; }
@@ -266,37 +273,47 @@ env_lines() {
   fi
 }
 
-# ---------- claude sovereign seed (ported from bin/claude-agent, behavior-identical) ----------
+# ---------- verified package materialization + seat transaction ----------
+verified_plugin_acquire() {
+  local c="$1" harness="$2" name="$3" version="$4" integrity attestation node_bin npm_cli out
+  [[ -f "$VERIFIED_PLUGIN_INSTALLER" ]] || fatal "verified installer missing: $VERIFIED_PLUGIN_INSTALLER"
+  integrity=$(jq -r '.pluginIntegrity // empty' <<<"$c")
+  attestation=$(jq -r '.publicationAttestation // empty' <<<"$c")
+  [[ "$integrity" == sha512-* ]] || fatal "$harness released artifact integrity is absent/unadmitted"
+  [[ -n "$attestation" && "$attestation" != "PENDING_PUBLICATION" ]] || fatal "$harness publication attestation is absent/unadmitted"
+  node_bin=$(command -v node) || fatal "exact Node unavailable"
+  npm_cli=$(readlink -f "$(command -v npm)") || fatal "exact npm CLI unavailable"
+  [[ "$(sha256sum "$node_bin" | cut -d' ' -f1)" == "$EXPECTED_NODE_SHA256" ]] || fatal "Node bytes do not match admitted tuple"
+  [[ "$(sha256sum "$npm_cli" | cut -d' ' -f1)" == "$EXPECTED_NPM_CLI_SHA256" ]] || fatal "npm CLI bytes do not match admitted tuple"
+  out=$("$node_bin" "$VERIFIED_PLUGIN_INSTALLER" verify --name "$name" --version "$version" \
+    --integrity "$integrity" --attestation "$attestation" --state "$STATE" \
+    --registry "https://registry.npmjs.org/" --node "$node_bin" --npm-cli "$npm_cli") \
+    || fatal "$harness exact registry acquisition/verification failed"
+  _PLUGIN_AVR_PATH=$(jq -r '.verificationPath' <<<"$out")
+  [[ -f "$_PLUGIN_AVR_PATH" ]] || fatal "$harness AVR missing after verification"
+  if [[ "$harness" == "claude" ]]; then _CLAUDE_PLUGIN_MP=$(jq -r '.root' <<<"$out"); else _PI_PLUGIN_MP=$(jq -r '.root' <<<"$out"); fi
+}
 
-# claude_npm_ensure — npmdeliver0: globally install the pinned agent-adapter plugin
-# from the npm registry ONCE per ois invocation + resolve its marketplace dir. The
-# npm-installed install.sh runs `npm install --no-save` inside the plugin dir so its
-# node_modules carry the bundled sovereign deps (na@0.1.11 etc.) — that is what makes
-# claude's plugin-cache copy able to require @apnex/network-adapter at launch. install.sh's
-# own marketplace-add + cache-wipe target $HOME/.claude (operator dir), NOT the sovereign
-# seats; the per-seat converge in claude_seed is what makes each SEAT live. Result path is
-# process-constant → cached in _CLAUDE_PLUGIN_MP (latch avoids re-running under `seed --all`).
+begin_plugin_itr() {
+  local a="$1" h="$2" root="$3"
+  node "$VERIFIED_PLUGIN_INSTALLER" begin --state "$STATE" --seat "$a" --harness "$h" --avr "$_PLUGIN_AVR_PATH" --root "$root" >/dev/null \
+    || fatal "$h installation transaction could not begin (resolve any pending receipt first)"
+  _PLUGIN_ITR_STARTED="1"
+}
+
+complete_plugin_itr() {
+  local a="$1" h="$2" outcome="$3" observation="${4:-{}}"
+  [[ "$_PLUGIN_ITR_STARTED" == "1" ]] || fatal "$h installation transaction was not started"
+  node "$VERIFIED_PLUGIN_INSTALLER" complete --state "$STATE" --seat "$a" --harness "$h" --outcome "$outcome" --observation "$observation" >/dev/null \
+    || fatal "$h installation receipt/selection commit failed"
+  _PLUGIN_ITR_STARTED="0"
+}
+
+# ---------- claude sovereign seed ----------
 claude_npm_ensure() {
+  local c="$1"
   [[ -n "$_CLAUDE_PLUGIN_MP" ]] && return 0
-  command -v npm >/dev/null 2>&1 || fatal "'npm' not found on PATH (needed for @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION)"
-  local mp; mp="$(npm root -g)/@apnex/claude-plugin"   # <nvm prefix>/lib/node_modules/@apnex/claude-plugin
-  local installed_ver=""
-  if [[ -f "$mp/package.json" ]]; then
-    installed_ver="$(node -p "require('$mp/package.json').version" 2>/dev/null || true)"
-  fi
-  # bootstrap/bug-296: direct operator installs may carry a just-built local package before
-  # the npm registry has accepted the new pin. If the exact pinned version is already present,
-  # trust that installed artifact and converge the per-seat plugin cache from it instead of
-  # re-installing the older registry tarball over the repaired package.
-  if [[ "$installed_ver" == "$CLAUDE_PLUGIN_VERSION" ]]; then
-    echo "  seeding : using installed @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION at $mp"
-  else
-    echo "  seeding : npm install -g @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION"
-    npm install -g "@apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION" >/dev/null || fatal "npm install -g @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION failed"
-  fi
-  [[ -d "$mp" ]] || fatal "npm-installed plugin dir missing at $mp after install"
-  [[ -x "$mp/install.sh" ]] && ( cd "$mp" && ./install.sh >/dev/null ) || echo "  · install.sh missing/failed at $mp — continuing (per-seat converge follows)"
-  _CLAUDE_PLUGIN_MP="$mp"
+  verified_plugin_acquire "$c" claude "@apnex/claude-plugin" "$CLAUDE_PLUGIN_VERSION"
 }
 
 claude_seed() {
@@ -306,8 +323,9 @@ claude_seed() {
   [[ -n "$cdir" ]] || fatal "claude cell '$a' has no configDirTemplate — cannot resolve a sovereign CLAUDE_CONFIG_DIR (declare it in config/harnesses/claude.json); refusing to seed to a bogus/shared path"
   # npmdeliver0 (idea-492): the marketplace is now the npm-installed plugin dir
   # (Channel-2 directory marketplace retired). Config .marketplacePath is vestigial.
-  claude_npm_ensure
+  claude_npm_ensure "$c"
   mp="$_CLAUDE_PLUGIN_MP"
+  begin_plugin_itr "$a" claude "$mp"
   export CLAUDE_CONFIG_DIR="$cdir"
   mkdir -p "$cdir" && chmod 700 "$cdir"
   if [[ ! -f "$cdir/.claude.json" ]]; then
@@ -364,56 +382,40 @@ claude_seed() {
       + (if $sl != "" and (.statusLine | not) then {statusLine: {type: "command", command: $sl}} else {} end)' \
       "$cdir/settings.json" > "$tmp" && mv "$tmp" "$cdir/settings.json"
   fi
-  # npmdeliver0: CONVERGE the marketplace SOURCE unconditionally. settings.json was
-  # force-rewritten to $mp above, but known_marketplaces.json / installed_plugins.json /
-  # the plugin cache can still point at a retired directory path — a bare flip is a SILENT
-  # NO-OP (the plugin keeps loading the stale cached extract). Uninstall → drop marketplace →
-  # wipe stale cache → re-add + install from the npm path. Runs under the exported
-  # CLAUDE_CONFIG_DIR=$cdir so every claude-CLI write lands on THIS seat. Idempotent on
-  # fresh seats (teardown steps are best-effort).
+  # Seed first from the exact verified package root. No global/network-adapter
+  # fallback and no candidate code is available to Claude before this succeeds.
+  local na_bin="$_CLAUDE_PLUGIN_MP/dist/seed-skills.js"
+  [[ -f "$na_bin" ]] || fatal "verified same-root HCAP seed entrypoint not found"
+  local srole; srole=$(jq -r '.role // "unknown"' <<<"$c")
+  echo "  seeding : HCAP skills embed (fail-closed, role=$srole) → $cdir/skills"
+  HCAP_SKILLS_MANIFEST="${HCAP_SKILLS_MANIFEST:-$ROOT/manifests/skill-sync/wanted-bundles.yaml}" \
+  OIS_ROLE="$srole" node "$na_bin" "$cdir/skills"
+
+  # Ordinary Claude native marketplace actuation follows successful verification
+  # and seed. Cache/index observation is reported, not redefined as shadow deploy.
   echo "  seeding : converging agent-adapter marketplace source → $mp"
   claude plugin uninstall agent-adapter@agentic-network 2>/dev/null || true
   claude plugin marketplace remove agentic-network 2>/dev/null || true
   rm -rf "$cdir/plugins/cache/agentic-network" 2>/dev/null || true
   claude plugin marketplace add "$mp"
   claude plugin install agent-adapter@agentic-network
-  # fleetskills0 retire_legacy (idea-505): the HCAP skills-consumer is now the SOLE
-  # skill-delivery path. The legacy mission_kit_sync call and the HCAP_SKILLS_EMBED
-  # opt-in gate (the prior coexistence scaffolding) are RETIRED — the new consumer runs
-  # UNCONDITIONALLY for every claude seat, FAIL-CLOSED: a converge/gate failure aborts
-  # THIS seat's launch (no `|| true`, so the non-zero exit propagates under set -e)
-  # rather than exec claude with a partial baseline. Its LIVE set-diff gate
-  # (role_map ⊇ delivered) bounds what it unlinks. CLAUDE_CONFIG_DIR is exported above.
-  local na_bin="$_CLAUDE_PLUGIN_MP/node_modules/@apnex/network-adapter/dist/bin/seed-skills.js"
-  [[ -f "$na_bin" ]] || na_bin="$(npm root -g)/@apnex/network-adapter/dist/bin/seed-skills.js"
-  [[ -f "$na_bin" ]] || fatal "HCAP skills-consumer seed bin not found (plugin/npm-root)"
-  local srole; srole=$(jq -r '.role // "unknown"' <<<"$c")
-  echo "  seeding : HCAP skills embed (fail-closed, role=$srole) → $cdir/skills"
-  HCAP_SKILLS_MANIFEST="${HCAP_SKILLS_MANIFEST:-$ROOT/manifests/skill-sync/wanted-bundles.yaml}" \
-  OIS_ROLE="$srole" \
-    node "$na_bin" "$cdir/skills"
+  local installed_path projection_hash
+  installed_path=$(jq -r '.plugins["agent-adapter@agentic-network"][-1].installPath // empty' "$cdir/plugins/installed_plugins.json" 2>/dev/null || true)
+  [[ -n "$installed_path" && -d "$installed_path" ]] || fatal "Claude native install did not report an installed cache path"
+  projection_hash=$(find "$installed_path" -type f -print0 | sort -z | xargs -0 sha256sum | sha256sum | cut -d' ' -f1)
+  complete_plugin_itr "$a" claude installed "$(jq -cn --arg installedPath "$installed_path" --arg projectionHash "$projection_hash" '{nativeCommand:"claude plugin marketplace add/install",installedPath:$installedPath,projectionHash:$projectionHash,enabled:true}')"
 }
 
-# ---------- pi sovereign seed (piuplift0 p1) ----------
+# ---------- pi sovereign seed ----------
 
-# pi_na_ensure — resolve the HCAP skills-consumer seed bin for pi. Unlike claude (whose
-# plugin install.sh bundles @apnex/network-adapter), pi loads its plugin at EXEC via
-# piPluginSpec, so there is no pre-exec na. Install @apnex/network-adapter GLOBALLY (just the
-# seed BIN pi needs) once per invocation. @latest tracks claude-plugin's floating na dep
-# ("@apnex/network-adapter":"*") so the seed bin stays byte-consistent across harnesses.
-# DEFERRED-CONVERGENCE (backport_synthesis / P3 npm-distribution / the D4 gap): pi resolves
-# the seed bin via direct global na-install, divergent from claude's bundled-via-plugin
-# resolution; the clean unified resolution (both harnesses on a pinned na) is the pi-delivery
-# / npm-unification work — NOT p1-skills scope.
-_PI_NA_MP=""
+# Pi uses the same verified acquisition core as Claude. There is no global
+# network-adapter or Pi-native npm materialization.
 pi_na_ensure() {
-  [[ -n "$_PI_NA_MP" ]] && return 0
-  command -v npm >/dev/null 2>&1 || fatal "'npm' not found on PATH (needed for the @apnex/network-adapter seed bin)"
-  echo "  seeding : npm install -g @apnex/network-adapter@latest (pi HCAP skills seed bin)"
-  npm install -g "@apnex/network-adapter@latest" >/dev/null || fatal "npm install -g @apnex/network-adapter@latest failed"
-  local mp; mp="$(npm root -g)/@apnex/network-adapter"
-  [[ -d "$mp" ]] || fatal "npm-installed network-adapter dir missing at $mp after install"
-  _PI_NA_MP="$mp"
+  local c="$1"
+  [[ -n "$_PI_PLUGIN_MP" ]] && return 0
+  verified_plugin_acquire "$c" pi "@apnex/pi-plugin" "$PI_PLUGIN_VERSION"
+  _PI_PLUGIN_ENTRY="$_PI_PLUGIN_MP/dist/index.js"
+  [[ -f "$_PI_PLUGIN_ENTRY" ]] || fatal "verified Pi local entrypoint missing"
 }
 
 # pi_auth_bridge — bug-268: per-seat PI_CODING_AGENT_DIR must carry working auth.
@@ -486,8 +488,7 @@ pi_settings_valid() { # <settings.json>
     (.defaultModel == "gpt-5.5" or .defaultModel == "gpt-5.6-sol") and
     .defaultThinkingLevel == "xhigh" and
     .terminal.showTerminalProgress == true and
-    ((.packages // []) | index("npm:pi-tool-display")) != null and
-    ((.packages // []) | index("npm:pi-web-access")) != null and
+    (.packages == []) and
     .compaction.enabled == true and
     (.compaction.reserveTokens | type == "number") and
     (.compaction.keepRecentTokens | type == "number")
@@ -585,10 +586,11 @@ pi_seed() {
   pi_auth_bridge "$a" "$cdir"
   pi_settings_seed "$a" "$cdir" "$c"
   pi_models_seed "$a" "$cdir" "$c"
-  pi_na_ensure
-  na_bin="$_PI_NA_MP/dist/bin/seed-skills.js"
-  [[ -f "$na_bin" ]] || na_bin="$(npm root -g)/@apnex/network-adapter/dist/bin/seed-skills.js"
-  [[ -f "$na_bin" ]] || fatal "HCAP skills-consumer seed bin not found (npm-root)"
+  [[ -z "${PI_PLUGIN_SPEC:-}" ]] || fatal "PI_PLUGIN_SPEC override is forbidden for verified local-path actuation"
+  pi_na_ensure "$c"
+  begin_plugin_itr "$a" pi "$_PI_PLUGIN_MP"
+  na_bin="$_PI_PLUGIN_MP/dist/seed-skills.js"
+  [[ -f "$na_bin" ]] || fatal "verified same-root HCAP seed entrypoint not found"
   export PI_CODING_AGENT_DIR="$cdir"
   mkdir -p "$cdir" && chmod 700 "$cdir"
   srole=$(jq -r '.role // "unknown"' <<<"$c")
@@ -599,6 +601,35 @@ pi_seed() {
   OIS_HARNESS="pi" \
   OIS_ROLE="$srole" \
     node "$na_bin" "$cdir/skills"
+  complete_plugin_itr "$a" pi installed "$(jq -cn --arg entry "$_PI_PLUGIN_ENTRY" '{nativeCommand:"pi -e verified-local-path",selectedEntry:$entry,tempNpmRoot:false,packages:[]}')"
+}
+
+cmd_plugin_rollback() { # <agent> <claude|pi> — restore before a later launch
+  local a="$1" h="$2" prior root c cdir seed role installed
+  [[ "$h" == "claude" || "$h" == "pi" ]] || fatal "usage: ois plugin-rollback <agent> <claude|pi>"
+  prior=$(node "$VERIFIED_PLUGIN_INSTALLER" prior --state "$STATE" --seat "$a" --harness "$h") || fatal "no verified prior selection for $a/$h"
+  root=$(jq -r '.root' <<<"$prior"); _PLUGIN_AVR_PATH=$(jq -r '.avrPath' <<<"$prior")
+  c=$(cell_json "$a" "$h"); cdir=$(cell_configdir "$c"); [[ -d "$root" && -n "$cdir" ]] || fatal "prior root/config dir unavailable"
+  begin_plugin_itr "$a" "$h" "$root"
+  seed="$root/dist/seed-skills.js"; [[ -f "$seed" ]] || fatal "prior same-root seed entrypoint absent"
+  role=$(jq -r '.role // "unknown"' <<<"$c")
+  if [[ "$h" == "claude" ]]; then
+    export CLAUDE_CONFIG_DIR="$cdir"
+    HCAP_SKILLS_MANIFEST="${HCAP_SKILLS_MANIFEST:-$ROOT/manifests/skill-sync/wanted-bundles.yaml}" OIS_ROLE="$role" node "$seed" "$cdir/skills"
+    claude plugin uninstall agent-adapter@agentic-network 2>/dev/null || true
+    claude plugin marketplace remove agentic-network 2>/dev/null || true
+    claude plugin marketplace add "$root"
+    claude plugin install agent-adapter@agentic-network
+    installed=$(jq -r '.plugins["agent-adapter@agentic-network"][-1].installPath // empty' "$cdir/plugins/installed_plugins.json")
+    [[ -d "$installed" ]] || fatal "Claude prior native reinstall was not observed"
+    complete_plugin_itr "$a" "$h" restored-prior "$(jq -cn --arg root "$root" --arg installed "$installed" '{rollback:"ordinary-native-reinstall",root:$root,installedPath:$installed}')"
+  else
+    export PI_CODING_AGENT_DIR="$cdir"
+    pi_auth_bridge "$a" "$cdir"; pi_settings_seed "$a" "$cdir" "$c"; pi_models_seed "$a" "$cdir" "$c"
+    HCAP_SKILLS_MANIFEST="${HCAP_SKILLS_MANIFEST:-$ROOT/manifests/skill-sync/wanted-bundles.yaml}" OIS_HARNESS=pi OIS_ROLE="$role" node "$seed" "$cdir/skills"
+    complete_plugin_itr "$a" "$h" restored-prior "$(jq -cn --arg entry "$root/dist/index.js" '{rollback:"prior-local-path-reselection",selectedEntry:$entry}')"
+  fi
+  echo "plugin rollback prepared for next launch: $a/$h -> $root"
 }
 
 # ---------- artifact write with LKG retention ----------
@@ -782,7 +813,9 @@ do_launch() {
   prov=$(jq -r '.piProvider // empty' <<<"$c"); model=$(jq -r '.piModel // empty' <<<"$c")
   while IFS= read -r tok; do
     tok=${tok//\{hubModelTag\}/$tag}; tok=${tok//\{pluginSpec\}/$pspec}
-    tok=${tok//\{piPluginSpec\}/${PI_PLUGIN_SPEC:-$pspec}}; tok=${tok//\{piProvider\}/${PI_PROVIDER:-$prov}}; tok=${tok//\{piModel\}/${PI_MODEL:-$model}}
+    local pi_entry="$pspec"
+    [[ "$h" != "pi" || -z "$_PI_PLUGIN_ENTRY" ]] || pi_entry="$_PI_PLUGIN_ENTRY"
+    tok=${tok//\{piPluginSpec\}/$pi_entry}; tok=${tok//\{piProvider\}/${PI_PROVIDER:-$prov}}; tok=${tok//\{piModel\}/${PI_MODEL:-$model}}
     argv+=("$tok")
   done < <(jq -r '.exec[]' <<<"$c")
   while IFS= read -r tok; do argv+=("$tok"); done < <(jq -r '.extraExecArgs[]? // empty' <<<"$c")
@@ -1319,6 +1352,7 @@ case "$sub" in
   render) [[ $# -eq 2 ]] || fatal "usage: ois render <agent> <harness>"; cmd_render "$@" ;;
   env)    [[ $# -eq 2 ]] || fatal "usage: ois env <agent> <harness>"; cmd_env "$@" ;;
   check)  cmd_check "$@" ;;
+  plugin-rollback) [[ $# -eq 2 ]] || fatal "usage: ois plugin-rollback <agent> <claude|pi>"; cmd_plugin_rollback "$@" ;;
   seed)
     if [[ "${1:-}" == "--all" ]]; then
       # work-160: re-seed EVERY claude agent so a settings change (e.g. new
@@ -1339,6 +1373,6 @@ case "$sub" in
     ;;
   list)   cmd_list ;;
   doctor) cmd_doctor ;;
-  *) fatal "usage: ois {launch|up|attach|say|confirm|decisions|nodes|show|down|reset|ps|render|env|check|seed|list|doctor}" ;;
+  *) fatal "usage: ois {launch|up|attach|say|confirm|decisions|nodes|show|down|reset|ps|render|env|check|seed|plugin-rollback|list|doctor}" ;;
 esac
 fi

@@ -40,6 +40,8 @@ PI_HARNESS_CONFIG_SRC="$(dirname "$SRC")/../../config/harnesses/pi.json"
 PI_HARNESS_CONFIG_DEST="$HOME/.config/apnex-agents/config/harnesses/pi.json"
 CLAUDE_HARNESS_CONFIG_SRC="$(dirname "$SRC")/../../config/harnesses/claude.json"
 CLAUDE_HARNESS_CONFIG_DEST="$HOME/.config/apnex-agents/config/harnesses/claude.json"
+VERIFIED_INSTALLER_SRC="$(dirname "$SRC")/verified-plugin-install.mjs"
+VERIFIED_INSTALLER_DEST="$HOME/.config/apnex-agents/bin/verified-plugin-install.mjs"
 
 MANIFEST_REL="ois/manifests/skill-sync/wanted-bundles.yaml"
 MANIFEST_DEST="$HOME/.config/apnex-agents/manifests/skill-sync/wanted-bundles.yaml"
@@ -100,12 +102,14 @@ grep -q 'claudeSettings' "$SRC" || { echo "error: deploy source lacks the claude
 # stale live harness policy while `bin/ois` has changed underneath it, making PI-vs-Claude
 # seat equivalence unverifiable.
 [[ -f "$CLAUDE_HARNESS_CONFIG_SRC" ]] || { echo "error: missing repo claude harness config at $CLAUDE_HARNESS_CONFIG_SRC — refusing to deploy centralized claude harness config without its source" >&2; exit 1; }
-jq -e '.harness == "claude" and (.exec | index("claude") == 0) and ((.exec // []) | index("--dangerously-load-development-channels") != null) and .pluginSpec == "plugin:agent-adapter@agentic-network" and .configDirTemplate == "~/.config/apnex-agents/{agent}.claude" and .exportsRetiredInstanceId == false and .envTemplate.WORK_DIR == "{workspace}" and .envTemplate.HUB_LLM_MODEL == "{hubModelTag}" and (.envTemplate | has("OIS_INSTANCE_ID") | not) and .credentialImports.anthropic.inject == "env" and .credentialImports.anthropic.name == "CLAUDE_CODE_OAUTH_TOKEN" and .claudeSettings.model == "opus" and .claudeSettings.enableWorkflows == true and .claudeSettings.ultracode == true' "$CLAUDE_HARNESS_CONFIG_SRC" >/dev/null || { echo "error: repo claude harness config lacks required centralized Claude launch/settings policy — refusing to deploy" >&2; exit 1; }
+jq -e '.harness == "claude" and (.exec | index("claude") == 0) and ((.exec // []) | index("--dangerously-load-development-channels") != null) and .pluginSpec == "plugin:agent-adapter@agentic-network" and .pluginVersion == "0.1.18" and (.pluginIntegrity | startswith("sha512-") or . == "PENDING_PUBLICATION") and .configDirTemplate == "~/.config/apnex-agents/{agent}.claude" and .exportsRetiredInstanceId == false and .envTemplate.WORK_DIR == "{workspace}" and .envTemplate.HUB_LLM_MODEL == "{hubModelTag}" and (.envTemplate | has("OIS_INSTANCE_ID") | not) and .credentialImports.anthropic.inject == "env" and .credentialImports.anthropic.name == "CLAUDE_CODE_OAUTH_TOKEN" and .claudeSettings.model == "opus" and .claudeSettings.enableWorkflows == true and .claudeSettings.ultracode == true' "$CLAUDE_HARNESS_CONFIG_SRC" >/dev/null || { echo "error: repo claude harness config lacks required centralized Claude launch/settings policy — refusing to deploy" >&2; exit 1; }
 # bug-272: pi settings/models policy is config, not inline script or implicit ~/.pi/agent.
 # This deployable surface must co-ship the repo-side harness config into live OIS /config,
 # because bin/ois reads $HOME/.config/apnex-agents/config at runtime.
 [[ -f "$PI_HARNESS_CONFIG_SRC" ]] || { echo "error: missing repo pi harness config at $PI_HARNESS_CONFIG_SRC — refusing to deploy pi settings/models renderer without its config source" >&2; exit 1; }
-jq -e '.piSettings.theme == "dark" and .piSettings.defaultProvider == "openai-codex" and (.piSettings.defaultModel == "gpt-5.5" or .piSettings.defaultModel == "gpt-5.6-sol") and .piSettings.defaultThinkingLevel == "xhigh" and .piSettings.terminal.showTerminalProgress == true and ((.piSettings.packages // []) | index("npm:pi-tool-display")) != null and ((.piSettings.packages // []) | index("npm:pi-web-access")) != null and .piSettings.compaction.enabled == true and (.piSettings.compaction.reserveTokens | type == "number") and (.piSettings.compaction.keepRecentTokens | type == "number") and ((.piModels.providers["openai-codex"].modelOverrides["gpt-5.5"].contextWindow == 400000) or (.piModels.providers["openai-codex"].modelOverrides["gpt-5.6-sol"].contextWindow == 400000))' "$PI_HARNESS_CONFIG_SRC" >/dev/null || { echo "error: repo pi harness config lacks required piSettings/piModels fleet policy — refusing to deploy" >&2; exit 1; }
+jq -e '.piPluginSpec == "@apnex/pi-plugin@0.1.9" and .pluginVersion == "0.1.9" and (.pluginIntegrity | startswith("sha512-") or . == "PENDING_PUBLICATION") and .piSettings.theme == "dark" and .piSettings.defaultProvider == "openai-codex" and (.piSettings.defaultModel == "gpt-5.5" or .piSettings.defaultModel == "gpt-5.6-sol") and .piSettings.defaultThinkingLevel == "xhigh" and .piSettings.terminal.showTerminalProgress == true and .piSettings.packages == [] and .piSettings.compaction.enabled == true and (.piSettings.compaction.reserveTokens | type == "number") and (.piSettings.compaction.keepRecentTokens | type == "number") and ((.piModels.providers["openai-codex"].modelOverrides["gpt-5.5"].contextWindow == 400000) or (.piModels.providers["openai-codex"].modelOverrides["gpt-5.6-sol"].contextWindow == 400000))' "$PI_HARNESS_CONFIG_SRC" >/dev/null || { echo "error: repo pi harness config lacks required minimal verified-local-path policy — refusing to deploy" >&2; exit 1; }
+[[ -f "$VERIFIED_INSTALLER_SRC" ]] || { echo "error: verified plugin installer missing: $VERIFIED_INSTALLER_SRC" >&2; exit 1; }
+node --check "$VERIFIED_INSTALLER_SRC" || { echo "error: verified plugin installer fails syntax check" >&2; exit 1; }
 # bug-247 co-deploy guard: if THIS ois sources the resolver, its lib + table MUST co-ship.
 # The new ois moved the dev-channels-banner handler (which seat-launch depends on) out of a
 # hardcoded branch and INTO the table — so shipping the ois without them would silently hang
@@ -177,6 +181,8 @@ if [[ -f "$DEST" ]]; then
 fi
 install -m 0755 "$SRC" "$DEST"
 echo "deployed $SRC -> $DEST"
+install -m 0755 "$VERIFIED_INSTALLER_SRC" "$VERIFIED_INSTALLER_DEST"
+echo "deployed $VERIFIED_INSTALLER_SRC -> $VERIFIED_INSTALLER_DEST"
 
 # work-179 (Arc-1 S4): ship the claude/ois skill-sync manifest alongside bin/ois.
 # The HCAP skills-consumer (claude_seed, fleetskills0/idea-505) reads

@@ -1,0 +1,5 @@
+#!/usr/bin/env node
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+import http from 'node:http';
+const [name,version,tgz,manifestPath]=process.argv.slice(2);if(!manifestPath)throw new Error('name version tgz manifest required');const bytes=readFileSync(tgz),manifest=JSON.parse(readFileSync(manifestPath));const integrity=`sha512-${createHash('sha512').update(bytes).digest('base64')}`;const server=http.createServer((req,res)=>{const u=new URL(req.url,'http://x'),decoded=decodeURIComponent(u.pathname),base=`${name.split('/').at(-1)}-${version}.tgz`;if(decoded===`/${name}`){const port=server.address().port;res.writeHead(200,{'content-type':'application/json','cache-control':'no-store'});res.end(JSON.stringify({name,'dist-tags':{latest:version},versions:{[version]:{...manifest,dist:{tarball:`http://127.0.0.1:${port}/${name}/-/${base}`,integrity}}}}));}else if(decoded===`/${name}/-/${base}`){res.writeHead(200,{'content-type':'application/octet-stream'});res.end(bytes);}else{res.writeHead(404,{'content-type':'application/json'});res.end('{}')}});server.listen(0,'127.0.0.1',()=>process.stdout.write(`${server.address().port}\n`));

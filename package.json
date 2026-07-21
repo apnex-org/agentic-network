@@ -17,5 +17,8 @@
     "version-rewrite:revert": "node scripts/version-rewrite.js --revert",
     "prepublishOnly": "node scripts/version-rewrite.js",
     "postpublish": "node scripts/version-rewrite.js --revert"
+  },
+  "devDependencies": {
+    "esbuild": "0.28.0"
   }
 }

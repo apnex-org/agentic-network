@@ -65,17 +65,10 @@ describe("pi-plugin facade boundary", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("package + root lockfile depend on @apnex/network-adapter only (no cognitive/message-router backdoor)", () => {
+  it("package + root lockfile have no consumer runtime dependency edge", () => {
     const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf-8"));
-    const deps = pkg.dependencies ?? {};
-    expect(deps["@apnex/network-adapter"]).toBeDefined();
-    expect(deps["@apnex/cognitive-layer"]).toBeUndefined();
-    expect(deps["@apnex/message-router"]).toBeUndefined();
-
+    expect(pkg.dependencies ?? {}).toEqual({});
     const lock = JSON.parse(readFileSync(resolve(repoRoot, "package-lock.json"), "utf-8"));
-    const lockDeps = lock.packages?.["adapters/pi-plugin"]?.dependencies ?? {};
-    expect(lockDeps["@apnex/network-adapter"]).toBeDefined();
-    expect(lockDeps["@apnex/cognitive-layer"]).toBeUndefined();
-    expect(lockDeps["@apnex/message-router"]).toBeUndefined();
+    expect(lock.packages?.["adapters/pi-plugin"]?.dependencies ?? {}).toEqual({});
   });
 });

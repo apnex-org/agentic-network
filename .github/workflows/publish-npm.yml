@@ -66,9 +66,11 @@ jobs:
             exit 1
           fi
           {
-            echo "OIS_BUILD_SHA=$(git rev-parse --short HEAD)"
+            echo "OIS_BUILD_SHA=$(git rev-parse HEAD)"
+            echo "OIS_BUILD_TREE=$(git rev-parse HEAD^{tree})"
             echo "OIS_BUILD_DIRTY=false"
-            echo "OIS_BUILD_BRANCH=$(git rev-parse --abbrev-ref HEAD)"
+            echo "OIS_BUILD_BRANCH=canonical"
+            echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)"
           } >> "$GITHUB_ENV"
           echo "provenance: $(git rev-parse --short HEAD) clean on $(git rev-parse --abbrev-ref HEAD)"
 
@@ -77,7 +79,7 @@ jobs:
       # authenticates `npm publish`.
       - uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '24.12.0'
           registry-url: 'https://registry.npmjs.org'
           scope: '@apnex'
 
@@ -92,16 +94,11 @@ jobs:
       # module '@apnex/message-router'"). The publish step still ships only the
       # explicit list in publish-packages.sh; mission-101 W6 deliberately adds
       # opencode-plugin to that explicit published-family list.
-      - name: Install workspaces (scoped)
+      - name: Install exact toolchain and lock
         run: |
-          npm install --no-audit --no-fund --ignore-scripts \
-            --workspace=@apnex/cognitive-layer \
-            --workspace=@apnex/message-router \
-            --workspace=@apnex/network-adapter \
-            --workspace=@apnex/storage-provider \
-            --workspace=@apnex/claude-plugin \
-            --workspace=@apnex/opencode-plugin \
-            --workspace=@apnex/pi-plugin
+          npm install --global npm@11.6.2
+          test "$(npm --version)" = "11.6.2"
+          npm ci --no-audit --no-fund --ignore-scripts
 
       # Sovereign packages must have dist/ before publish (main → dist/index.js)
       # + build-info.json for build-identity. network-adapter ↔ message-router
@@ -117,13 +114,24 @@ jobs:
           ( cd adapters/claude-plugin && npm run build )
           ( cd adapters/opencode-plugin && npm run build )
           ( cd adapters/pi-plugin && npm run build )
+          node scripts/test/minimal-aligned-plugin-delivery.test.mjs
 
-      # Publish (or dry-run). The script gates on prepack --assert (version bump),
-      # hoists version-rewrite, publishes topologically, and trap-reverts deps.
+      - name: Freeze local candidate integrities
+        run: |
+          rm -rf /tmp/aligned-candidates && mkdir -p /tmp/aligned-candidates
+          npm pack --workspace=@apnex/claude-plugin --ignore-scripts --json --pack-destination /tmp/aligned-candidates > /tmp/claude-pack.json
+          npm pack --workspace=@apnex/pi-plugin --ignore-scripts --json --pack-destination /tmp/aligned-candidates > /tmp/pi-pack.json
+          echo "CLAUDE_EXPECTED_INTEGRITY=$(jq -r '.[0].integrity' /tmp/claude-pack.json)" >> "$GITHUB_ENV"
+          echo "PI_EXPECTED_INTEGRITY=$(jq -r '.[0].integrity' /tmp/pi-pack.json)" >> "$GITHUB_ENV"
+
+      # Publish (or dry-run). The script gates fresh candidate vacancy, hoists
+      # version-rewrite for the legacy family, and provenance-publishes exactly once.
       - name: Publish @apnex/* family
         env:
           NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          OIS_NPM_PROVENANCE: "1"
+          OIS_REQUIRE_FRESH_CANDIDATES: "1"
         run: |
           # c493 (G7 tag-provenance): a REAL publish happens ONLY on an `npm-v*` TAG push, so
           # every published artifact traces to a tag. A workflow_dispatch is DRY-RUN ONLY — it
@@ -135,3 +143,22 @@ jobs:
             echo "→ dry-run publish (workflow_dispatch is dry-run only; a real publish requires an npm-v* tag)"
             bash scripts/publish-packages.sh --dry-run
           fi
+
+      - name: Immediate public-registry reacquisition
+        if: github.event_name == 'push'
+        run: |
+          for arm in r1 r2; do
+            root="/tmp/public-$arm"
+            rm -rf "$root" && mkdir -p "$root/claude" "$root/pi" "$root/cache"
+            for i in $(seq 1 12); do NPM_CONFIG_CACHE="$root/cache" npm pack @apnex/claude-plugin@0.1.18 --ignore-scripts --json --pack-destination "$root/claude" > "$root/claude.json" && break; sleep 5; done
+            for i in $(seq 1 12); do NPM_CONFIG_CACHE="$root/cache" npm pack @apnex/pi-plugin@0.1.9 --ignore-scripts --json --pack-destination "$root/pi" > "$root/pi.json" && break; sleep 5; done
+            test -s "$root/claude.json" && test -s "$root/pi.json"
+            test "$(jq -r '.[0].integrity' "$root/claude.json")" = "$CLAUDE_EXPECTED_INTEGRITY"
+            test "$(jq -r '.[0].integrity' "$root/pi.json")" = "$PI_EXPECTED_INTEGRITY"
+            npm install "$root/claude/$(jq -r '.[0].filename' "$root/claude.json")" --prefix "$root/claude-realized" --ignore-scripts --no-audit --no-fund --omit=dev --legacy-peer-deps
+            npm install "$root/pi/$(jq -r '.[0].filename' "$root/pi.json")" --prefix "$root/pi-realized" --ignore-scripts --no-audit --no-fund --omit=dev --legacy-peer-deps
+            test "$(jq '.packages|length' "$root/claude-realized/package-lock.json")" = 2
+            test "$(jq '.packages|length' "$root/pi-realized/package-lock.json")" = 2
+          done
+          diff -qr /tmp/public-r1/claude-realized/node_modules/@apnex/claude-plugin /tmp/public-r2/claude-realized/node_modules/@apnex/claude-plugin
+          diff -qr /tmp/public-r1/pi-realized/node_modules/@apnex/pi-plugin /tmp/public-r2/pi-realized/node_modules/@apnex/pi-plugin
