@@ -1,6 +1,6 @@
 # Exact frozen-tarball publication protocol
 
-Use only for the `claude_clean_artifact_corrective1` successor release authorized by a Director proof that binds the complete manifest. This protocol does not itself grant authority.
+Use only for the post-TOCTOU successor release authorized by a Director proof that binds the complete manifest and this alias-free protocol source. This protocol does not itself grant authority.
 
 ## Invocation
 
@@ -18,8 +18,9 @@ Verifier/producer rehearsal adds `--dry-run`. A partial-release continuation req
 
 ```json
 {
-  "protocolVersion": 1,
+  "protocolVersion": 2,
   "npmCliVersion": "11.6.2",
+  "libnpmpublishVersion": "11.1.2",
   "executor": {
     "agentName": "lily",
     "role": "architect",
@@ -59,25 +60,29 @@ Verifier/producer rehearsal adds `--dry-run`. A partial-release continuation req
 }
 ```
 
-The freeze node replaces every placeholder with immutable values and preserves the manifest beside the read-only tarballs. The Director decision must bind the manifest bytes, source commit/tree, all paths/hashes/integrities/gitHeads, executor/npm identity and CLI version, commands/order, latest-tag movement, and partial-failure boundary.
+The freeze node replaces every placeholder with immutable values and preserves the manifest beside the read-only tarballs. Protocol version 2 deliberately rejects corrective2 manifests. The Director decision must bind the manifest bytes, source commit/tree, all hashes/integrities/gitHeads, executor/npm identity, npm and bundled `libnpmpublish` versions, programmatic Buffer transport, fixed order, latest-tag movement, and partial-failure boundary.
 
 ## Fail-closed sequence
 
-1. Match runtime seat to `lily` / `architect` and npm CLI to the manifest.
-2. Run `npm whoami`; failure or identity mismatch stops before registry mutation.
-3. Re-hash **all** tarballs and inspect each packed `package.json` for exact name/version/full `gitHead` before the first registry probe.
+1. Match runtime seat to `lily` / `architect`, npm CLI to the manifest, and npm's bundled `libnpmpublish` to the manifest.
+2. Run `npm whoami`; failure or identity mismatch stops before registry mutation. Programmatic publication loads npm's own flattened credential/registry configuration and OTP retry helper from that same pinned installation.
+3. Open and re-hash **all** tarballs for the initial preflight; inspect each descriptor-derived packed `package.json` for exact name/version/full `gitHead` and internal dependency lineage before the first registry probe.
 4. Probe all three exact versions. Fresh mode requires vacancy.
-5. Publish the absolute frozen `.tgz` paths only, in order:
+5. Before the first mutation, open every pending manifest path once with `O_NOFOLLOW`; re-identify SHA-256, SHA-512, packed manifest, exact internal dependencies, and full `gitHead` from each held descriptor; copy every complete descriptor-derived byte sequence into a Buffer; retain all descriptors and Buffers.
+6. Publish the Buffers in fixed order:
    1. cognitive-layer `0.1.4`
    2. network-adapter `0.1.14`
    3. Claude plugin `0.1.16`
-6. The only mutation command is:
+7. The only mutation operation is npm 11.6.2's own bundled API:
 
-   ```bash
-   npm publish <absolute-frozen-tgz> --access public --tag latest
+   ```js
+   otplease(npm, options, opts =>
+     libnpmpublish.publish(packedManifest, exactVerifiedTarballBuffer, opts))
    ```
 
-7. Stop on first failure and preserve the state JSON. Do not unpublish, deprecate, or move a dist-tag as rollback.
-8. Recovery requires fresh authority. `--recover` accepts only an already-published **prefix** whose registry integrity and full `gitHead` exactly match the manifest, then continues at the first vacant step. Any mismatch or hole stops.
+   `options` is npm's own loaded configuration with `access: "public"` and `defaultTag: "latest"`. Immediately before each call, the protocol copies and re-hashes the already verified Buffer. No artifact pathname, symlink, `/proc/self/fd` locator, directory, workspace, repack, or child-process argv is supplied to the npm consumer. A swap before final open fails identity before mutation; a swap after final open cannot alter the in-memory bytes supplied to `libnpmpublish`.
+8. `--dry-run` performs the complete identity, vacancy, toolchain-load, Buffer-binding, order, and state checks but skips the registry PUT.
+9. Stop on first failure and preserve the state JSON. Do not unpublish, deprecate, or move a dist-tag as rollback.
+10. Recovery requires fresh authority. `--recover` accepts only an already-published **prefix** whose registry integrity and full `gitHead` exactly match the manifest, then continues at the first vacant step. Any mismatch or hole stops.
 
-The legacy `scripts/publish-packages.sh`, `npm publish --workspace`, directory publication, and repacking are forbidden for this release because they do not preserve verifier-bound bytes.
+Read-only files and least-permissive parent directories remain defense in depth. Byte identity comes from final descriptor-derived Buffer verification and direct programmatic consumption. Corrective2's private suffix-bearing alias, bare descriptor paths, the legacy `scripts/publish-packages.sh`, `npm publish --workspace`, directory publication, pathname publication, and repacking are forbidden because they leave a mutable path boundary or do not preserve verifier-bound bytes.
