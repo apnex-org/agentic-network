@@ -1,0 +1,1 @@
+{"$schema":"https://anthropic.com/claude-code/marketplace.schema.json","name":"agentic-network-phase-a","owner":{"name":"OIS Phase A"},"plugins":[{"name":"agent-adapter-phase-a","version":"0.0.1","source":{"source":"npm","package":"@apnex/claude-native-s0-plugin","version":"0.0.1","registry":"__REGISTRY_URL__"}}]}
