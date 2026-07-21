@@ -67,7 +67,7 @@ const statePath = manifest.statePath;
 if (!isAbsolute(statePath ?? "")) throw new Error("manifest.statePath must be absolute");
 
 const state = {
-  protocolVersion: 2,
+  protocolVersion: 3,
   manifestPath,
   dryRun,
   recovery,
@@ -123,9 +123,28 @@ function openArtifact(path) {
   return openSync(path, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
 }
 
-function packedManifest(bytes) {
-  const result = run("tar", ["-xzOf", "-", "package/package.json"], { input: bytes });
+function packedJson(bytes, path) {
+  const result = run("tar", ["-xzOf", "-", path], { input: bytes });
   return JSON.parse(result.stdout);
+}
+
+function packedManifest(bytes) {
+  return packedJson(bytes, "package/package.json");
+}
+
+function normalizeRegistry(value) {
+  const url = new URL(value);
+  if (url.username || url.password || url.search || url.hash) throw new Error("registry must not contain credentials, query, or fragment");
+  url.pathname = `${url.pathname.replace(/\/+$/, "")}/`;
+  const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost";
+  if (url.href !== "https://registry.npmjs.org/" && !(loopback && url.protocol === "http:")) {
+    throw new Error(`registry must be https://registry.npmjs.org/ (loopback is test-only), got ${url.href}`);
+  }
+  return url.href;
+}
+
+function requireRegistry(options, expected, boundary) {
+  requireExact(normalizeRegistry(options.registry), expected, `${boundary} registry`);
 }
 
 function requireExact(actual, expected, label) {
@@ -141,10 +160,13 @@ function identifyArtifact(fd, artifact, name, version, boundary) {
     `${name}: ${boundary} SHA-512 integrity`,
   );
   const packed = packedManifest(identified.bytes);
+  const buildInfo = packedJson(identified.bytes, "package/dist/build-info.json");
   requireExact(packed.name, name, `${name}: ${boundary} packed name`);
   requireExact(packed.version, version, `${name}: ${boundary} packed version`);
   requireExact(artifact.gitHead, manifest.source.commit, `${name}: manifest gitHead/source commit`);
   requireExact(packed.gitHead, artifact.gitHead, `${name}: ${boundary} packed gitHead`);
+  requireExact(buildInfo.commitSha, manifest.source.commit, `${name}: ${boundary} build-info commitSha`);
+  requireExact(buildInfo.dirty, false, `${name}: ${boundary} build-info dirty`);
   const internalDependencies = Object.fromEntries(
     Object.entries(packed.dependencies ?? {}).filter(([dependency]) => dependency.startsWith("@apnex/")),
   );
@@ -153,7 +175,7 @@ function identifyArtifact(fd, artifact, name, version, boundary) {
     JSON.stringify(EXPECTED_INTERNAL_DEPENDENCIES[name]),
     `${name}: ${boundary} packed internal dependency lineage`,
   );
-  return { ...identified, packed };
+  return { ...identified, packed, buildInfo };
 }
 
 function identifyPath(artifact, name, version, boundary) {
@@ -165,20 +187,22 @@ function identifyPath(artifact, name, version, boundary) {
   }
 }
 
-function registryRecord(spec) {
-  const version = run("npm", ["view", spec, "version", "--json"], { allowFailure: true });
-  if (version.status !== 0) {
-    if (/E404|404 Not Found|is not in this registry|No match found/i.test(version.combined)) return null;
-    throw new Error(`registry probe failed for ${spec}: ${version.combined}`);
+async function registryRecord(publisher, spec, registry) {
+  requireRegistry(publisher.options, registry, `${spec}: vacancy`);
+  try {
+    const packed = await publisher.pacote.manifest(spec, publisher.options);
+    return {
+      version: packed.version,
+      integrity: packed.dist?.integrity,
+      gitHead: packed.gitHead,
+    };
+  } catch (error) {
+    if (error?.code === "E404" || error?.statusCode === 404) return null;
+    throw new Error(`registry probe failed for ${spec}: ${error instanceof Error ? error.message : String(error)}`);
   }
-  return {
-    version: JSON.parse(version.stdout),
-    integrity: JSON.parse(run("npm", ["view", spec, "dist.integrity", "--json"]).stdout),
-    gitHead: JSON.parse(run("npm", ["view", spec, "gitHead", "--json"]).stdout),
-  };
 }
 
-async function loadProgrammaticNpm() {
+async function loadProgrammaticNpm(registry) {
   const globalRoot = run("npm", ["root", "--global"]).stdout;
   const npmRoot = realpathSync(join(globalRoot, "npm"));
   const npmPackage = JSON.parse(readFileSync(join(npmRoot, "package.json"), "utf8"));
@@ -187,6 +211,8 @@ async function loadProgrammaticNpm() {
   const npmRequire = createRequire(join(npmRoot, "package.json"));
   const Npm = npmRequire("./lib/npm.js");
   const { publish } = npmRequire("libnpmpublish");
+  const registryFetch = npmRequire("npm-registry-fetch");
+  const pacote = npmRequire("pacote");
   const { otplease } = npmRequire("./lib/utils/auth.js");
   const libnpmpublishPackage = npmRequire("libnpmpublish/package.json");
   requireExact(
@@ -210,17 +236,23 @@ async function loadProgrammaticNpm() {
     process.title = originalTitle;
   }
 
+  requireRegistry(npm.flatOptions, registry, "loaded npm config target");
+  const options = Object.freeze({
+    ...npm.flatOptions,
+    access: "public",
+    defaultTag: "latest",
+    npmVersion: npmPackage.version,
+    progress: false,
+  });
+  requireRegistry(options, registry, "loaded npm config snapshot");
+
   return {
     npm,
     publish,
+    registryFetch,
+    pacote,
     otplease,
-    options: {
-      ...npm.flatOptions,
-      access: "public",
-      defaultTag: "latest",
-      npmVersion: npmPackage.version,
-      progress: false,
-    },
+    options,
     npmVersion: npmPackage.version,
     libnpmpublishVersion: libnpmpublishPackage.version,
   };
@@ -228,7 +260,7 @@ async function loadProgrammaticNpm() {
 
 try {
   persist();
-  requireExact(manifest.protocolVersion, 2, "manifest protocolVersion");
+  requireExact(manifest.protocolVersion, 3, "manifest protocolVersion");
   requireExact(manifest.executor?.agentName, "lily", "executor agentName");
   requireExact(manifest.executor?.role, "architect", "executor role");
   if (!/^[0-9a-f]{40}$/.test(manifest.source?.commit ?? "")) throw new Error("source.commit must be a full 40-hex commit");
@@ -236,10 +268,24 @@ try {
   requireExact(process.env.OIS_AGENT_NAME, manifest.executor.agentName, "runtime executor agentName");
   requireExact(process.env.OIS_HUB_ROLE, manifest.executor.role, "runtime executor role");
 
+  const registry = normalizeRegistry(manifest.registry);
+  requireExact(manifest.registry, registry, "manifest normalized registry");
+  state.registry = registry;
+
   const npmVersion = run("npm", ["--version"]).stdout;
   requireExact(npmVersion, manifest.npmCliVersion, "npm CLI version");
-  const npmIdentity = run("npm", ["whoami"]).stdout;
-  requireExact(npmIdentity, manifest.executor.npmIdentity, "npm identity");
+  // Load exactly one npm configuration snapshot. Identity, vacancy, recovery,
+  // and publication all consume these same frozen options; no later config
+  // reload can select a different mutation target.
+  const publisher = await loadProgrammaticNpm(registry);
+  state.npmConsumer = {
+    transport: "npm-programmatic-tarball-buffer",
+    npmVersion: publisher.npmVersion,
+    libnpmpublishVersion: publisher.libnpmpublishVersion,
+    registry,
+    configSnapshot: "single-frozen-flat-options",
+  };
+  persist();
 
   if (!Array.isArray(manifest.artifacts) || manifest.artifacts.length !== EXPECTED_ORDER.length) {
     throw new Error(`manifest must contain exactly ${EXPECTED_ORDER.length} artifacts`);
@@ -259,11 +305,15 @@ try {
   }
   persist();
 
+  requireRegistry(publisher.options, registry, "whoami");
+  const identity = await publisher.registryFetch.json("/-/whoami", publisher.options);
+  requireExact(identity?.username, manifest.executor.npmIdentity, "npm identity");
+
   let sawVacant = false;
   for (let i = 0; i < manifest.artifacts.length; i += 1) {
     const artifact = manifest.artifacts[i];
     const spec = `${artifact.name}@${artifact.version}`;
-    const published = registryRecord(spec);
+    const published = await registryRecord(publisher, spec, registry);
     if (published === null) {
       sawVacant = true;
       state.steps[i].status = "vacant";
@@ -305,14 +355,6 @@ try {
   }
   persist();
 
-  const publisher = await loadProgrammaticNpm();
-  state.npmConsumer = {
-    transport: "npm-programmatic-tarball-buffer",
-    npmVersion: publisher.npmVersion,
-    libnpmpublishVersion: publisher.libnpmpublishVersion,
-  };
-  persist();
-
   for (const held of heldArtifacts) {
     const { index, artifact, bytes, packed } = held;
     state.currentStep = `${artifact.name}@${artifact.version}`;
@@ -326,8 +368,11 @@ try {
     persist();
 
     if (!dryRun) {
-      await publisher.otplease(publisher.npm, publisher.options, (options) =>
-        publisher.publish(structuredClone(packed), consumerBytes, options));
+      requireRegistry(publisher.options, registry, `${artifact.name}: pre-publish snapshot`);
+      await publisher.otplease(publisher.npm, publisher.options, (options) => {
+        requireRegistry(options, registry, `${artifact.name}: OTP publication`);
+        return publisher.publish(structuredClone(packed), consumerBytes, Object.freeze({ ...options, registry }));
+      });
     }
     state.steps[index].status = dryRun ? "dry-run-validated" : "published";
     state.currentStep = null;
