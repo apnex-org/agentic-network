@@ -51,6 +51,9 @@ export type {
   PollResult,
   WorkflowRun,
   WorkflowRunsResponse,
+  IssueEventEnvelope,
+  IssueEventsPollResult,
+  PullRequestSnapshot,
 } from "./gh-api-client.js";
 
 export {
@@ -76,3 +79,12 @@ export {
 
 export { WorkflowRunPollSource } from "./workflow-run-poll-source.js";
 export type { WorkflowRunPollSourceOptions } from "./workflow-run-poll-source.js";
+
+// bug-334: review-request assignment events are absent from /repos/events.
+// This persisted sibling source observes /issues/events, enriches exact PR
+// head/base, and feeds the existing PullRequestEvent translation/Hub path.
+export {
+  ReviewRequestPollSource,
+  REVIEW_REQUEST_CURSOR_PREFIX,
+} from "./review-request-poll-source.js";
+export type { ReviewRequestPollSourceOptions } from "./review-request-poll-source.js";

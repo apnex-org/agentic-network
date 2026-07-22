@@ -41,6 +41,45 @@ export interface PollResult {
   readonly rateLimitRemaining?: number;
 }
 
+/** Review-request lifecycle rows are exposed by the repository issue-events
+ * endpoint, not by `/repos/:repo/events`.  The subset below is sufficient to
+ * identify a PR and preserve reviewer/team assignment facts. */
+export interface IssueEventEnvelope {
+  readonly id: number | string;
+  readonly event: string;
+  readonly created_at: string;
+  readonly actor?: { login?: string };
+  readonly issue: {
+    readonly number: number;
+    readonly title?: string;
+    readonly html_url?: string;
+    readonly user?: { login?: string };
+    readonly pull_request?: { url?: string; html_url?: string };
+  };
+  readonly requested_reviewer?: { login?: string };
+  readonly requested_team?: { slug?: string; name?: string };
+  readonly review_requester?: { login?: string };
+}
+
+export interface IssueEventsPollResult {
+  readonly notModified: boolean;
+  readonly events: IssueEventEnvelope[];
+  readonly etag?: string;
+  readonly rateLimitReset?: number;
+  readonly rateLimitRemaining?: number;
+}
+
+/** Exact PR snapshot used to enrich issue-event rows before the existing
+ * PullRequestEvent translator/Hub handler sees them. */
+export interface PullRequestSnapshot {
+  readonly number: number;
+  readonly title?: string;
+  readonly html_url?: string;
+  readonly user?: { login?: string };
+  readonly base?: { ref?: string; sha?: string };
+  readonly head?: { ref?: string; sha?: string };
+}
+
 /**
  * One workflow run record as returned by `/repos/:owner/:repo/actions/runs`.
  * The Actions REST API shape — distinct from the WorkflowRunEvent webhook
@@ -270,6 +309,48 @@ export class GhApiClient {
     };
   }
 
+  /** Poll review-request lifecycle from `/repos/:repoId/issues/events`.
+   * GitHub's repository `/events` feed does not expose these assignment
+   * transitions. ETag + persisted source dedupe make this endpoint restart-safe.
+   */
+  async pollIssueEvents(
+    repoId: string,
+    options: { etag?: string; perPage?: number } = {},
+  ): Promise<IssueEventsPollResult> {
+    const url = `${this.baseUrl}/repos/${repoId}/issues/events?per_page=${options.perPage ?? 100}`;
+    const headers = this.headers();
+    if (options.etag) headers["if-none-match"] = options.etag;
+    const response = await this.fetchResponse(url, headers);
+    if (response.status === 304) {
+      return {
+        notModified: true,
+        events: [],
+        etag: response.headers.get("etag") ?? options.etag,
+        rateLimitReset: parseEpochSec(response.headers.get("x-ratelimit-reset")),
+        rateLimitRemaining: parseInt(response.headers.get("x-ratelimit-remaining") ?? "", 10),
+      };
+    }
+    await this.assertPollResponse(response);
+    const body = (await response.json()) as unknown;
+    return {
+      notModified: false,
+      events: Array.isArray(body) ? body as IssueEventEnvelope[] : [],
+      etag: response.headers.get("etag") ?? undefined,
+      rateLimitReset: parseEpochSec(response.headers.get("x-ratelimit-reset")),
+      rateLimitRemaining: parseInt(response.headers.get("x-ratelimit-remaining") ?? "", 10),
+    };
+  }
+
+  /** Fetch the exact head/base/author snapshot missing from issue-event rows. */
+  async getPullRequest(repoId: string, prNumber: number): Promise<PullRequestSnapshot> {
+    const response = await this.fetchResponse(
+      `${this.baseUrl}/repos/${repoId}/pulls/${prNumber}`,
+      this.headers(),
+    );
+    await this.assertPollResponse(response);
+    return (await response.json()) as PullRequestSnapshot;
+  }
+
   /**
    * Poll `/repos/:repoId/actions/runs` for workflow runs.
    * idea-255 / M-Workflow-Run-Events-Hub-Integration F1 fold: workflow_run is
@@ -330,6 +411,30 @@ export class GhApiClient {
         10,
       ),
     };
+  }
+
+  private async fetchResponse(url: string, headers: Record<string, string>): Promise<Response> {
+    try {
+      return await this.fetchImpl(url, { headers });
+    } catch (err) {
+      throw new GhApiTransientError(null, (err as Error)?.message ?? String(err));
+    }
+  }
+
+  private async assertPollResponse(response: Response): Promise<void> {
+    if (response.status === 429) {
+      throw new GhApiRateLimitError(parseRateLimitResume(response.headers));
+    }
+    if (response.status === 401 || response.status === 403) {
+      const remaining = response.headers.get("x-ratelimit-remaining");
+      if (response.status === 403 && remaining === "0") {
+        throw new GhApiRateLimitError(parseRateLimitResume(response.headers));
+      }
+      throw new GhApiAuthError(response.status, await safeText(response));
+    }
+    if (!response.ok) {
+      throw new GhApiTransientError(response.status, await safeText(response));
+    }
   }
 
   private headers(): Record<string, string> {

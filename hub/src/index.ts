@@ -971,7 +971,11 @@ if (OIS_GH_API_TOKEN && OIS_REPO_EVENT_BRIDGE_REPOS.length > 0) {
     // prefix adapter halted bridge at workflow-run-poll-source startup.
     storage: new RepoEventBridgeSubstrateAdapter({
       substrate: substrate!,
-      pathPrefixes: ["repo-event-bridge", "repo-event-bridge-workflow-runs"],
+      pathPrefixes: [
+        "repo-event-bridge",
+        "repo-event-bridge-workflow-runs",
+        "repo-event-bridge-review-requests",
+      ],
     }),
     token: OIS_GH_API_TOKEN,
     repos: OIS_REPO_EVENT_BRIDGE_REPOS,
