@@ -2,8 +2,9 @@
 import { spawnSync } from "node:child_process";
 
 const EXPECTED_PACKAGE = "@apnex/claude-plugin";
-const EXPECTED_VERSION = "0.1.18";
+const EXPECTED_VERSION = "0.1.19";
 const EXPECTED_SPEC = `${EXPECTED_PACKAGE}@${EXPECTED_VERSION}`;
+const EXPECTED_TAG = `claude-plugin-v${EXPECTED_VERSION}`;
 const EXPECTED_CONFIRMATION = `DEPRECATE_FAILED_QUALIFICATION:${EXPECTED_SPEC}`;
 const DEPRECATION_MESSAGE = "Failed post-publication qualification; do not install or reuse this version.";
 const REGISTRY = "https://registry.npmjs.org";
@@ -45,10 +46,12 @@ function jsonScalar(output, label) {
 
 const packageName = process.env.DEPRECATION_PACKAGE ?? "";
 const version = process.env.DEPRECATION_VERSION ?? "";
+const tag = process.env.DEPRECATION_TAG ?? "";
 const confirmation = process.env.DEPRECATION_CONFIRMATION ?? "";
 
 requireExact("DEPRECATION_PACKAGE", packageName, EXPECTED_PACKAGE);
 requireExact("DEPRECATION_VERSION", version, EXPECTED_VERSION);
+requireExact("DEPRECATION_TAG", tag, EXPECTED_TAG);
 requireExact("DEPRECATION_CONFIRMATION", confirmation, EXPECTED_CONFIRMATION);
 if (!process.env.NODE_AUTH_TOKEN) fail("NODE_AUTH_TOKEN is required from the protected npm-production environment");
 
