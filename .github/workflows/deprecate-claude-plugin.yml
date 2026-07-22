@@ -1,0 +1,49 @@
+name: deprecate-claude-plugin
+
+# Negative-only contingency for a published 0.1.18 that fails independent
+# qualification. This workflow cannot publish, overwrite, tag, or deploy.
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: Exact failed package (fixed; other values reject)
+        required: true
+        type: string
+        default: '@apnex/claude-plugin'
+      version:
+        description: Exact failed version (fixed; other values reject)
+        required: true
+        type: string
+        default: '0.1.18'
+      confirmation:
+        description: 'Type DEPRECATE_FAILED_QUALIFICATION:@apnex/claude-plugin@0.1.18'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deprecate-claude-plugin-0.1.18
+  cancel-in-progress: false
+
+jobs:
+  deprecate:
+    runs-on: ubuntu-latest
+    environment: npm-production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.12.0'
+          registry-url: 'https://registry.npmjs.org'
+          scope: '@apnex'
+
+      - name: Deprecate and verify the exact failed version
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          DEPRECATION_PACKAGE: ${{ inputs.package }}
+          DEPRECATION_VERSION: ${{ inputs.version }}
+          DEPRECATION_CONFIRMATION: ${{ inputs.confirmation }}
+        run: node scripts/release/deprecate-claude-plugin-version.mjs

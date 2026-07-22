@@ -199,6 +199,31 @@ jobs:
           bash ois/test/socket-isolation.test.sh
           bash ois/test/reset.test.sh
 
+  # ── Claude product-path gate ───────────────────────────────────────
+  claude-plugin-product-path:
+    runs-on: ubuntu-latest
+    name: claude plugin product path
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.12.0'
+          cache: npm
+          cache-dependency-path: package-lock.json
+      - run: npm install --global npm@11.6.2
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Build, acquire, install, copy, start and connect
+        env:
+          OIS_BUILD_DIRTY: "false"
+          SOURCE_DATE_EPOCH: "0"
+        run: |
+          export OIS_BUILD_SHA="$(git rev-parse HEAD)"
+          export OIS_BUILD_TREE="$(git rev-parse HEAD^{tree})"
+          node scripts/test/claude-plugin-product-path.test.mjs
+          node scripts/test/claude-plugin-deprecation.test.mjs
+
   # ── Aggregator: single status-check name for branch-protection rules ─
   # Branch-protection rule targets `test` (a stable name); the
   # dependencies below decide what gates are load-bearing. Matrix
@@ -209,7 +234,7 @@ jobs:
   # `vitest-non-hub` matrix once all four cells were genuinely CI-green.
   test:
     name: test
-    needs: [vitest-hub, coverage-report-sync, vitest-non-hub, vitest-workgraph-sim, ois-shell-tests]
+    needs: [vitest-hub, coverage-report-sync, vitest-non-hub, vitest-workgraph-sim, ois-shell-tests, claude-plugin-product-path]
     runs-on: ubuntu-latest
     steps:
       - run: echo "All required test jobs passed."
