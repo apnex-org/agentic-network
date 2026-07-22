@@ -46,7 +46,7 @@ cd "$REPO_ROOT"
 #   4. opencode-plugin  (deps on network-adapter; mission-101 npm cutover) — after net-adapter
 #   5. pi-plugin        (deps on network-adapter; M-Shim-Distribution) — after net-adapter
 #
-# @apnex/claude-plugin is intentionally excluded. Its dependency-free candidate
+# "@apnex/claude-plugin" is intentionally excluded. Its dependency-free candidate
 # has one protected path: .github/workflows/publish-claude-plugin.yml.
 # storage-provider + repo-event-bridge: workspace-only (not for the registry).
 # They are now marked `private:true` (cleanslate0 npm_dedual), so `npm publish`

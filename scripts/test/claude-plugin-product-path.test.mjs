@@ -195,7 +195,8 @@ try {
 
   const familyPublisher = readFileSync(join(repo, "scripts", "publish-packages.sh"), "utf8");
   const dedicatedWorkflow = readFileSync(join(repo, ".github", "workflows", "publish-claude-plugin.yml"), "utf8");
-  assert.ok(!familyPublisher.includes('"@apnex/claude-plugin"'), "legacy family publisher still owns the Claude package");
+  const familyPackageBlock = familyPublisher.match(/PACKAGES=\(([\s\S]*?)\)/)?.[1] ?? "";
+  assert.ok(!familyPackageBlock.includes('"@apnex/claude-plugin"'), "legacy family publisher still owns the Claude package");
   for (const required of [
     "claude-plugin-v*",
     "npm publish --workspace=@apnex/claude-plugin --access public --provenance --ignore-scripts",

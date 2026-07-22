@@ -56,20 +56,22 @@ fail() { echo "FAIL - $1"; fails=$((fails + 1)); }
 contains() { local desc="$1" hay="$2" needle="$3"; [[ "$hay" == *"$needle"* ]] && ok "$desc" || { fail "$desc"; echo "        missing: $needle"; }; }
 not_contains() { local desc="$1" hay="$2" needle="$3"; [[ "$hay" != *"$needle"* ]] && ok "$desc" || { fail "$desc"; echo "        unexpected: $needle"; }; }
 eq() { local desc="$1" exp="$2" got="$3"; [[ "$exp" == "$got" ]] && ok "$desc" || { fail "$desc"; echo "        expected: [$exp]"; echo "        actual:   [$got]"; }; }
+neq() { local desc="$1" left="$2" right="$3"; [[ "$left" != "$right" ]] && ok "$desc" || { fail "$desc"; echo "        unexpectedly equal: [$left]"; }; }
 
 claude_pin="$(sed -n 's/^CLAUDE_PLUGIN_VERSION="\([^"]*\)"/\1/p' "$OIS")"
 claude_pkg_version="$(node -p "require('$REPO/adapters/claude-plugin/package.json').version")"
 claude_lock_version="$(node -p "require('$REPO/package-lock.json').packages['adapters/claude-plugin'].version")"
-claude_network_dep="$(node -p "require('$REPO/adapters/claude-plugin/package.json').dependencies['@apnex/network-adapter']")"
+claude_runtime_dep_count="$(node -p "Object.keys(require('$REPO/adapters/claude-plugin/package.json').dependencies || {}).length")"
 cognitive_pkg_version="$(node -p "require('$REPO/packages/cognitive-layer/package.json').version")"
 cognitive_lock_version="$(node -p "require('$REPO/package-lock.json').packages['packages/cognitive-layer'].version")"
 network_pkg_version="$(node -p "require('$REPO/packages/network-adapter/package.json').version")"
 network_lock_version="$(node -p "require('$REPO/package-lock.json').packages['packages/network-adapter'].version")"
 network_cognitive_dep="$(node -p "require('$REPO/packages/network-adapter/package.json').dependencies['@apnex/cognitive-layer']")"
 network_router_dep="$(node -p "require('$REPO/packages/network-adapter/package.json').dependencies['@apnex/message-router']")"
-eq "OIS exact Claude pin matches canonical package version" "$claude_pkg_version" "$claude_pin"
-eq "Claude package lock version matches canonical package version" "$claude_pkg_version" "$claude_lock_version"
-eq "Claude pins exact canonical network-adapter version" "$network_pkg_version" "$claude_network_dep"
+eq "OIS keeps the prior published Claude pin until a separate publication slice" "0.1.16" "$claude_pin"
+neq "fresh Claude source candidate is not silently active in OIS" "$claude_pkg_version" "$claude_pin"
+eq "Claude package lock version matches source candidate" "$claude_pkg_version" "$claude_lock_version"
+eq "Claude source candidate has zero consumer runtime dependencies" "0" "$claude_runtime_dep_count"
 eq "network-adapter lock version matches canonical package version" "$network_pkg_version" "$network_lock_version"
 eq "network-adapter pins exact cognitive-layer version" "$cognitive_pkg_version" "$network_cognitive_dep"
 eq "network-adapter pins exact message-router version" "0.1.3" "$network_router_dep"
