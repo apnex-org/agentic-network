@@ -12,7 +12,7 @@ describe("claude-plugin minimal self-contained artifact", () => {
   it("declares the fresh exact package and finite files", () => {
     const pkg = readJson("package.json");
     expect(pkg.name).toBe("@apnex/claude-plugin");
-    expect(pkg.version).toBe("0.1.19");
+    expect(pkg.version).toBe("0.1.20");
     expect(pkg.main).toBe("dist/shim.js");
     expect(pkg.repository).toEqual({
       type: "git",
@@ -36,7 +36,7 @@ describe("claude-plugin minimal self-contained artifact", () => {
 
   it("documents the ordinary exact npm and Claude marketplace path", () => {
     const readme = readText("README.md");
-    expect(readme).toContain("npm install --global @apnex/claude-plugin@0.1.19 --ignore-scripts");
+    expect(readme).toContain("npm install --global @apnex/claude-plugin@0.1.20 --ignore-scripts");
     expect(readme).toContain("claude plugin marketplace add");
     expect(readme).toContain("claude plugin install agent-adapter@agentic-network");
   });

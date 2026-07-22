@@ -29,7 +29,7 @@ const git = (...args) => execFileSync("git", args, { cwd: repo, encoding: "utf8"
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const full40 = /^[0-9a-f]{40}$/;
 
-validateClaudePackageJson(pkg, "0.1.19");
+validateClaudePackageJson(pkg, "0.1.20");
 const sourceCommit = process.env.OIS_BUILD_SHA || git("rev-parse", "HEAD");
 const sourceTree = process.env.OIS_BUILD_TREE || git("rev-parse", "HEAD^{tree}");
 if (!full40.test(sourceCommit) || !full40.test(sourceTree)) {
