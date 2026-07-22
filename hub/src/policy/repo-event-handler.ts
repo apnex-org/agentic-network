@@ -31,6 +31,7 @@ import {
   CreateMessageSink,
   PollSource,
   WorkflowRunPollSource,
+  ReviewRequestPollSource,
   type CreateMessageInvoker,
   type RepoEvent,
 } from "@apnex/repo-event-bridge";
@@ -96,6 +97,9 @@ export class RepoEventBridge {
   // sibling EventSource for /actions/runs (workflow_run is webhook-only on
   // the /events API, so it needs a separate REST endpoint).
   private readonly workflowRunPollSource: WorkflowRunPollSource;
+  // bug-334: /repos/events never exposes review-request assignment lifecycle.
+  // This persisted sibling source polls /issues/events and enriches exact PR identity.
+  private readonly reviewRequestPollSource: ReviewRequestPollSource;
   private readonly sink: CreateMessageSink;
   private readonly logger: RepoEventBridgeLogger;
   private state: RepoEventBridgeState = "idle";
@@ -125,6 +129,16 @@ export class RepoEventBridge {
       logger: this.logger,
       sink: this.sink,
     });
+    this.reviewRequestPollSource = new ReviewRequestPollSource({
+      storage: options.storage,
+      token: options.token,
+      repos: options.repos,
+      cadenceSeconds: options.cadenceSeconds,
+      budgetFraction: options.budgetFraction,
+      fetch: options.fetch,
+      logger: this.logger,
+      sink: this.sink,
+    });
   }
 
   /**
@@ -142,6 +156,7 @@ export class RepoEventBridge {
     try {
       await this.pollSource.start();
       await this.workflowRunPollSource.start();
+      await this.reviewRequestPollSource.start();
     } catch (err) {
       this.state = "failed";
       this.logger.error(
@@ -151,7 +166,7 @@ export class RepoEventBridge {
     }
     this.state = "running";
     this.logger.info(
-      `[repo-event-bridge] Bridge running; events + workflow-runs deliver INLINE into create_message (the poll loop IS the delivery loop — no separate drainer)`,
+      `[repo-event-bridge] Bridge running; events + workflow-runs + review-request issue-events deliver INLINE into create_message (the poll loop IS the delivery loop — no separate drainer)`,
     );
   }
 
@@ -168,6 +183,7 @@ export class RepoEventBridge {
     await Promise.allSettled([
       this.pollSource.stop(),
       this.workflowRunPollSource.stop(),
+      this.reviewRequestPollSource.stop(),
     ]);
   }
 
@@ -186,22 +202,26 @@ export class RepoEventBridge {
   health() {
     const eventsHealth = this.pollSource.health();
     const workflowRunsHealth = this.workflowRunPollSource.health();
-    const laterOf = (a?: string, b?: string): string | undefined =>
-      a && b ? (a > b ? a : b) : (a ?? b);
+    const reviewRequestsHealth = this.reviewRequestPollSource.health();
+    const latest = (...values: Array<string | undefined>): string | undefined =>
+      values.filter((value): value is string => Boolean(value)).sort().at(-1);
     return {
-      paused: eventsHealth.paused || workflowRunsHealth.paused,
+      paused: eventsHealth.paused || workflowRunsHealth.paused || reviewRequestsHealth.paused,
       pausedReason:
-        eventsHealth.pausedReason ?? workflowRunsHealth.pausedReason,
-      lastSuccessfulPoll:
-        eventsHealth.lastSuccessfulPoll > workflowRunsHealth.lastSuccessfulPoll
-          ? eventsHealth.lastSuccessfulPoll
-          : workflowRunsHealth.lastSuccessfulPoll,
+        eventsHealth.pausedReason ?? workflowRunsHealth.pausedReason ?? reviewRequestsHealth.pausedReason,
+      lastSuccessfulPoll: latest(
+        eventsHealth.lastSuccessfulPoll,
+        workflowRunsHealth.lastSuccessfulPoll,
+        reviewRequestsHealth.lastSuccessfulPoll,
+      ) ?? new Date(0).toISOString(),
       deliveryFailing:
         Boolean(eventsHealth.deliveryFailing) ||
-        Boolean(workflowRunsHealth.deliveryFailing),
-      lastSuccessfulDelivery: laterOf(
+        Boolean(workflowRunsHealth.deliveryFailing) ||
+        Boolean(reviewRequestsHealth.deliveryFailing),
+      lastSuccessfulDelivery: latest(
         eventsHealth.lastSuccessfulDelivery,
         workflowRunsHealth.lastSuccessfulDelivery,
+        reviewRequestsHealth.lastSuccessfulDelivery,
       ),
     };
   }
