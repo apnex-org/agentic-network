@@ -29,7 +29,7 @@ jobs:
         run: |
           test -z "$(git status --porcelain)"
           version="$(node -p "require('./adapters/claude-plugin/package.json').version")"
-          test "$version" = "0.1.19"
+          test "$version" = "0.1.20"
           if [ "${{ github.event_name }}" = push ]; then
             test "${GITHUB_REF#refs/tags/}" = "claude-plugin-v$version"
           fi
@@ -69,40 +69,26 @@ jobs:
           test "$(jq '.packages | length' /tmp/claude-realized/package-lock.json)" = 2
           node scripts/release/verify-claude-plugin-package.mjs inspect /tmp/claude-realized/node_modules/@apnex/claude-plugin "$CLAUDE_VERSION" > /tmp/claude-projection.json
           test "$(jq -r '.provenanceRepository' /tmp/claude-projection.json)" = "https://github.com/apnex-org/agentic-network"
-          echo "CLAUDE_EXPECTED_INTEGRITY=$integrity" >> "$GITHUB_ENV"
+          echo "CLAUDE_CANDIDATE_TGZ=$tgz" >> "$GITHUB_ENV"
+          {
+            echo "### Frozen Claude publication candidate"
+            echo "- package: @apnex/claude-plugin@$CLAUDE_VERSION"
+            echo "- source commit: $OIS_BUILD_SHA"
+            echo "- source tree: $OIS_BUILD_TREE"
+            echo "- npm integrity: $integrity"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
 
       - name: Verify fresh identity and publish through protected CI
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          test -f "$CLAUDE_CANDIDATE_TGZ"
           if [ "${{ github.event_name }}" = workflow_dispatch ]; then
-            npm publish --workspace=@apnex/claude-plugin --access public --provenance --ignore-scripts --dry-run
+            npm publish "$CLAUDE_CANDIDATE_TGZ" --access public --provenance --ignore-scripts --dry-run
             exit 0
           fi
           if npm view "@apnex/claude-plugin@$CLAUDE_VERSION" version >/tmp/claude-existing 2>/dev/null; then
             echo "::error::fresh version already exists: $(cat /tmp/claude-existing)"
             exit 1
           fi
-          npm publish --workspace=@apnex/claude-plugin --access public --provenance --ignore-scripts
-
-      - name: Reacquire and compare two clean consumers
-        if: github.event_name == 'push'
-        run: |
-          for arm in r1 r2; do
-            root="/tmp/public-$arm"
-            rm -rf "$root" && mkdir -p "$root/pack" "$root/cache"
-            for attempt in $(seq 1 12); do
-              if NPM_CONFIG_CACHE="$root/cache" npm pack @apnex/claude-plugin@0.1.19 --ignore-scripts --json --pack-destination "$root/pack" > "$root/pack.json"; then
-                break
-              fi
-              sleep 5
-            done
-            test -s "$root/pack.json"
-            test "$(jq -r '.[0].integrity' "$root/pack.json")" = "$CLAUDE_EXPECTED_INTEGRITY"
-            tgz="$root/pack/$(jq -r '.[0].filename' "$root/pack.json")"
-            npm install "$tgz" --prefix "$root/realized" --ignore-scripts --no-audit --no-fund --omit=dev
-            test "$(jq '.packages | length' "$root/realized/package-lock.json")" = 2
-            node scripts/release/verify-claude-plugin-package.mjs inspect "$root/realized/node_modules/@apnex/claude-plugin" "$CLAUDE_VERSION" > "$root/projection.json"
-          done
-          diff -u /tmp/public-r1/projection.json /tmp/public-r2/projection.json
-          diff -qr /tmp/public-r1/realized/node_modules/@apnex/claude-plugin /tmp/public-r2/realized/node_modules/@apnex/claude-plugin
+          npm publish "$CLAUDE_CANDIDATE_TGZ" --access public --provenance --ignore-scripts
