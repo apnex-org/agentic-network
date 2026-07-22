@@ -29,7 +29,7 @@ jobs:
         run: |
           test -z "$(git status --porcelain)"
           version="$(node -p "require('./adapters/claude-plugin/package.json').version")"
-          test "$version" = "0.1.18"
+          test "$version" = "0.1.19"
           if [ "${{ github.event_name }}" = push ]; then
             test "${GITHUB_REF#refs/tags/}" = "claude-plugin-v$version"
           fi
@@ -67,7 +67,8 @@ jobs:
           test "$(node scripts/release/verify-claude-plugin-package.mjs integrity "$tgz")" = "$integrity"
           npm install "$tgz" --prefix /tmp/claude-realized --ignore-scripts --no-audit --no-fund --omit=dev
           test "$(jq '.packages | length' /tmp/claude-realized/package-lock.json)" = 2
-          node scripts/release/verify-claude-plugin-package.mjs inspect /tmp/claude-realized/node_modules/@apnex/claude-plugin "$CLAUDE_VERSION"
+          node scripts/release/verify-claude-plugin-package.mjs inspect /tmp/claude-realized/node_modules/@apnex/claude-plugin "$CLAUDE_VERSION" > /tmp/claude-projection.json
+          test "$(jq -r '.provenanceRepository' /tmp/claude-projection.json)" = "https://github.com/apnex-org/agentic-network"
           echo "CLAUDE_EXPECTED_INTEGRITY=$integrity" >> "$GITHUB_ENV"
 
       - name: Verify fresh identity and publish through protected CI
@@ -91,7 +92,7 @@ jobs:
             root="/tmp/public-$arm"
             rm -rf "$root" && mkdir -p "$root/pack" "$root/cache"
             for attempt in $(seq 1 12); do
-              if NPM_CONFIG_CACHE="$root/cache" npm pack @apnex/claude-plugin@0.1.18 --ignore-scripts --json --pack-destination "$root/pack" > "$root/pack.json"; then
+              if NPM_CONFIG_CACHE="$root/cache" npm pack @apnex/claude-plugin@0.1.19 --ignore-scripts --json --pack-destination "$root/pack" > "$root/pack.json"; then
                 break
               fi
               sleep 5

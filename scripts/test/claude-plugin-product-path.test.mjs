@@ -74,7 +74,7 @@ const secondBuild = {
 assert.deepEqual(secondBuild, firstBuild, "repeat Claude build drifted");
 
 const pkg = JSON.parse(readFileSync(join(packageDir, "package.json"), "utf8"));
-validateClaudePackageJson(pkg, "0.1.18");
+validateClaudePackageJson(pkg, "0.1.19");
 const tmp = mkdtempSync(join(os.tmpdir(), "claude-plugin-product-path-"));
 let hub;
 let child;
@@ -91,7 +91,13 @@ try {
     const row = packOutput[0];
     const tgz = join(packRoot, row.filename);
     assert.equal(fileSha512Integrity(tgz), row.integrity, "npm-reported integrity differs from acquired tgz bytes");
-    packResults.push({ ...row, tgz });
+    const packedManifest = JSON.parse(run("tar", ["-xOf", tgz, "package/package.json"]));
+    validateClaudePackageJson(packedManifest, "0.1.19");
+    assert.deepEqual(packedManifest.repository, {
+      type: "git",
+      url: "https://github.com/apnex-org/agentic-network.git",
+    }, "packed manifest repository identity differs from GitHub provenance repository");
+    packResults.push({ ...row, tgz, packedManifest });
   }
   assert.equal(packResults[0].integrity, packResults[1].integrity, "two-root npm pack integrity drift");
 
@@ -108,7 +114,7 @@ try {
   const installLock = JSON.parse(readFileSync(join(installPrefix, "package-lock.json"), "utf8"));
   assert.equal(Object.keys(installLock.packages).length, 2, "exact package acquired a floating consumer runtime closure");
   const installedRoot = join(installPrefix, "node_modules", "@apnex", "claude-plugin");
-  const acquiredProjection = inspectInstalledClaudePlugin(installedRoot, { expectedVersion: "0.1.18", allowDirty: dirty });
+  const acquiredProjection = inspectInstalledClaudePlugin(installedRoot, { expectedVersion: "0.1.19", allowDirty: dirty });
 
   const claudeConfig = join(tmp, "claude-config");
   const fixtureEnv = { ...process.env, CLAUDE_CONFIG_DIR: claudeConfig };
@@ -119,7 +125,7 @@ try {
   if (process.env.CLAUDE_CLI) {
     const addOutput = run(process.env.CLAUDE_CLI, ["plugin", "marketplace", "add", installedRoot, "--scope", "user"], repo, fixtureEnv);
     const installOutput = run(process.env.CLAUDE_CLI, ["plugin", "install", "agent-adapter@agentic-network", "--scope", "user"], repo, fixtureEnv);
-    copiedRoot = join(claudeConfig, "plugins", "cache", "agentic-network", "agent-adapter", "0.1.18");
+    copiedRoot = join(claudeConfig, "plugins", "cache", "agentic-network", "agent-adapter", "0.1.19");
     assert.ok(existsSync(copiedRoot), "real Claude CLI did not create the exact package cache path");
     claudeHost = "real-claude-cli";
     addObservation = { accepted: /Successfully added marketplace/.test(addOutput) };
@@ -128,13 +134,13 @@ try {
     addObservation = JSON.parse(run(process.execPath, [fixtureCli, "plugin", "marketplace", "add", installedRoot], repo, fixtureEnv));
     installObservation = JSON.parse(run(process.execPath, [fixtureCli, "plugin", "install", "agent-adapter@agentic-network"], repo, fixtureEnv));
     assert.equal(addObservation.marketplace, "agentic-network");
-    assert.equal(installObservation.version, "0.1.18");
+    assert.equal(installObservation.version, "0.1.19");
     copiedRoot = installObservation.destination;
     claudeHost = "claude-cli-fixture";
   }
   assert.equal(addObservation.accepted ?? true, true);
   assert.equal(installObservation.accepted ?? true, true);
-  assertCopiedClaudePluginMatches(acquiredProjection, copiedRoot, { expectedVersion: "0.1.18", allowDirty: dirty });
+  assertCopiedClaudePluginMatches(acquiredProjection, copiedRoot, { expectedVersion: "0.1.19", allowDirty: dirty });
 
   hub = await startMinimalMcpHub();
   const workDir = join(tmp, "work");
@@ -176,21 +182,30 @@ try {
   const authorityIdentity = JSON.parse(readFileSync(authorityIdentityPath, "utf8"));
   authorityIdentity.sourceCommit = "f".repeat(40);
   writeFileSync(authorityIdentityPath, `${JSON.stringify(authorityIdentity, null, 2)}\n`);
-  killMutation("source-authority-mismatch", () => inspectInstalledClaudePlugin(authorityMutation, { expectedVersion: "0.1.18", allowDirty: true }));
-  killMutation("caller-invented-attestation-authority", () => inspectInstalledClaudePlugin(installedRoot, { expectedVersion: "0.1.18", allowDirty: dirty, publicationAttestation: "caller:invented" }));
+  killMutation("source-authority-mismatch", () => inspectInstalledClaudePlugin(authorityMutation, { expectedVersion: "0.1.19", allowDirty: true }));
+  killMutation("caller-invented-attestation-authority", () => inspectInstalledClaudePlugin(installedRoot, { expectedVersion: "0.1.19", allowDirty: dirty, publicationAttestation: "caller:invented" }));
 
   const cacheMutation = join(tmp, "copied-cache-mismatch");
   cpSync(copiedRoot, cacheMutation, { recursive: true });
   const cacheShim = join(cacheMutation, "dist", "shim.js");
   chmodSync(cacheShim, 0o644);
   writeFileSync(cacheShim, `${readFileSync(cacheShim, "utf8")}\n// copied-cache mutation\n`);
-  killMutation("copied-cache-package-mismatch", () => assertCopiedClaudePluginMatches(acquiredProjection, cacheMutation, { expectedVersion: "0.1.18", allowDirty: true }));
+  killMutation("copied-cache-package-mismatch", () => assertCopiedClaudePluginMatches(acquiredProjection, cacheMutation, { expectedVersion: "0.1.19", allowDirty: true }));
 
   const metafile = JSON.parse(readFileSync(join(installedRoot, "dist", "metafile.json"), "utf8"));
   const optionalBranchMutation = structuredClone(metafile);
   optionalBranchMutation.inputs["node_modules/@modelcontextprotocol/sdk/dist/esm/client/auth-extensions.js"] = { bytes: 1, imports: [] };
   killMutation("reachable-auth-extension-without-jose", () => validateClaudeBundleMetafile(optionalBranchMutation));
-  killMutation("floating-consumer-dependency", () => validateClaudePackageJson({ ...pkg, dependencies: { jose: "^6.1.3" } }, "0.1.18"));
+  killMutation("floating-consumer-dependency", () => validateClaudePackageJson({ ...pkg, dependencies: { jose: "^6.1.3" } }, "0.1.19"));
+  killMutation("packed-provenance-repository-missing", () => validateClaudePackageJson({ ...packResults[0].packedManifest, repository: undefined }, "0.1.19"));
+  killMutation("packed-provenance-repository-mismatch", () => validateClaudePackageJson({
+    ...packResults[0].packedManifest,
+    repository: { type: "git", url: "https://github.com/apnex-org/other.git" },
+  }, "0.1.19"));
+  killMutation("packed-provenance-repository-type-mismatch", () => validateClaudePackageJson({
+    ...packResults[0].packedManifest,
+    repository: { type: "svn", url: "https://github.com/apnex-org/agentic-network.git" },
+  }, "0.1.19"));
   killMutation("registry-integrity-mismatch", () => assert.equal(packResults[0].integrity, `sha512-${Buffer.alloc(64).toString("base64")}`));
 
   const familyPublisher = readFileSync(join(repo, "scripts", "publish-packages.sh"), "utf8");
@@ -200,7 +215,7 @@ try {
   for (const required of [
     "claude-plugin-v*",
     "npm publish --workspace=@apnex/claude-plugin --access public --provenance --ignore-scripts",
-    "npm pack @apnex/claude-plugin@0.1.18",
+    "npm pack @apnex/claude-plugin@0.1.19",
     "CLAUDE_EXPECTED_INTEGRITY",
     "workflow_dispatch",
   ]) assert.ok(dedicatedWorkflow.includes(required), `protected Claude workflow missing: ${required}`);
@@ -216,7 +231,7 @@ try {
     package: `${acquiredProjection.packageName}@${acquiredProjection.packageVersion}`,
     npmIntegrity: packResults[0].integrity,
     acquiredTreeSha256: acquiredProjection.treeSha256,
-    copiedTreeSha256: inspectInstalledClaudePlugin(copiedRoot, { expectedVersion: "0.1.18", allowDirty: dirty }).treeSha256,
+    copiedTreeSha256: inspectInstalledClaudePlugin(copiedRoot, { expectedVersion: "0.1.19", allowDirty: dirty }).treeSha256,
     sourceCommit: acquiredProjection.sourceCommit,
     sourceTree: acquiredProjection.sourceTree,
     cleanIdentity: !acquiredProjection.dirty,

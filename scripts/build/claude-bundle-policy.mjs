@@ -14,6 +14,20 @@ function fail(message) {
   throw new Error(`claude package policy: ${message}`);
 }
 
+export const CLAUDE_PROVENANCE_REPOSITORY = "https://github.com/apnex-org/agentic-network";
+const CLAUDE_PACKAGE_REPOSITORY_URL = `${CLAUDE_PROVENANCE_REPOSITORY}.git`;
+
+export function validateClaudeProvenanceRepository(pkg) {
+  if (pkg.repository === null || typeof pkg.repository !== "object" || Array.isArray(pkg.repository)) {
+    fail("repository must be the standard object form");
+  }
+  if (pkg.repository.type !== "git") fail(`wrong repository type: ${pkg.repository.type}`);
+  if (pkg.repository.url !== CLAUDE_PACKAGE_REPOSITORY_URL) {
+    fail(`wrong repository URL: ${pkg.repository.url}`);
+  }
+  return pkg.repository.url.slice(0, -4);
+}
+
 export function validateClaudePackageJson(pkg, expectedVersion = pkg.version) {
   if (pkg.name !== "@apnex/claude-plugin") fail(`wrong package name: ${pkg.name}`);
   if (pkg.version !== expectedVersion) fail(`wrong package version: ${pkg.version}`);
@@ -23,6 +37,7 @@ export function validateClaudePackageJson(pkg, expectedVersion = pkg.version) {
   for (const hook of lifecycleHooks) {
     if (pkg.scripts?.[hook] !== undefined) fail(`lifecycle script is forbidden: ${hook}`);
   }
+  validateClaudeProvenanceRepository(pkg);
   return true;
 }
 

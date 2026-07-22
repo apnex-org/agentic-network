@@ -1,7 +1,7 @@
 {
   "name": "agent-adapter",
   "description": "Universal agent adapter — bridges a host MCP client (Claude Code) into the OIS agentic network via the Relay Hub",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "keywords": [
     "mcp",
     "hub",

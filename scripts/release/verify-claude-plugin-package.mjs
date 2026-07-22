@@ -8,6 +8,7 @@ import {
   validateBuiltRuntimeText,
   validateClaudeBundleMetafile,
   validateClaudePackageJson,
+  validateClaudeProvenanceRepository,
 } from "../build/claude-bundle-policy.mjs";
 
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
@@ -49,6 +50,7 @@ export function inspectInstalledClaudePlugin(rootPath, options = {}) {
   const pkg = readJson(join(root, "package.json"));
   const expectedVersion = options.expectedVersion ?? pkg.version;
   validateClaudePackageJson(pkg, expectedVersion);
+  const provenanceRepository = validateClaudeProvenanceRepository(pkg);
   assert.equal(pkg.name, options.expectedName ?? "@apnex/claude-plugin");
 
   const plugin = readJson(join(root, ".claude-plugin", "plugin.json"));
@@ -106,6 +108,7 @@ export function inspectInstalledClaudePlugin(rootPath, options = {}) {
     schemaVersion: 1,
     packageName: pkg.name,
     packageVersion: pkg.version,
+    provenanceRepository,
     sourceCommit: identity.sourceCommit,
     sourceTree: identity.sourceTree,
     dirty: identity.dirty,
