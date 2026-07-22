@@ -1,6 +1,6 @@
 {
   "name": "@apnex/claude-plugin",
-  "version": "0.1.16",
+  "version": "0.1.18",
   "description": "Claude Code host bundle — Universal Agent Adapter for the OIS agentic network",
   "license": "MIT",
   "type": "module",
@@ -10,26 +10,17 @@
     "agent-adapter.manifest.json",
     ".claude-plugin/",
     ".mcp.json",
-    "install.sh",
-    "QUICKSTART.md",
-    "tsconfig.json",
-    "src/",
-    "test/",
-    "lib/",
-    "skills/"
+    "LICENSE",
+    "README.md",
+    "THIRD_PARTY_NOTICES.md"
   ],
   "scripts": {
-    "prebuild": "node ../../scripts/build/write-build-info.js",
-    "build": "tsc",
-    "prepack": "node ../../scripts/build/write-build-info.js --assert",
+    "build": "node ../../scripts/build/build-self-contained-claude-plugin.mjs",
     "start": "node dist/shim.js",
     "dev": "tsx src/shim.ts",
     "test": "vitest run"
   },
-  "dependencies": {
-    "@modelcontextprotocol/sdk": "1.29.0",
-    "@apnex/network-adapter": "0.1.14"
-  },
+  "dependencies": {},
   "devDependencies": {
     "@types/node": "^22.0.0",
     "tsx": "^4.21.0",

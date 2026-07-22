@@ -43,10 +43,11 @@ cd "$REPO_ROOT"
 #   1. cognitive-layer  (leaf; no @apnex/* deps)
 #   2. message-router   (peerDep on @apnex/network-adapter; type-only via import type)
 #   3. network-adapter  (deps on cognitive-layer + message-router)
-#   4. claude-plugin    (deps on network-adapter) — after net-adapter
-#   5. opencode-plugin  (deps on network-adapter; mission-101 npm cutover) — after net-adapter
-#   6. pi-plugin        (deps on network-adapter; M-Shim-Distribution) — after net-adapter
+#   4. opencode-plugin  (deps on network-adapter; mission-101 npm cutover) — after net-adapter
+#   5. pi-plugin        (deps on network-adapter; M-Shim-Distribution) — after net-adapter
 #
+# @apnex/claude-plugin is intentionally excluded. Its dependency-free candidate
+# has one protected path: .github/workflows/publish-claude-plugin.yml.
 # storage-provider + repo-event-bridge: workspace-only (not for the registry).
 # They are now marked `private:true` (cleanslate0 npm_dedual), so `npm publish`
 #   fail-closes on them anyway; this script still publishes an EXPLICIT list
@@ -56,7 +57,6 @@ PACKAGES=(
   "@apnex/cognitive-layer"
   "@apnex/message-router"
   "@apnex/network-adapter"
-  "@apnex/claude-plugin"
   "@apnex/opencode-plugin"
   "@apnex/pi-plugin"
 )

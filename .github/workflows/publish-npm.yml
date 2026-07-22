@@ -6,10 +6,10 @@ name: publish-npm
 # publish-packages.sh) — a step-skip + staleness risk (calibrations #25/#39;
 # registry drifted behind local). This workflow makes publish CI-triggered.
 #
-# Trigger: a tag `npm-v*`. (npmdeliver0 retired Channel-2 — the release-plugin.yml
-# GitHub-Release vendored-tarball `v*` channel — so the npm graph-publish is now the
-# sole @apnex/claude-plugin release path.) Per-package versions live in each
-# package.json; the tag string only gates the run. Also dispatchable manually.
+# Trigger: a tag `npm-v*`. This legacy family path explicitly excludes
+# @apnex/claude-plugin; that dependency-free product is owned only by
+# publish-claude-plugin.yml. Per-package versions live in each package.json; the
+# tag string only gates the run. Also dispatchable manually.
 #
 # Safe publish path: scripts/publish-packages.sh publishes an EXPLICIT package
 # list in topological order and HOISTS the version-rewrite (* → ^X.Y.Z) with a
@@ -99,7 +99,6 @@ jobs:
             --workspace=@apnex/message-router \
             --workspace=@apnex/network-adapter \
             --workspace=@apnex/storage-provider \
-            --workspace=@apnex/claude-plugin \
             --workspace=@apnex/opencode-plugin \
             --workspace=@apnex/pi-plugin
 
@@ -114,7 +113,6 @@ jobs:
           ( cd packages/message-router && npm run build )
           rm -rf packages/network-adapter/dist
           ( cd packages/network-adapter && npm run build )
-          ( cd adapters/claude-plugin && npm run build )
           ( cd adapters/opencode-plugin && npm run build )
           ( cd adapters/pi-plugin && npm run build )
 

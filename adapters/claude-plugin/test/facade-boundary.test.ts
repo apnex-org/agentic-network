@@ -33,11 +33,8 @@ describe("claude-plugin facade boundary", () => {
     expect(offenders).toEqual([]);
   });
 
-  it("package.json depends on @apnex/network-adapter only (no cognitive/message-router backdoor)", () => {
+  it("package.json has no consumer runtime dependency edge", () => {
     const pkg = JSON.parse(readFileSync(resolve(root, "package.json"), "utf-8"));
-    const deps = pkg.dependencies ?? {};
-    expect(deps["@apnex/network-adapter"]).toBeDefined();
-    expect(deps["@apnex/cognitive-layer"]).toBeUndefined();
-    expect(deps["@apnex/message-router"]).toBeUndefined();
+    expect(pkg.dependencies ?? {}).toEqual({});
   });
 });

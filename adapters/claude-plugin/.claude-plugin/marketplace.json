@@ -2,14 +2,21 @@
   "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
   "name": "agentic-network",
   "description": "OIS Agentic Network — Claude Code plugins (npm-installed bundle)",
-  "owner": { "name": "OIS Director", "email": "director@ois.local" },
+  "owner": {
+    "name": "OIS Director",
+    "email": "director@ois.local"
+  },
   "plugins": [
     {
       "name": "agent-adapter",
       "description": "Universal agent adapter bridging Claude Code to the cloud MCP Relay Hub with autonomous channel-based wakeup",
-      "author": { "name": "OIS Director", "email": "director@ois.local" },
+      "author": {
+        "name": "OIS Director",
+        "email": "director@ois.local"
+      },
       "category": "development",
-      "source": "./"
+      "source": "./",
+      "version": "0.1.18"
     }
   ]
 }
