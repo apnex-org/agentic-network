@@ -222,6 +222,7 @@ jobs:
           export OIS_BUILD_SHA="$(git rev-parse HEAD)"
           export OIS_BUILD_TREE="$(git rev-parse HEAD^{tree})"
           node scripts/test/claude-plugin-product-path.test.mjs
+          node scripts/test/claude-plugin-deprecation.test.mjs
 
   # ── Aggregator: single status-check name for branch-protection rules ─
   # Branch-protection rule targets `test` (a stable name); the
