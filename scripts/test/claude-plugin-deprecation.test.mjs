@@ -10,7 +10,8 @@ const repo = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const script = join(repo, "scripts", "release", "deprecate-claude-plugin-version.mjs");
 const workflowPath = join(repo, ".github", "workflows", "deprecate-claude-plugin.yml");
 const ciPath = join(repo, ".github", "workflows", "test.yml");
-const expectedSpec = "@apnex/claude-plugin@0.1.18";
+const expectedSpec = "@apnex/claude-plugin@0.1.19";
+const expectedTag = "claude-plugin-v0.1.19";
 const expectedMessage = "Failed post-publication qualification; do not install or reuse this version.";
 const expectedConfirmation = `DEPRECATE_FAILED_QUALIFICATION:${expectedSpec}`;
 const tmp = mkdtempSync(join(os.tmpdir(), "claude-plugin-deprecation-"));
@@ -27,7 +28,7 @@ const command = args[0];
 const field = args[2];
 if (command === "view" && field === "version") {
   if (process.env.FAKE_NPM_MODE === "missing") { console.error("E404"); process.exit(1); }
-  console.log(JSON.stringify("0.1.18"));
+  console.log(JSON.stringify("0.1.19"));
   process.exit(0);
 }
 if (command === "deprecate") {
@@ -55,7 +56,8 @@ process.exit(2);
       PATH: `${fakeBin}:${process.env.PATH}`,
       NODE_AUTH_TOKEN: "fixture-token",
       DEPRECATION_PACKAGE: "@apnex/claude-plugin",
-      DEPRECATION_VERSION: "0.1.18",
+      DEPRECATION_VERSION: "0.1.19",
+      DEPRECATION_TAG: expectedTag,
       DEPRECATION_CONFIRMATION: expectedConfirmation,
       DEPRECATION_VERIFY_ATTEMPTS: "1",
       DEPRECATION_VERIFY_DELAY_MS: "0",
@@ -86,8 +88,9 @@ process.exit(2);
 
   for (const [name, override] of [
     ["package", { DEPRECATION_PACKAGE: "@apnex/pi-plugin" }],
-    ["version", { DEPRECATION_VERSION: "0.1.17" }],
-    ["confirmation", { DEPRECATION_CONFIRMATION: "yes" }],
+    ["stale-version-0.1.18", { DEPRECATION_VERSION: "0.1.18" }],
+    ["stale-tag-0.1.18", { DEPRECATION_TAG: "claude-plugin-v0.1.18" }],
+    ["stale-confirmation-0.1.18", { DEPRECATION_CONFIRMATION: "DEPRECATE_FAILED_QUALIFICATION:@apnex/claude-plugin@0.1.18" }],
     ["credential", { NODE_AUTH_TOKEN: null }],
   ]) {
     const rejected = runCase(override);
@@ -116,9 +119,17 @@ process.exit(2);
     "NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
     "DEPRECATION_PACKAGE: ${{ inputs.package }}",
     "DEPRECATION_VERSION: ${{ inputs.version }}",
+    "DEPRECATION_TAG: ${{ inputs.tag }}",
     "DEPRECATION_CONFIRMATION: ${{ inputs.confirmation }}",
     "node scripts/release/deprecate-claude-plugin-version.mjs",
   ]) assert.ok(workflow.includes(required), `workflow missing ${required}`);
+  for (const exactBinding of [
+    "default: '0.1.19'",
+    "default: 'claude-plugin-v0.1.19'",
+    "Type DEPRECATE_FAILED_QUALIFICATION:@apnex/claude-plugin@0.1.19",
+    "group: deprecate-claude-plugin-0.1.19",
+  ]) assert.ok(workflow.includes(exactBinding), `workflow missing exact 0.1.19 binding: ${exactBinding}`);
+  assert.ok(!workflow.includes("0.1.18"), "stale 0.1.18 binding survived in workflow");
   assert.ok(!workflow.includes("id-token: write"), "deprecation workflow has broader identity permission");
   assert.ok(!/npm\s+(publish|unpublish|dist-tag)/.test(workflow), "deprecation workflow contains a publication/overwrite path");
   assert.ok(!/^\s+(push|pull_request):/m.test(workflow), "deprecation mutation is not manual-dispatch-only");
@@ -131,7 +142,7 @@ process.exit(2);
     exactSpec: expectedSpec,
     confirmation: expectedConfirmation,
     positiveNpmCalls: positive.calls.length,
-    negativeCases: 7,
+    negativeCases: 8,
     soleMutation: "npm deprecate",
     registryVerification: true,
     publicationPathPresent: false,
