@@ -216,6 +216,7 @@ try {
   validateClaudePublicationBoundary(dedicatedWorkflow);
   for (const [name, mutation] of [
     ["post-publish-registry-read", `${dedicatedWorkflow}\n      - name: forbidden registry qualification\n        run: npm pack @apnex/claude-plugin@0.1.20 --json\n`],
+    ["publish-refreezes-workspace", dedicatedWorkflow.replaceAll('npm publish "$CLAUDE_CANDIDATE_TGZ"', "npm publish --workspace=@apnex/claude-plugin")],
     ["wrong-release-version", dedicatedWorkflow.replace('test "$version" = "0.1.20"', 'test "$version" = "0.1.19"')],
     ["missing-tag-binding", dedicatedWorkflow.replace('test "${GITHUB_REF#refs/tags/}" = "claude-plugin-v$version"', 'true # tag binding removed')],
     ["missing-provenance-repository-guard", dedicatedWorkflow.replace('test "$(jq -r \'.provenanceRepository\' /tmp/claude-projection.json)" = "https://github.com/apnex-org/agentic-network"', 'true # provenance repository guard removed')],

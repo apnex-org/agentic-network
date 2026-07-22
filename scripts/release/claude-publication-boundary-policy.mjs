@@ -5,7 +5,7 @@ export const CLAUDE_RELEASE_PACKAGE = "@apnex/claude-plugin";
 export const CLAUDE_RELEASE_TAG = `claude-plugin-v${CLAUDE_RELEASE_VERSION}`;
 export const CLAUDE_PROVENANCE_REPOSITORY = "https://github.com/apnex-org/agentic-network";
 
-const irreversiblePublish = "npm publish --workspace=@apnex/claude-plugin --access public --provenance --ignore-scripts";
+const irreversiblePublish = 'npm publish "$CLAUDE_CANDIDATE_TGZ" --access public --provenance --ignore-scripts';
 
 function requireBefore(workflow, needle, boundary, description = needle) {
   const index = workflow.indexOf(needle);
@@ -33,13 +33,17 @@ export function validateClaudePublicationBoundary(workflow) {
   requireBefore(workflow, "OIS_BUILD_TREE=$(git rev-parse HEAD^{tree})", publishIndex, "source tree binding");
   requireBefore(workflow, "OIS_BUILD_DIRTY=false", publishIndex, "clean build identity");
   requireBefore(workflow, "verify-claude-plugin-package.mjs integrity", publishIndex, "frozen-byte integrity check");
+  requireBefore(workflow, 'echo "CLAUDE_CANDIDATE_TGZ=$tgz" >> "$GITHUB_ENV"', publishIndex, "frozen tgz handoff");
+  requireBefore(workflow, 'test -f "$CLAUDE_CANDIDATE_TGZ"', publishIndex, "frozen tgz existence guard");
   requireBefore(workflow, `inspect /tmp/claude-realized/node_modules/@apnex/claude-plugin "$CLAUDE_VERSION"`, publishIndex, "realized package inspection");
   requireBefore(workflow, `test "$(jq -r '.provenanceRepository' /tmp/claude-projection.json)" = "${CLAUDE_PROVENANCE_REPOSITORY}"`, publishIndex, "packed provenance repository guard");
   requireBefore(workflow, `npm view "${CLAUDE_RELEASE_PACKAGE}@$CLAUDE_VERSION" version`, publishIndex, "fresh-version guard");
   requireBefore(workflow, "environment: npm-production", publishIndex, "protected npm environment");
 
-  assert.equal((workflow.match(/npm publish --workspace=@apnex\/claude-plugin/g) ?? []).length, 2,
-    "workflow must contain exactly one dry-run and one irreversible publish command");
+  assert.equal((workflow.match(/npm publish \"\$CLAUDE_CANDIDATE_TGZ\"/g) ?? []).length, 2,
+    "workflow must contain exactly one frozen-tgz dry-run and one frozen-tgz irreversible publish command");
+  assert.equal((workflow.match(/npm publish --workspace=@apnex\/claude-plugin/g) ?? []).length, 0,
+    "workspace publication would re-pack after frozen-byte verification");
   assert.ok(workflow.includes(`${irreversiblePublish} --dry-run`), "workflow_dispatch must stop at the dry-run boundary");
   return true;
 }

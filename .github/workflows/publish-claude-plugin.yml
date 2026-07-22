@@ -69,6 +69,7 @@ jobs:
           test "$(jq '.packages | length' /tmp/claude-realized/package-lock.json)" = 2
           node scripts/release/verify-claude-plugin-package.mjs inspect /tmp/claude-realized/node_modules/@apnex/claude-plugin "$CLAUDE_VERSION" > /tmp/claude-projection.json
           test "$(jq -r '.provenanceRepository' /tmp/claude-projection.json)" = "https://github.com/apnex-org/agentic-network"
+          echo "CLAUDE_CANDIDATE_TGZ=$tgz" >> "$GITHUB_ENV"
           {
             echo "### Frozen Claude publication candidate"
             echo "- package: @apnex/claude-plugin@$CLAUDE_VERSION"
@@ -81,12 +82,13 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          test -f "$CLAUDE_CANDIDATE_TGZ"
           if [ "${{ github.event_name }}" = workflow_dispatch ]; then
-            npm publish --workspace=@apnex/claude-plugin --access public --provenance --ignore-scripts --dry-run
+            npm publish "$CLAUDE_CANDIDATE_TGZ" --access public --provenance --ignore-scripts --dry-run
             exit 0
           fi
           if npm view "@apnex/claude-plugin@$CLAUDE_VERSION" version >/tmp/claude-existing 2>/dev/null; then
             echo "::error::fresh version already exists: $(cat /tmp/claude-existing)"
             exit 1
           fi
-          npm publish --workspace=@apnex/claude-plugin --access public --provenance --ignore-scripts
+          npm publish "$CLAUDE_CANDIDATE_TGZ" --access public --provenance --ignore-scripts
