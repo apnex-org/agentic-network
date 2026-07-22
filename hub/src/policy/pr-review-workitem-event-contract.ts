@@ -193,7 +193,14 @@ export function buildPrReviewEventIdempotencyKey(
 ): string {
   return sha256(
     [
-      "pr-review-event-v0",
+      // bug-334: event-attempt identity must include the sovereign inbound
+      // Message id.  A review request denied before materialization is not a
+      // durable obligation, so a later GitHub request/replay must not collapse
+      // onto that failed attempt merely because repo/PR/reviewer/head are
+      // unchanged.  Output idempotency remains separately anchored by
+      // buildPrReviewProjectionKey, which deliberately excludes this id.
+      "pr-review-event-v1",
+      input.sourceMessageId,
       input.legacySubkind,
       input.repo,
       input.prNumber,

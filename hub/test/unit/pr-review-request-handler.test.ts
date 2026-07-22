@@ -542,7 +542,7 @@ describe("PR review request handler", () => {
     expect(updates).toMatchObject([{ id: "work-target", mutation: { appendDependsOn: ["work-prrev-created"] } }]);
   });
 
-  it("keeps projection-key idempotency stable across redelivery with different source message ids", async () => {
+  it("gives fresh request attempts distinct event keys while keeping output projection idempotency stable", async () => {
     const first = reviewRequestedEvent({ reviewer: "apnex-lily" }) as Record<string, unknown>;
     const second = reviewRequestedEvent({ reviewer: "apnex-lily" }) as Record<string, unknown>;
     const bindingItem = { id: "prbind-624", createdBy: { role: "architect", agentId: "agent-architect" }, status: "done", payload: { obligationKind: "github_pr_workgraph_binding", repo: "apnex-org/agentic-network", prNumber: 624, targetWorkId: "work-target", headSha: "bbb", version: "1", pathClasses: ["architect_docs"], changedPathSource: "test-fixture", lastPusherLogin: "apnex-greg" } };
@@ -564,6 +564,101 @@ describe("PR review request handler", () => {
     const secondEvent = (secondOut[0].payload as Record<string, unknown>).normalizedEventIdempotencyKey;
 
     expect(firstProjection).toBe(secondProjection);
-    expect(firstEvent).toBe(secondEvent);
+    expect(firstEvent).not.toBe(secondEvent);
+  });
+
+  it("recovers after identity repair, materializes exactly once, and still rejects a stale head", async () => {
+    const agents = [makeAgent("agent-greg", "engineer", "apnex-greg")];
+    const projected: Array<{ id: string; status: string; payload: unknown }> = [];
+    const createdNodes: unknown[] = [];
+    const updates: unknown[] = [];
+    const bindingItem = {
+      id: "prbind-recovery",
+      createdBy: { role: "architect", agentId: "agent-architect" },
+      status: "done",
+      payload: {
+        obligationKind: "github_pr_workgraph_binding",
+        repo: "apnex-org/agentic-network",
+        prNumber: 624,
+        targetWorkId: "work-target",
+        headSha: "bbb",
+        baseSha: "aaa",
+        version: "1",
+        pathClasses: ["hub_code", "hub_tests"],
+        changedPathSource: "test-fixture",
+        lastPusherLogin: "apnex-greg",
+        authorLogin: "apnex-greg",
+      },
+    };
+    const workItem = {
+      getWorkItem: async () => ({ id: "work-target", status: "ready", payload: {}, roleEligibility: ["engineer"] }),
+      listWorkItems: async () => ({ items: [bindingItem, ...projected], truncated: false }),
+      listPrReviewBindingWorkItems: async () => ({ items: [bindingItem], truncated: false }),
+      listWorkItemsByProjectionKey: async (projectionKey: string) => ({
+        items: projected.filter((item) => (item.payload as { projectionKey?: string }).projectionKey === projectionKey),
+        truncated: false,
+      }),
+      createBlueprintNode: async (input: unknown) => {
+        createdNodes.push(input);
+        const node = {
+          id: "work-prrev-recovery",
+          status: "ready",
+          payload: (input as { payload?: unknown }).payload,
+        };
+        projected.push(node);
+        return { item: node, created: true };
+      },
+      updateWorkItem: async (id: string, actor: unknown, mutation: unknown) => {
+        updates.push({ id, actor, mutation });
+        return { before: { id }, after: { id } };
+      },
+    };
+    const ctx = makeCtx(agents, workItem);
+
+    const denied = await PR_REVIEW_REQUESTED_HANDLER.handle(
+      { ...wrapAsMessage(reviewRequestedEvent({ reviewer: "apnex" })), id: "01DENIED" } as Message,
+      ctx,
+    );
+    expect((denied[0].payload as Record<string, unknown>).materialization).toMatchObject({ materialized: false });
+    expect(createdNodes).toHaveLength(0);
+
+    agents.push(makeAgent("agent-steve", "verifier", "apnex"));
+    const recovered = await PR_REVIEW_REQUESTED_HANDLER.handle(
+      { ...wrapAsMessage(reviewRequestedEvent({ reviewer: "apnex" })), id: "01RECOVERED" } as Message,
+      ctx,
+    );
+    expect((recovered[0].payload as Record<string, unknown>).materialization).toMatchObject({
+      materialized: true,
+      created: true,
+      workId: "work-prrev-recovery",
+    });
+    expect(createdNodes).toHaveLength(1);
+    expect(updates).toHaveLength(1);
+
+    const repeated = await PR_REVIEW_REQUESTED_HANDLER.handle(
+      { ...wrapAsMessage(reviewRequestedEvent({ reviewer: "apnex" })), id: "01REPEATED" } as Message,
+      ctx,
+    );
+    expect((repeated[0].payload as Record<string, unknown>).materialization).toMatchObject({
+      materialized: true,
+      created: false,
+      workId: "work-prrev-recovery",
+      relation: "reused_existing",
+    });
+    expect(createdNodes).toHaveLength(1);
+    expect(updates).toHaveLength(1);
+
+    const staleHead = reviewRequestedEvent({ reviewer: "apnex" }) as Record<string, unknown>;
+    (staleHead.payload as { head: { sha: string } }).head.sha = "stale-head";
+    const stale = await PR_REVIEW_REQUESTED_HANDLER.handle(
+      { ...wrapAsMessage(staleHead), id: "01STALE" } as Message,
+      ctx,
+    );
+    expect((stale[0].payload as Record<string, unknown>).bindingDecision).toMatchObject({
+      ok: false,
+      reason: "binding_head_mismatch",
+    });
+    expect(createdNodes).toHaveLength(1);
+    expect(updates).toHaveLength(1);
   });
 });
