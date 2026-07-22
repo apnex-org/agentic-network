@@ -1,0 +1,107 @@
+name: publish-claude-plugin
+
+# Dedicated product path for the dependency-free Claude package. The legacy
+# six-package publisher is deliberately not an authority for this package.
+on:
+  push:
+    tags:
+      - 'claude-plugin-v*'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: publish-claude-plugin
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm-production
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bind clean source and exact release tag
+        run: |
+          test -z "$(git status --porcelain)"
+          version="$(node -p "require('./adapters/claude-plugin/package.json').version")"
+          test "$version" = "0.1.18"
+          if [ "${{ github.event_name }}" = push ]; then
+            test "${GITHUB_REF#refs/tags/}" = "claude-plugin-v$version"
+          fi
+          {
+            echo "CLAUDE_VERSION=$version"
+            echo "OIS_BUILD_SHA=$(git rev-parse HEAD)"
+            echo "OIS_BUILD_TREE=$(git rev-parse HEAD^{tree})"
+            echo "OIS_BUILD_DIRTY=false"
+            echo "SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)"
+          } >> "$GITHUB_ENV"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.12.0'
+          registry-url: 'https://registry.npmjs.org'
+          scope: '@apnex'
+
+      - name: Install exact script-free toolchain
+        run: |
+          npm install --global npm@11.6.2
+          test "$(npm --version)" = "11.6.2"
+          npm ci --ignore-scripts --no-audit --no-fund
+
+      - name: Build and execute Claude product path
+        run: |
+          node scripts/build/build-self-contained-claude-plugin.mjs
+          node scripts/test/claude-plugin-product-path.test.mjs
+
+      - name: Freeze exact package bytes
+        run: |
+          rm -rf /tmp/claude-candidate && mkdir -p /tmp/claude-candidate /tmp/claude-realized
+          npm pack --workspace=@apnex/claude-plugin --ignore-scripts --json --pack-destination /tmp/claude-candidate > /tmp/claude-pack.json
+          tgz="/tmp/claude-candidate/$(jq -r '.[0].filename' /tmp/claude-pack.json)"
+          integrity="$(jq -r '.[0].integrity' /tmp/claude-pack.json)"
+          test "$(node scripts/release/verify-claude-plugin-package.mjs integrity "$tgz")" = "$integrity"
+          npm install "$tgz" --prefix /tmp/claude-realized --ignore-scripts --no-audit --no-fund --omit=dev
+          test "$(jq '.packages | length' /tmp/claude-realized/package-lock.json)" = 2
+          node scripts/release/verify-claude-plugin-package.mjs inspect /tmp/claude-realized/node_modules/@apnex/claude-plugin "$CLAUDE_VERSION"
+          echo "CLAUDE_EXPECTED_INTEGRITY=$integrity" >> "$GITHUB_ENV"
+
+      - name: Verify fresh identity and publish through protected CI
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" = workflow_dispatch ]; then
+            npm publish --workspace=@apnex/claude-plugin --access public --provenance --ignore-scripts --dry-run
+            exit 0
+          fi
+          if npm view "@apnex/claude-plugin@$CLAUDE_VERSION" version >/tmp/claude-existing 2>/dev/null; then
+            echo "::error::fresh version already exists: $(cat /tmp/claude-existing)"
+            exit 1
+          fi
+          npm publish --workspace=@apnex/claude-plugin --access public --provenance --ignore-scripts
+
+      - name: Reacquire and compare two clean consumers
+        if: github.event_name == 'push'
+        run: |
+          for arm in r1 r2; do
+            root="/tmp/public-$arm"
+            rm -rf "$root" && mkdir -p "$root/pack" "$root/cache"
+            for attempt in $(seq 1 12); do
+              if NPM_CONFIG_CACHE="$root/cache" npm pack @apnex/claude-plugin@0.1.18 --ignore-scripts --json --pack-destination "$root/pack" > "$root/pack.json"; then
+                break
+              fi
+              sleep 5
+            done
+            test -s "$root/pack.json"
+            test "$(jq -r '.[0].integrity' "$root/pack.json")" = "$CLAUDE_EXPECTED_INTEGRITY"
+            tgz="$root/pack/$(jq -r '.[0].filename' "$root/pack.json")"
+            npm install "$tgz" --prefix "$root/realized" --ignore-scripts --no-audit --no-fund --omit=dev
+            test "$(jq '.packages | length' "$root/realized/package-lock.json")" = 2
+            node scripts/release/verify-claude-plugin-package.mjs inspect "$root/realized/node_modules/@apnex/claude-plugin" "$CLAUDE_VERSION" > "$root/projection.json"
+          done
+          diff -u /tmp/public-r1/projection.json /tmp/public-r2/projection.json
+          diff -qr /tmp/public-r1/realized/node_modules/@apnex/claude-plugin /tmp/public-r2/realized/node_modules/@apnex/claude-plugin

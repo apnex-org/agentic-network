@@ -8,80 +8,39 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const readJson = <T = any>(path: string): T => JSON.parse(readFileSync(resolve(root, path), "utf-8"));
 const readText = (path: string): string => readFileSync(resolve(root, path), "utf-8");
 
-describe("claude-plugin package/install integrity", () => {
-  it("package files whitelist carries every no-clone install artifact", () => {
+describe("claude-plugin minimal self-contained artifact", () => {
+  it("declares the fresh exact package and finite files", () => {
     const pkg = readJson("package.json");
-    expect(pkg.files).toEqual(expect.arrayContaining([
-      "dist/",
-      "agent-adapter.manifest.json",
-      ".claude-plugin/",
-      ".mcp.json",
-      "install.sh",
-      "QUICKSTART.md",
-      "lib/",
-      "skills/",
-    ]));
+    expect(pkg.name).toBe("@apnex/claude-plugin");
+    expect(pkg.version).toBe("0.1.18");
     expect(pkg.main).toBe("dist/shim.js");
-    expect(pkg.scripts.prebuild).toBe("node ../../scripts/build/write-build-info.js");
-    expect(pkg.scripts.prepack).toBe("node ../../scripts/build/write-build-info.js --assert");
+    expect(pkg.dependencies).toEqual({});
+    expect(pkg.peerDependencies ?? {}).toEqual({});
+    expect(pkg.files).toEqual(["dist/", "agent-adapter.manifest.json", ".claude-plugin/", ".mcp.json", "LICENSE", "README.md", "THIRD_PARTY_NOTICES.md"]);
+    for (const hook of ["preinstall", "install", "postinstall", "prepack", "prepare", "prepublish", "prepublishOnly"]) expect(pkg.scripts?.[hook]).toBeUndefined();
   });
 
-  it("package dependencies honor the Claude facade boundary with exact runtime lineage", () => {
-    const deps = readJson("package.json").dependencies;
-    expect(deps["@modelcontextprotocol/sdk"]).toBe("1.29.0");
-    expect(deps["@apnex/network-adapter"]).toBe("0.1.14");
-    expect(deps["@apnex/network-adapter"]).not.toMatch(/[~^*xX><=| ]/);
-    expect(deps["@apnex/cognitive-layer"]).toBeUndefined();
-    expect(deps["@apnex/message-router"]).toBeUndefined();
-  });
-
-  it("MCP declaration uses Claude plugin .mcp.json shape and points at the packaged shim dist entry", () => {
-    const mcp = readJson(".mcp.json");
-    expect(mcp).not.toHaveProperty("mcpServers");
-    expect(mcp.proxy.command).toBe("node");
-    expect(mcp.proxy.args).toEqual(["${CLAUDE_PLUGIN_ROOT}/dist/shim.js"]);
-  });
-
-  it("Claude plugin marketplace manifests are present and self-consistent", () => {
+  it("uses one package/plugin/catalog version and relative native marketplace source", () => {
+    const pkg = readJson("package.json");
     const plugin = readJson(".claude-plugin/plugin.json");
     const marketplace = readJson(".claude-plugin/marketplace.json");
-    expect(plugin.name).toBe("agent-adapter");
-    expect(plugin.description).toMatch(/Universal agent adapter/i);
-    expect(marketplace.name).toBe("agentic-network");
-    expect(marketplace.plugins).toContainEqual(expect.objectContaining({
-      name: "agent-adapter",
-      source: "./",
-    }));
+    expect(plugin.version).toBe(pkg.version);
+    expect(marketplace.plugins[0].version).toBe(pkg.version);
+    expect(marketplace.plugins[0].source).toBe("./");
+    expect(readJson(".mcp.json").proxy.args).toEqual(["${CLAUDE_PLUGIN_ROOT}/dist/shim.js"]);
   });
 
-  it("adapter manifest stays schema-valid and matches the MCP declaration", () => {
+  it("documents the ordinary exact npm and Claude marketplace path", () => {
+    const readme = readText("README.md");
+    expect(readme).toContain("npm install --global @apnex/claude-plugin@0.1.18 --ignore-scripts");
+    expect(readme).toContain("claude plugin marketplace add");
+    expect(readme).toContain("claude plugin install agent-adapter@agentic-network");
+  });
+
+  it("keeps the harness manifest aligned", () => {
     const manifest = parseHarnessManifest(readJson("agent-adapter.manifest.json"));
     expect(manifest.harness).toBe("claude");
     expect(manifest.proxyName).toBe("@apnex/claude-plugin");
     expect(manifest.transport).toBe("stdio-mcp-proxy");
-    expect(manifest.serverName).toBe("proxy");
-    expect(manifest.toolPrefix).toBe("mcp__plugin_agent-adapter_proxy__");
-    expect(manifest.envTemplate).toContain("OIS_HUB_TOKEN");
-  });
-
-  it("install.sh covers both source-tree and npm-installed no-clone paths", () => {
-    const install = readText("install.sh");
-    expect(install).toContain("detect_context()");
-    expect(install).toContain("source-tree");
-    expect(install).toContain("npm-installed");
-    expect(install).toContain("npm-installed context but no dist/ found");
-    expect(install).toContain("npm REGISTRY");
-    expect(install).toContain("Clearing stale cache");
-    expect(install).toContain("claude plugin marketplace add");
-    expect(install).toContain("claude plugin install");
-    expect(install).toContain("bootstrap_skills");
-  });
-
-  it("quickstart documents the npm install path and build-identity check", () => {
-    const quickstart = readText("QUICKSTART.md");
-    expect(quickstart).toContain("npm install -g @apnex/claude-plugin");
-    expect(quickstart).toContain("install.sh");
-    expect(quickstart).toContain("dist/build-info.json");
-    expect(quickstart).toContain("npm install fails to resolve `@apnex/...`");
   });
 });
