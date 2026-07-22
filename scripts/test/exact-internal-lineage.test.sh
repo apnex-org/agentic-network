@@ -31,7 +31,9 @@ assert(network.version === "0.1.14", "packed network version");
 assert(network.dependencies["@apnex/cognitive-layer"] === "0.1.4", "packed network→cognitive exact version");
 assert(network.dependencies["@apnex/message-router"] === "0.1.3", "packed network→message-router exact version");
 assert(claude.name === "@apnex/claude-plugin", "packed Claude name");
-assert(claude.version === "0.1.18", "packed Claude candidate version");
+assert(claude.version === "0.1.19", "packed Claude candidate version");
+assert(claude.repository?.type === "git", "packed Claude repository type");
+assert(claude.repository?.url === "https://github.com/apnex-org/agentic-network.git", "packed Claude repository URL");
 assert(Object.keys(claude.dependencies ?? {}).length === 0, "packed Claude candidate has no consumer runtime dependencies");
 
 for (const pkg of [network, claude]) {
@@ -45,7 +47,7 @@ const claudeLock = lock.packages["adapters/claude-plugin"];
 assert(networkLock.version === "0.1.14", "network workspace lock version");
 assert(networkLock.dependencies["@apnex/cognitive-layer"] === "0.1.4", "lock network→cognitive exact version");
 assert(networkLock.dependencies["@apnex/message-router"] === "0.1.3", "lock network→message-router exact version");
-assert(claudeLock.version === "0.1.18", "Claude workspace lock candidate version");
+assert(claudeLock.version === "0.1.19", "Claude workspace lock candidate version");
 assert(Object.keys(claudeLock.dependencies ?? {}).length === 0, "lock records the dependency-free Claude candidate");
 console.log("PASS: packed manifests and workspace lock bind exact network lineage plus a dependency-free Claude candidate");
 NODE

@@ -1,6 +1,6 @@
 # Third-party notices
 
-Generated from the exact Claude bundle metafile for @apnex/claude-plugin@0.1.18.
+Generated from the exact Claude bundle metafile for @apnex/claude-plugin@0.1.19.
 
 ## @modelcontextprotocol/sdk@1.29.0
 License: MIT

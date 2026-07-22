@@ -1,6 +1,6 @@
 {
   "name": "@apnex/claude-plugin",
-  "version": "0.1.18",
+  "version": "0.1.19",
   "description": "Claude Code host bundle — Universal Agent Adapter for the OIS agentic network",
   "license": "MIT",
   "type": "module",
@@ -26,5 +26,9 @@
     "tsx": "^4.21.0",
     "typescript": "^5.7.0",
     "vitest": "^4.1.4"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/apnex-org/agentic-network.git"
   }
 }
