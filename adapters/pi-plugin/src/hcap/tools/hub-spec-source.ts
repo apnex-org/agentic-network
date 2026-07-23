@@ -1,33 +1,18 @@
 /**
  * hub-spec-source.ts — U6 HubSpecSource (HCAP-on-PI, seam-arch §1/§5).
  *
- * The CONSUMER half: the spec-SOURCE (fetch the Hub catalog → ToolSpec[]) + the
- * TRIGGER binding. Owns WHEN to refresh the held spec; the control plane owns the
- * reconcile. Thin-shim/consumer forever (not extracted).
- *
- * `refreshFromHub()` replaces the additive `seedToolSurface`: fetch the live
- * catalog (`agent.listTools()` — already tier-filtered + cognitively-enriched by
- * core), map each descriptor → an ENABLED ToolSpec, and `applyConfig` the
- * authoritative set into U1.
- *
- * KF1(b) — the zero-tool POISON guard lives HERE (the source), NOT the converge
- * path: a Hub/catalog FETCH returning UNEXPECTEDLY empty (transport blip /
- * mid-deploy) is an ANOMALY, not an intent to remove every tool → KEEP the prior
- * declared spec + log/escalate; never `applyConfig([])` blindly. (An INTENTIONAL
- * empty spec via a direct `applyConfig([])` is a VALID controller action on a
- * different path — U3/U4 converge it to built-ins-only, no escalation; KF1(a).)
+ * The CONSUMER half: fetch the current Hub catalog, validate its authority,
+ * and atomically replace the held declared spec. It never publishes an empty,
+ * identity-less, or obsolete fetch. Reconnect cancellation is cooperative:
+ * the network request may still unwind, but the final currentness check makes
+ * every superseded result inert before applyConfig.
  */
 import type { ToolDescriptor, ResourceSpec } from "@apnex/network-adapter";
 
 export interface HubSpecSourceDeps {
   /** fetch the live LLM-facing catalog (core-hydrated: tier-filtered + enriched). */
   fetchCatalog: () => Promise<ToolDescriptor[]>;
-  /**
-   * idea-465 — resolve the Hub's live tool-surface revision (the /health
-   * `toolSurfaceRevision` ETag). Captured before each ingest so the CONSUMER-owned
-   * applied-revision latch advances ONLY after a successful applyConfig; a
-   * failed/kept-prior refresh leaves it behind so the reconciler re-drifts + retries.
-   */
+  /** resolve the Hub's live tool-surface revision (/health ETag). */
   fetchLiveRevision: () => Promise<string | null>;
   /** the control plane whose declared spec this source refreshes. */
   controlPlane: {
@@ -37,77 +22,124 @@ export interface HubSpecSourceDeps {
   log?: (msg: string) => void;
 }
 
+export interface HubSpecRefreshGuard {
+  /** Cancellation for a superseded identity/wire generation. */
+  signal?: AbortSignal;
+  /** Same-key predicate checked after every await and immediately before publish. */
+  isCurrent?: () => boolean;
+  /** Non-secret diagnostic identity (agent/session epoch/wire generation). */
+  identityKey?: string;
+}
+
+export interface HubSpecRefreshResult {
+  applied: boolean;
+  count: number;
+  revision: string | null;
+  reason?: "cancelled" | "identityless" | "revision-unavailable" | "empty" | "invalid-descriptor" | "fetch-failed";
+}
+
 export class HubSpecSource {
   private readonly log: (msg: string) => void;
-  /**
-   * idea-465 — the CONSUMER-owned applied-revision latch: the Hub revision the
-   * DECLARED SPEC currently reflects, advanced ONLY after a successful applyConfig
-   * (see refreshFromHub). The reconciler reads this via readServedRevision as its
-   * level (a pure trigger): live !== lastApplied ⇒ re-emit ⇒ retry, so a failed
-   * refresh can never mask a stale surface as converged. null until the first
-   * successful ingest (bootstrap).
-   */
+  /** Hub revision represented by the last successfully applied NONEMPTY spec. */
   private lastAppliedRevision: string | null = null;
 
   constructor(private readonly deps: HubSpecSourceDeps) {
     this.log = deps.log ?? (() => {});
   }
 
-  /** The Hub revision the declared spec currently reflects (idea-465 level; null pre-bootstrap). */
   getLastAppliedRevision(): string | null {
     return this.lastAppliedRevision;
   }
 
-  /** Fetch the Hub catalog → authoritative ToolSpec[] (all enabled) → applyConfig. */
-  async refreshFromHub(): Promise<void> {
+  /** Fetch, validate, and publish one authoritative NONEMPTY catalog. */
+  async refreshFromHub(guard: HubSpecRefreshGuard = {}): Promise<HubSpecRefreshResult> {
     const held = () => this.deps.controlPlane.listDeclaredConfig().length;
+    const identity = guard.identityKey?.trim() ?? "";
+    const obsolete = () => guard.signal?.aborted === true || guard.isCurrent?.() === false;
 
-    // idea-465: capture the Hub revision we're about to ingest, BEFORE the catalog
-    // fetch. lastAppliedRevision is advanced to it ONLY after applyConfig succeeds
-    // below — so a failed/kept-prior refresh leaves the latch behind (reconciler
-    // re-drifts → retry). Capturing pre-ingest also self-corrects a mid-refresh Hub
-    // move: the recorded revision lags the new live → next reconcile re-drifts.
-    let revBefore: string | null = null;
+    // A list_tools result without an exact claimed identity+wire key is not a
+    // catalog. This directly rejects the observed sessionId="" startup poison.
+    if (!identity) {
+      this.log(
+        `[hcap-source] CATALOG NOT READY — refusing identity-less hydration; keeping prior spec (${held()} tools)`,
+      );
+      return { applied: false, count: held(), revision: null, reason: "identityless" };
+    }
+    if (obsolete()) {
+      return { applied: false, count: held(), revision: null, reason: "cancelled" };
+    }
+
+    let revision: string | null;
     try {
-      revBefore = await this.deps.fetchLiveRevision();
+      revision = await this.deps.fetchLiveRevision();
     } catch {
-      revBefore = null; // no revision resolved → don't advance the latch even on apply-success; retry next tick.
+      revision = null;
+    }
+    if (obsolete()) {
+      this.log(`[hcap-source] obsolete hydration cancelled before catalog fetch (${identity})`);
+      return { applied: false, count: held(), revision, reason: "cancelled" };
+    }
+    if (!revision?.trim()) {
+      this.log(
+        `[hcap-source] CATALOG NOT READY — live revision unavailable for ${identity}; keeping prior spec (${held()} tools)`,
+      );
+      return { applied: false, count: held(), revision: null, reason: "revision-unavailable" };
     }
 
     let descriptors: ToolDescriptor[];
     try {
       descriptors = await this.deps.fetchCatalog();
     } catch (err) {
-      // Fetch fault → keep the prior spec, never wipe (KF1(b) anomaly, fail-closed).
-      // idea-465: do NOT advance lastAppliedRevision → the reconciler retries next tick.
       this.log(
-        `[hcap-source] Hub catalog fetch FAILED (${(err as Error)?.message ?? err}) — keeping prior spec (${held()} tools); applied revision NOT advanced (idea-465 retry)`,
+        `[hcap-source] CATALOG NOT READY — Hub catalog fetch FAILED for ${identity} (${(err as Error)?.message ?? err}); keeping prior spec (${held()} tools)`,
       );
-      return;
+      return { applied: false, count: held(), revision, reason: "fetch-failed" };
     }
 
-    // KF1(b) POISON GUARD: an unexpectedly-empty fetch while we hold tools is a
-    // source anomaly, NOT an intent to remove all → keep prior + escalate.
-    // idea-465: also NOT applied → latch stays behind → the reconciler retries.
-    if (descriptors.length === 0 && held() > 0) {
-      this.log(
-        `[hcap-source] POISON GUARD — Hub catalog fetch returned EMPTY while ${held()} tools are declared; treating as a fetch anomaly, keeping prior spec (NOT applyConfig([])); applied revision NOT advanced (idea-465 retry)`,
-      );
-      return;
+    if (obsolete()) {
+      this.log(`[hcap-source] obsolete hydration cancelled after catalog fetch (${identity}); result is inert`);
+      return { applied: false, count: held(), revision, reason: "cancelled" };
     }
 
-    const spec: ResourceSpec[] = descriptors.map((d) => ({
-      name: d.name,
-      definition: d,
+    // Empty is never an authoritative remove-all signal on this ingestion path,
+    // INCLUDING cold start (held=0). Intentional empty config remains available
+    // only through the separate direct applyConfig controller path.
+    if (descriptors.length === 0) {
+      this.log(
+        `[hcap-source] CATALOG NOT READY — rejected EMPTY Hub catalog for ${identity}; keeping prior spec (${held()} tools), revision NOT advanced`,
+      );
+      return { applied: false, count: held(), revision, reason: "empty" };
+    }
+
+    const names = new Set<string>();
+    for (const descriptor of descriptors) {
+      const name = typeof descriptor?.name === "string" ? descriptor.name.trim() : "";
+      if (!name || name !== descriptor.name || names.has(name)) {
+        this.log(
+          `[hcap-source] CATALOG NOT READY — rejected identity-less/duplicate tool descriptor for ${identity}; keeping prior spec (${held()} tools), revision NOT advanced`,
+        );
+        return { applied: false, count: held(), revision, reason: "invalid-descriptor" };
+      }
+      names.add(name);
+    }
+
+    const spec: ResourceSpec[] = descriptors.map((definition) => ({
+      name: definition.name,
+      definition,
       enabled: true,
     }));
+
+    // Last possible currentness fence. No await exists between this check and
+    // applyConfig, so an obsolete generation cannot interleave a publication.
+    if (obsolete()) {
+      this.log(`[hcap-source] obsolete hydration cancelled at publish fence (${identity}); result is inert`);
+      return { applied: false, count: held(), revision, reason: "cancelled" };
+    }
     this.deps.controlPlane.applyConfig(spec);
-    // idea-465 advance-on-success: the declared spec now reflects revBefore's Hub
-    // surface. If the revision fetch failed (revBefore null) leave the latch behind
-    // so the reconciler re-drifts + re-tries the revision next tick.
-    if (revBefore !== null) this.lastAppliedRevision = revBefore;
+    this.lastAppliedRevision = revision;
     this.log(
-      `[hcap-source] refreshed declared spec from Hub: ${spec.length} tools (revision ${revBefore ?? "unknown"})`,
+      `[hcap-source] refreshed authoritative declared spec from Hub: ${spec.length} tools (revision ${revision}, identity ${identity})`,
     );
+    return { applied: true, count: spec.length, revision };
   }
 }

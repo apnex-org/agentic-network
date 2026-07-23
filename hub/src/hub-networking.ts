@@ -344,6 +344,19 @@ export class HubNetworking {
       ? () => {}
       : (msg: string) => console.log(msg);
 
+    // bug-340 P0: claimSession's persisted CAS is the ownership authority.
+    // Once a newer session wins, synchronously unpublish + close ONLY the old
+    // session's process-local networking state. The callback receives no store
+    // and cleanupSession(displaced=event) skips persistent liveness mutation, so
+    // PostgreSQL entities and immutable history are unreachable by construction.
+    this.engineerRegistry.setSessionDisplacementHandler?.(async (event) => {
+      this.log(
+        `[Hub] Evicting displaced claimed session ${event.priorSessionId.substring(0, 8)}... ` +
+        `(agent=${event.agentId}, priorEpoch=${event.priorEpoch}, newSession=${event.newSessionId.substring(0, 8)}..., newEpoch=${event.newEpoch})`,
+      );
+      await this.cleanupSession(event.priorSessionId, { displaced: event });
+    });
+
     this.app.use(express.json());
     this.setupRoutes();
   }
@@ -842,27 +855,85 @@ export class HubNetworking {
 
   private cleaningUp = new Set<string>();
 
-  private async cleanupSession(sessionId: string): Promise<void> {
-    // Guard against re-entry: transport.close() fires onclose which calls cleanupSession
+  private async cleanupSession(
+    sessionId: string,
+    opts: {
+      displaced?: {
+        agentId: string;
+        priorSessionId: string;
+        priorEpoch: number;
+        newSessionId: string;
+        newEpoch: number;
+      };
+    } = {},
+  ): Promise<void> {
+    // Guard against re-entry: transport.close() fires onclose which calls cleanupSession.
     if (this.cleaningUp.has(sessionId)) return;
     this.cleaningUp.add(sessionId);
 
     try {
       const transport = this.transports.get(sessionId);
-      if (transport) {
-        try { await transport.close(); } catch { /* force cleanup */ }
+      const mcpServer = this.servers.get(sessionId);
+      const sseResponse = this.activeSseResponses.get(sessionId);
+
+      // Give the old adapter an explicit terminal ownership signal BEFORE close.
+      // It must halt rather than treating peer-close as a transient reconnect.
+      // Delivery is best-effort and bounded; logical eviction below does not wait
+      // indefinitely on a dead SSE consumer.
+      if (opts.displaced && mcpServer && this.sseActive.get(sessionId)) {
+        try {
+          await Promise.race([
+            mcpServer.server.sendLoggingMessage({
+              level: "warning",
+              logger: "session-control",
+              data: {
+                type: "session_displaced",
+                agentId: opts.displaced.agentId,
+                priorEpoch: opts.displaced.priorEpoch,
+                newEpoch: opts.displaced.newEpoch,
+                newSessionId: opts.displaced.newSessionId,
+              },
+            }),
+            new Promise<void>((resolve) => setTimeout(resolve, 250)),
+          ]);
+        } catch (err) {
+          this.log(`[Hub] displaced-session control signal failed (continuing logical eviction): ${err}`);
+        }
       }
+
+      // Ownership-safe ordering (bug-340 P0): unpublish every session-owned
+      // capability BEFORE awaiting physical close. A displaced wire therefore
+      // cannot race one more POST through the stale transport map and auto-claim
+      // itself back. All mutations in this block are process-local maps/Response.
       this.transports.delete(sessionId);
       this.servers.delete(sessionId);
       this.sseActive.delete(sessionId);
       this.activeSseResponses.delete(sessionId);
+      this.sseReplacingInProgress.delete(sessionId);
       this.sessionLastActivity.delete(sessionId);
-      // M18: flip the bound Agent offline if we were the current owner.
-      try {
-        await this.engineerRegistry.markAgentOffline(sessionId);
-      } catch (err) {
-        this.log(`[Hub] markAgentOffline failed for ${sessionId.substring(0, 8)}...: ${err}`);
+      if (sseResponse) {
+        try { sseResponse.end(); } catch { /* best-effort ephemeral close */ }
       }
+      if (transport) {
+        try { await transport.close(); } catch { /* maps already revoked */ }
+      }
+
+      // Normal TTL/shutdown cleanup may mark its CURRENT owner offline. A
+      // displacement must not mutate the replacement Agent row at all: the
+      // claim CAS already made the new session current and this path is limited
+      // to old-session ephemera. No cleanup path deletes any substrate entity.
+      if (!opts.displaced) {
+        try {
+          // markAgentOffline resolves the stable agent through the ephemeral
+          // session map and itself checks currentSessionId before its CAS.
+          await this.engineerRegistry.markAgentOffline(sessionId);
+        } catch (err) {
+          this.log(`[Hub] markAgentOffline failed for ${sessionId.substring(0, 8)}...: ${err}`);
+        }
+      }
+      // Revoke the role/binding after any ownership-aware normal offline write.
+      // Displacement skips that write entirely and arrives here as pure ephemera.
+      this.engineerRegistry.forgetSession?.(sessionId);
     } finally {
       this.cleaningUp.delete(sessionId);
     }

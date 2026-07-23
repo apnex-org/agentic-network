@@ -152,10 +152,25 @@ export class McpAgentClient implements IAgentClient {
   // traffic from a half-bound session.
   private syncBuffer: AgentEvent[] = [];
 
-  // Re-entrancy guard on the synchronizing phase — the transport can
-  // emit `reconnected` mid-handshake in pathological cases and we must
-  // not double-run.
-  private synchronizingInFlight = false;
+  // bug-340 P0: synchronization is single-flight PER WIRE GENERATION, not
+  // process-global. A new wire may start while the obsolete generation's
+  // requests are still unwinding; the new generation must proceed while all
+  // old completions remain inert.
+  private readonly synchronizingInFlight = new Map<number, Promise<void>>();
+
+  // Monotonic L7 wire generation. This is the identity component catalog
+  // hydration binds alongside agentId/session epoch/sessionId.
+  private _wireGeneration = 0;
+  // False from the instant reconnect begins until a replacement wire is active.
+  // This makes the outgoing generation obsolete BEFORE its requests reject.
+  private wireGenerationLive = false;
+
+  // start() must not resolve merely because an obsolete state-sync returned.
+  // Waiters resolve only on the current generation's transition to streaming.
+  private readonly streamingWaiters: Array<{
+    resolve: () => void;
+    reject: (err: Error) => void;
+  }> = [];
 
   // True while `reconnectSession()` is manually cycling the wire for a
   // session_invalid retry. Suppresses the `closed` wire event from
@@ -247,17 +262,24 @@ export class McpAgentClient implements IAgentClient {
       this.transition("disconnected");
       throw err;
     }
-    // Wire is up. Now run the session bring-up. Rethrow on first-boot
-    // so a non-retriable handshake failure (e.g. 401) propagates out
-    // of `start()` instead of best-efforting into streaming on a
-    // broken session. Wire-reconnect re-entry keeps the best-effort
-    // path because a transient reconnect failure should not tear
-    // the shim down.
+    // Wire is up. Bind a distinct generation before session bring-up.
+    // start() resolves ONLY once some current generation reaches streaming;
+    // an sse_never_opened race may obsolete this first generation while its
+    // state-sync requests unwind, and that stale completion is not readiness.
+    this.activateWireGeneration();
     await this.runSynchronizingPhase({ rethrowOnFailure: true });
+    if (!this.isConnected) {
+      await this.waitForStreaming();
+    }
   }
 
   async stop(): Promise<void> {
     this.stopped = true;
+    this.wireGenerationLive = false;
+    // Invalidate every outstanding generation before closing the wire so late
+    // handshake/state-sync/hydration continuations cannot publish readiness.
+    this._wireGeneration += 1;
+    this.rejectStreamingWaiters(new Error("McpAgentClient stopped before session became ready"));
     this.syncBuffer.length = 0;
     if (this.ownsTransport) {
       await this.transport.close();
@@ -410,6 +432,7 @@ export class McpAgentClient implements IAgentClient {
       sessionState: this._state,
       agentId: this._agentId,
       sessionEpoch: this._sessionEpoch,
+      wireGeneration: this._wireGeneration,
       totalHandshakes: this.totalHandshakes,
       totalSessionInvalidRetries: this.totalSessionInvalidRetries,
       dedupDropCount: this.dedupDropCount,
@@ -440,6 +463,10 @@ export class McpAgentClient implements IAgentClient {
         `onStateChange handler error: ${err}`
       );
     }
+    if (to === "streaming") this.resolveStreamingWaiters();
+    if (to === "disconnected" && this.stopped) {
+      this.rejectStreamingWaiters(new Error("McpAgentClient disconnected before session became ready"));
+    }
   }
 
   private handleWireEvent(event: WireEvent): void {
@@ -449,6 +476,9 @@ export class McpAgentClient implements IAgentClient {
         if (event.method === "hub-event") this.handleHubEvent(event.payload);
         return;
       case "reconnecting":
+        // Invalidate the outgoing generation immediately; do not wait for the
+        // replacement wire to connect before making old continuations inert.
+        this.wireGenerationLive = false;
         // Map wire cause to session reconnect reason with the same
         // vocabulary the legacy manager used. `peer_closed` and
         // `wire_error` both fall under the "sse_watchdog" bucket
@@ -456,10 +486,37 @@ export class McpAgentClient implements IAgentClient {
         this.transition("reconnecting", this.mapWireCause(event.cause));
         return;
       case "reconnected":
-        // Transport brought up a fresh wire. Re-run the session
-        // bring-up on it.
+        // Transport brought up a fresh wire. Give it a new generation BEFORE
+        // session bring-up so obsolete work is fenced and a new per-generation
+        // single-flight can run even while the old one is still unwinding.
+        this.activateWireGeneration();
         void this.runSynchronizingPhase();
         return;
+      case "displaced": {
+        // The Hub has already committed a newer currentSessionId. This is a
+        // terminal ownership event, not a transient wire failure: reconnecting
+        // would reclaim in a loop and amplify sessions. Halt this client now.
+        this.wireGenerationLive = false;
+        this.stopped = true;
+        const detail = event.payload && typeof event.payload === "object"
+          ? JSON.stringify(event.payload)
+          : String(event.payload ?? "");
+        this.log.log(
+          "agent.session.displaced",
+          { detail },
+          `session ownership displaced by a newer claim — halting old client (${detail})`,
+        );
+        try {
+          this.cfg.handshake?.onFatalHalt?.({
+            code: "session_displaced",
+            message: "A newer claimed session owns this agent identity; this displaced client must not reconnect.",
+          });
+        } catch {
+          /* stop below remains authoritative */
+        }
+        void this.stop();
+        return;
+      }
       case "closed":
         if (this.sessionReconnecting) return;
         this.transition("disconnected");
@@ -481,58 +538,144 @@ export class McpAgentClient implements IAgentClient {
     }
   }
 
+  private activateWireGeneration(): number {
+    this._wireGeneration += 1;
+    this.wireGenerationLive = true;
+    this.log.log(
+      "agent.wire.generation",
+      {
+        wireGeneration: this._wireGeneration,
+        sessionId: this.transport.getSessionId() ?? "",
+      },
+      `activated wire generation ${this._wireGeneration} (sessionId=${this.transport.getSessionId() ?? "identityless"})`,
+    );
+    return this._wireGeneration;
+  }
+
+  private isCurrentWireGeneration(generation: number): boolean {
+    return !this.stopped
+      && this.wireGenerationLive
+      && generation === this._wireGeneration;
+  }
+
+  private async requestOnWireGeneration(
+    generation: number,
+    method: string,
+    params: Record<string, unknown>,
+  ): Promise<unknown> {
+    if (!this.isCurrentWireGeneration(generation)) {
+      throw new Error(
+        `obsolete wire generation ${generation} before ${method} (current=${this._wireGeneration})`,
+      );
+    }
+    const result = await this.transport.request(method, params);
+    if (!this.isCurrentWireGeneration(generation)) {
+      throw new Error(
+        `obsolete wire generation ${generation} after ${method} (current=${this._wireGeneration})`,
+      );
+    }
+    return result;
+  }
+
+  private waitForStreaming(): Promise<void> {
+    if (this._state === "streaming") return Promise.resolve();
+    if (this.stopped) return Promise.reject(new Error("McpAgentClient is stopped"));
+    return new Promise<void>((resolve, reject) => {
+      this.streamingWaiters.push({ resolve, reject });
+    });
+  }
+
+  private resolveStreamingWaiters(): void {
+    for (const waiter of this.streamingWaiters.splice(0)) waiter.resolve();
+  }
+
+  private rejectStreamingWaiters(err: Error): void {
+    for (const waiter of this.streamingWaiters.splice(0)) waiter.reject(err);
+  }
+
   // ── Internal: session bring-up (handshake + sync) ───────────────────
 
-  private async runSynchronizingPhase(
-    opts: { rethrowOnFailure?: boolean } = {}
+  private runSynchronizingPhase(
+    opts: { rethrowOnFailure?: boolean } = {},
   ): Promise<void> {
-    if (this.synchronizingInFlight) {
+    const generation = this._wireGeneration;
+    const existing = this.synchronizingInFlight.get(generation);
+    if (existing) {
       this.log.log(
         "agent.sync.in_flight",
-        undefined,
-        "runSynchronizingPhase: already in flight — skipping"
+        { wireGeneration: generation },
+        `runSynchronizingPhase: generation ${generation} already in flight — joining`,
       );
-      return;
+      return existing;
     }
-    this.synchronizingInFlight = true;
+
+    const run = this.executeSynchronizingPhase(generation, opts).finally(() => {
+      if (this.synchronizingInFlight.get(generation) === run) {
+        this.synchronizingInFlight.delete(generation);
+      }
+    });
+    this.synchronizingInFlight.set(generation, run);
+    return run;
+  }
+
+  private async executeSynchronizingPhase(
+    generation: number,
+    opts: { rethrowOnFailure?: boolean },
+  ): Promise<void> {
+    if (!this.isCurrentWireGeneration(generation)) return;
     try {
       this.transition("synchronizing");
 
-      await this.runHandshake();
+      await this.runHandshake(generation);
+      if (!this.isCurrentWireGeneration(generation)) {
+        this.log.log(
+          "agent.sync.obsolete",
+          { wireGeneration: generation, currentWireGeneration: this._wireGeneration },
+          `generation ${generation} handshake completed after replacement — inert`,
+        );
+        return;
+      }
 
       if (this.manualSync) {
         // Caller owns sync. Stay in synchronizing until completeSync().
         return;
       }
 
-      // State sync. `performStateSync` calls `completeSync` on success
-      // AND on the failure path, so we always exit synchronizing.
+      // Every request and the terminal complete are generation-fenced. A stale
+      // state-sync may unwind after reconnect, but it cannot publish streaming.
       await performStateSync({
-        executeTool: (n, a) => this.transport.request(n, a),
-        completeSync: () => this.completeSyncInternal(),
+        executeTool: (n, a) => this.requestOnWireGeneration(generation, n, a),
+        completeSync: () => this.completeSyncInternal(generation),
         log: this.log,
         onPendingTask: this.cfg.handshake?.onPendingTask,
         onPendingActionItem: this.cfg.handshake?.onPendingActionItem,
       });
     } catch (err) {
+      if (!this.isCurrentWireGeneration(generation)) {
+        this.log.log(
+          "agent.sync.obsolete",
+          { wireGeneration: generation, currentWireGeneration: this._wireGeneration },
+          `generation ${generation} failed after replacement — inert (${err})`,
+        );
+        return;
+      }
       this.log.log(
         "agent.sync.failed",
-        { error: String(err) },
-        `runSynchronizingPhase failed: ${err}`
+        { error: String(err), wireGeneration: generation },
+        `runSynchronizingPhase generation ${generation} failed: ${err}`,
       );
       if (opts.rethrowOnFailure) {
-        // First-boot path: propagate to `start()`. Leave the session
-        // in `disconnected` so the shim sees a clean failure surface.
+        // First-boot path: propagate non-transient current-wire failures. A
+        // transport reconnect changes generation, taking the inert branch above.
         this.transition("disconnected");
         throw err;
       }
       if (!this.manualSync) {
-        // Best-effort: flush buffer and move to streaming anyway so the
-        // shim isn't stuck. A subsequent wire death will re-drive this.
-        this.completeSyncInternal();
+        // Preserve legacy best-effort session availability, but generation fencing
+        // plus the pi catalog-readiness gate prevents this from publishing tools
+        // without a current claimed identity.
+        this.completeSyncInternal(generation);
       }
-    } finally {
-      this.synchronizingInFlight = false;
     }
   }
 
@@ -543,10 +686,10 @@ export class McpAgentClient implements IAgentClient {
    * done. Called automatically under `manualSync: false`.
    */
   completeSync(): void {
-    this.completeSyncInternal();
+    this.completeSyncInternal(this._wireGeneration);
   }
 
-  private async runHandshake(): Promise<void> {
+  private async runHandshake(generation: number): Promise<void> {
     const handshake = this.cfg.handshake;
 
     // Bare `register_role` first — proves the wire is alive and the
@@ -559,7 +702,7 @@ export class McpAgentClient implements IAgentClient {
     // entity). Labels must ride the enriched payload below so they
     // persist on the Agent and subsequent task.labels / dispatch
     // selectors pick them up.
-    await this.transport.request("register_role", { role: this.cfg.role });
+    await this.requestOnWireGeneration(generation, "register_role", { role: this.cfg.role });
     this.totalHandshakes++;
     this.log.log(
       "agent.handshake.plain_ok",
@@ -570,7 +713,7 @@ export class McpAgentClient implements IAgentClient {
     if (!handshake) return;
 
     const result = await performHandshake({
-      executeTool: (n, a) => this.transport.request(n, a),
+      executeTool: (n, a) => this.requestOnWireGeneration(generation, n, a),
       config: {
         role: this.cfg.role,
         // idea-251 D-prime Phase 2: name is the sole identity input.
@@ -597,6 +740,7 @@ export class McpAgentClient implements IAgentClient {
     });
 
     this.totalHandshakes++;
+    if (!this.isCurrentWireGeneration(generation)) return;
     if (result.fatal) {
       // FAIL LOUD (mission-93): register_role was REJECTED by a structured
       // fatal error (e.g. role_mismatch). Do NOT degrade to streaming with a
@@ -616,19 +760,25 @@ export class McpAgentClient implements IAgentClient {
       this._agentId = result.response.agentId;
       if (handshake.onHandshakeComplete) {
         try {
-          handshake.onHandshakeComplete(result.response);
+          // bug-340 P0: a native binding may claim this exact identity+wire
+          // generation here. Await it so state-sync/catalog readiness cannot race
+          // ahead of claimed-session authority.
+          await handshake.onHandshakeComplete(result.response);
+          if (!this.isCurrentWireGeneration(generation)) return;
         } catch (err) {
           this.log.log(
             "agent.handshake.handler_error",
-            { error: String(err) },
-            `onHandshakeComplete handler error: ${err}`
+            { error: String(err), wireGeneration: generation },
+            `onHandshakeComplete handler error: ${err}`,
           );
+          throw err;
         }
       }
     }
   }
 
-  private completeSyncInternal(): void {
+  private completeSyncInternal(generation: number): void {
+    if (!this.isCurrentWireGeneration(generation)) return;
     if (this._state !== "synchronizing") return;
     const buffered = this.syncBuffer.splice(0);
     this.transition("streaming");
@@ -648,10 +798,12 @@ export class McpAgentClient implements IAgentClient {
     reason: SessionReconnectReason
   ): Promise<void> {
     this.sessionReconnecting = true;
+    this.wireGenerationLive = false;
     try {
       this.transition("reconnecting", reason);
       await this.transport.close();
       await this.transport.connect();
+      this.activateWireGeneration();
     } finally {
       this.sessionReconnecting = false;
     }

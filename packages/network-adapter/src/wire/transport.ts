@@ -75,6 +75,8 @@ export type WireEvent =
   | { type: "reconnecting"; cause: WireReconnectCause }
   | { type: "reconnected" }
   | { type: "closed"; reason?: string }
+  /** Hub ownership control: a newer claimed session displaced this wire. */
+  | { type: "displaced"; payload?: unknown }
   | {
       /**
        * Unsolicited inbound message from the remote (push notification,
