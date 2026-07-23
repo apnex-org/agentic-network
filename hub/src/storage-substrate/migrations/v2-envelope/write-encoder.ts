@@ -46,6 +46,13 @@ import { createThreadHistoryEntryMigrationModule } from "./kinds/ThreadHistoryEn
 import { createRepoEventBridgeCursorMigrationModule } from "./kinds/RepoEventBridgeCursor.js";
 import { createRepoEventBridgeDedupeMigrationModule } from "./kinds/RepoEventBridgeDedupe.js";
 import { createWorkItemMigrationModule } from "./kinds/WorkItem.js";
+import { createWorkRevisionFamilyMigrationModule } from "./kinds/WorkRevisionFamily.js";
+import { createWorkGraphTopologyGenerationMigrationModule } from "./kinds/WorkGraphTopologyGeneration.js";
+import { createWorkGraphTopologyShardMigrationModule } from "./kinds/WorkGraphTopologyShard.js";
+import { createWorkGraphTopologyHeadMigrationModule } from "./kinds/WorkGraphTopologyHead.js";
+import { createWorkGraphTopologyEdgeMigrationModule } from "./kinds/WorkGraphTopologyEdge.js";
+import { createWorkGraphRevisionOperationMigrationModule } from "./kinds/WorkGraphRevisionOperation.js";
+import { createWorkGraphRevisionNoticeMigrationModule } from "./kinds/WorkGraphRevisionNotice.js";
 import { createDecisionMigrationModule } from "./kinds/Decision.js";
 import { createDirectorSignalMigrationModule } from "./kinds/DirectorSignal.js";
 import { createDirectorConfirmationMigrationModule } from "./kinds/DirectorConfirmation.js";
@@ -81,6 +88,13 @@ const MODULE_FACTORIES: Record<string, (schema: SchemaDef) => KindMigrationModul
   RepoEventBridgeCursor: createRepoEventBridgeCursorMigrationModule,
   RepoEventBridgeDedupe: createRepoEventBridgeDedupeMigrationModule,
   WorkItem: createWorkItemMigrationModule,  // C1-R2 mission-94
+  WorkRevisionFamily: createWorkRevisionFamilyMigrationModule,
+  WorkGraphTopologyGeneration: createWorkGraphTopologyGenerationMigrationModule,
+  WorkGraphTopologyShard: createWorkGraphTopologyShardMigrationModule,
+  WorkGraphTopologyHead: createWorkGraphTopologyHeadMigrationModule,
+  WorkGraphTopologyEdge: createWorkGraphTopologyEdgeMigrationModule,
+  WorkGraphRevisionOperation: createWorkGraphRevisionOperationMigrationModule,
+  WorkGraphRevisionNotice: createWorkGraphRevisionNoticeMigrationModule,
   Decision: createDecisionMigrationModule,  // mission-102 P3-B1
   DirectorSignal: createDirectorSignalMigrationModule,              // mission-102 P3-B4
   DirectorConfirmation: createDirectorConfirmationMigrationModule,  // mission-102 P3-B4

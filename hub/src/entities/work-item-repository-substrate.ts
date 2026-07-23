@@ -412,6 +412,11 @@ function cloneWorkItem(w: WorkItem): WorkItem {
   flat.attestationHistory = (flat.attestationHistory as unknown[] | undefined) ?? [];
   flat.attestations = (flat.attestations as Record<string, unknown> | undefined) ?? {};
   flat.executorHistory = (flat.executorHistory as string[] | undefined) ?? [];
+  // Mission-140 revision storage: append-only recall/outbox fields are
+  // preserve-not-inject status state. Legacy rows project empty without a
+  // write-on-read; later semantic writers alone append.
+  flat.recallHistory = (flat.recallHistory as unknown[] | undefined) ?? [];
+  flat.pendingRecallIntents = (flat.pendingRecallIntents as unknown[] | undefined) ?? [];
   // failed-gate-seal-v2: legacy rows default without a write-on-read. Effective
   // terminality is DERIVED before every claim/sweep projection so a pre-v2 active
   // verifier FAIL can never re-enter the ready queue while awaiting reconciliation.

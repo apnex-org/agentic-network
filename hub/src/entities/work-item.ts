@@ -15,6 +15,12 @@
  */
 import type { EntityProvenance } from "../state.js";
 import type { PulseConfig } from "./mission.js";
+import type {
+  ActorStampV4,
+  BoundWorkItemReferenceV4,
+  PendingRecallIntentV4,
+  RecallHistoryEntryV4,
+} from "./work-item-contract-v4.js";
 
 /**
  * W1 (idea-446 / work-181): node-native backstop config. The anti-idle pulse,
@@ -461,6 +467,23 @@ export interface WorkItem {
    *  in work-87 (idempotency rides the deterministic id, not a query) — cleanup-by-runId
    *  query is a deferred follow-on. */
   blueprintRunId?: string;
+  /** Mission-140 immutable physical-revision identity. Legacy rows omit these
+   *  fields and project logicalId=id/revision=1 without write-on-read. Contract
+   *  and topology hashes are outputs of node-contract-v4/node-topology-v4,
+   *  never recursive hash inputs. */
+  logicalId?: string;
+  revision?: number;
+  predecessorPhysicalId?: string;
+  revisedBy?: ActorStampV4;
+  revisionReason?: string;
+  revisionGeneration?: number;
+  nodeContractHashVersion?: "node-contract-v4";
+  nodeContractHash?: string;
+  nodeTopologyHashVersion?: "node-topology-v4";
+  nodeTopologyHash?: string;
+  boundReferences?: BoundWorkItemReferenceV4[];
+  localExecutionIdentity?: string;
+  topologyGeneration?: number;
   // status (lifecycle)
   status: WorkItemPhase;
   lease: WorkItemLease | null;
@@ -493,6 +516,11 @@ export interface WorkItem {
    *  — so an executor cannot release/role-switch then attest their own work. status-partitioned,
    *  non-filterable, birth-empty. */
   executorHistory: string[];
+  /** Append-only recall lineage and persist-first exact-holder intents. These are
+   *  lifecycle authority records and therefore status-partitioned so unrelated
+   *  owner writes preserve rather than reconstruct/inject them. */
+  recallHistory?: RecallHistoryEntryV4[];
+  pendingRecallIntents?: PendingRecallIntentV4[];
   /** failed-gate-seal-v2: immutable FAIL authority and restart-safe notice outbox. */
   failedGateSeal?: FailedGateSealV2 | null;
   pendingFailedSealNotices?: PendingFailedSealNotice[];

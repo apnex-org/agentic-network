@@ -43,6 +43,14 @@ export const SUBSTRATE_FILTERABLE_KEYS: Record<string, string[]> = {
   // (status.lease.holder / status.lease.expiresAt — isBucketPrefixed, no renameMap
   // entry, sub-PR-3), NOT listed here.
   WorkItem: ["status", "roleEligibility", "completionDependsOn"],
+  // Mission-140 immutable revision storage + indexed reverse traversal/lookups.
+  WorkRevisionFamily: ["originPhysicalId", "familyScope.kind", "familyScope.id"],
+  WorkGraphTopologyGeneration: ["generation", "previousGeneration", "operationId"],
+  WorkGraphTopologyShard: ["generation", "shardIndex"],
+  WorkGraphTopologyHead: ["generation"],
+  WorkGraphTopologyEdge: ["generation", "edgeClass", "sourceLogicalId", "targetLogicalId"],
+  WorkGraphRevisionOperation: ["generation", "state", "operationId"],
+  WorkGraphRevisionNotice: ["generation", "operationId", "exactHolderAgentId", "projected"],
   // mission-102 P3-B1: Decision queue views filter by phase + ontology class. The
   // arrival-surface routedTo.target filter uses the bucket-prefixed dotted path
   // (status.routedTo.target — isBucketPrefixed, no renameMap entry), NOT listed here.
@@ -121,6 +129,13 @@ export interface AnnotatedFilterSite {
 }
 
 export const ANNOTATED_FILTER_SITES: AnnotatedFilterSite[] = [
+  {
+    file: "work-revision-storage-v4.ts",
+    kind: null,
+    reason: "unresolved-kind",
+    keys: ["id"],
+    note: "listAllStableWithSnapshot(kind, filter) is the revision-storage uncapped paging primitive. kind/filter are internally selected from the closed WORK_REVISION_KINDS registry; id is the deterministic universal sort key and each supplied filter key is pinned in SUBSTRATE_FILTERABLE_KEYS above.",
+  },
   {
     file: "curation-repository-substrate.ts",
     kind: null,

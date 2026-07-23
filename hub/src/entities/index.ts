@@ -45,6 +45,7 @@ export { SubstrateCounter } from "./substrate-counter.js";
 // Mission-140 foundation: pure node-contract-v4/reference/topology identity
 // primitives. Persistent revision storage and mutation verbs land in later slices.
 export * from "./work-item-contract-v4.js";
+export * from "./work-revision-storage-v4.js";
 
 export type { Bug, BugStatus, BugSeverity, IBugStore, CascadeBacklink as BugCascadeBacklink } from "./bug.js";
 export { BugRepositorySubstrate } from "./bug-repository-substrate.js";

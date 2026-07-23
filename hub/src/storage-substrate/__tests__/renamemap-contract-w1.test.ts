@@ -45,6 +45,13 @@ import { createThreadMigrationModule } from "../migrations/v2-envelope/kinds/Thr
 import { createSchemaDefMigrationModule } from "../migrations/v2-envelope/kinds/SchemaDef.js";
 import { createDocumentMigrationModule } from "../migrations/v2-envelope/kinds/Document.js";
 import { createWorkItemMigrationModule } from "../migrations/v2-envelope/kinds/WorkItem.js";
+import { createWorkRevisionFamilyMigrationModule } from "../migrations/v2-envelope/kinds/WorkRevisionFamily.js";
+import { createWorkGraphTopologyGenerationMigrationModule } from "../migrations/v2-envelope/kinds/WorkGraphTopologyGeneration.js";
+import { createWorkGraphTopologyShardMigrationModule } from "../migrations/v2-envelope/kinds/WorkGraphTopologyShard.js";
+import { createWorkGraphTopologyHeadMigrationModule } from "../migrations/v2-envelope/kinds/WorkGraphTopologyHead.js";
+import { createWorkGraphTopologyEdgeMigrationModule } from "../migrations/v2-envelope/kinds/WorkGraphTopologyEdge.js";
+import { createWorkGraphRevisionOperationMigrationModule } from "../migrations/v2-envelope/kinds/WorkGraphRevisionOperation.js";
+import { createWorkGraphRevisionNoticeMigrationModule } from "../migrations/v2-envelope/kinds/WorkGraphRevisionNotice.js";
 import { createDecisionMigrationModule } from "../migrations/v2-envelope/kinds/Decision.js";
 import { createClassGrantMigrationModule } from "../migrations/v2-envelope/kinds/ClassGrant.js";
 import type { KindMigrationModule } from "../migrations/v2-envelope/kinds/_contract.js";
@@ -87,7 +94,14 @@ const EXPECTED_RENAME_INVENTORY: Record<string, RenameMap> = {
   // (lease/evidence objects, roleEligibility array). The W1.1b sentinel-probe is
   // placement-based (value-type-agnostic) so all entries validate here; only the
   // W6 equality-shadow step carves out the object/array entries (see that test).
-  WorkItem: { status: "status.phase", lease: "status.lease", evidence: "status.evidence", frictionReflections: "status.frictionReflections", blockedOn: "status.blockedOn", leaseExpiryCount: "status.leaseExpiryCount", enteredCurrentStateAt: "status.enteredCurrentStateAt", stateDurations: "status.stateDurations", attestationHistory: "status.attestationHistory", attestations: "status.attestations", executorHistory: "status.executorHistory", failedGateSeal: "status.failedGateSeal", pendingFailedSealNotices: "status.pendingFailedSealNotices", failedSealNoticePending: "status.failedSealNoticePending", effectiveDisposition: "status.effectiveDisposition", nodeConfig: "status.nodeConfig", priority: "spec.priority", type: "spec.type", roleEligibility: "spec.roleEligibility", completionDependsOn: "spec.completionDependsOn" },
+  WorkItem: { status: "status.phase", lease: "status.lease", evidence: "status.evidence", frictionReflections: "status.frictionReflections", blockedOn: "status.blockedOn", leaseExpiryCount: "status.leaseExpiryCount", enteredCurrentStateAt: "status.enteredCurrentStateAt", stateDurations: "status.stateDurations", attestationHistory: "status.attestationHistory", attestations: "status.attestations", executorHistory: "status.executorHistory", failedGateSeal: "status.failedGateSeal", pendingFailedSealNotices: "status.pendingFailedSealNotices", failedSealNoticePending: "status.failedSealNoticePending", effectiveDisposition: "status.effectiveDisposition", logicalId: "spec.logicalId", revision: "spec.revision", predecessorPhysicalId: "spec.predecessorPhysicalId", revisedBy: "spec.revisedBy", revisionReason: "spec.revisionReason", revisionGeneration: "spec.revisionGeneration", nodeContractHashVersion: "spec.nodeContractHashVersion", nodeContractHash: "spec.nodeContractHash", nodeTopologyHashVersion: "spec.nodeTopologyHashVersion", nodeTopologyHash: "spec.nodeTopologyHash", boundReferences: "spec.boundReferences", localExecutionIdentity: "spec.localExecutionIdentity", topologyGeneration: "spec.topologyGeneration", recallHistory: "status.recallHistory", pendingRecallIntents: "status.pendingRecallIntents", nodeConfig: "status.nodeConfig", priority: "spec.priority", type: "spec.type", roleEligibility: "spec.roleEligibility", completionDependsOn: "spec.completionDependsOn" },
+  WorkRevisionFamily: { logicalId: "spec.logicalId", originPhysicalId: "spec.originPhysicalId", latestAllocatedRevision: "spec.latestAllocatedRevision", originalCreatedBy: "spec.originalCreatedBy", familyScope: "spec.familyScope", "familyScope.kind": "spec.familyScope.kind", "familyScope.id": "spec.familyScope.id", createdAt: "metadata.createdAt" },
+  WorkGraphTopologyGeneration: { generation: "spec.generation", previousGeneration: "spec.previousGeneration", operationId: "spec.operationId", topologyHash: "spec.topologyHash", manifestHash: "spec.manifestHash", createdAt: "metadata.createdAt" },
+  WorkGraphTopologyShard: { generation: "spec.generation", shardIndex: "spec.shardIndex", shardHash: "spec.shardHash", createdAt: "metadata.createdAt" },
+  WorkGraphTopologyHead: { domain: "spec.domain", generation: "spec.generation", manifestId: "spec.manifestId", topologyHash: "spec.topologyHash", operationId: "spec.operationId", activatedAt: "metadata.activatedAt" },
+  WorkGraphTopologyEdge: { generation: "spec.generation", edgeClass: "spec.edgeClass", sourceLogicalId: "spec.sourceLogicalId", targetLogicalId: "spec.targetLogicalId" },
+  WorkGraphRevisionOperation: { operationId: "spec.operationId", requestHash: "spec.requestHash", generation: "spec.generation", previousGeneration: "spec.previousGeneration", topologyHash: "spec.topologyHash", manifestId: "spec.manifestId", recommitSet: "spec.recommitSet", state: "status.state", preparedAt: "metadata.preparedAt", committedAt: "status.committedAt" },
+  WorkGraphRevisionNotice: { intentId: "spec.intentId", operationId: "spec.operationId", generation: "spec.generation", logicalId: "spec.logicalId", physicalId: "spec.physicalId", exactHolderAgentId: "spec.exactHolderAgentId", payloadHash: "spec.payloadHash", createdAt: "metadata.createdAt", projected: "status.projected", projectedMessageId: "status.projectedMessageId", projectedAt: "status.projectedAt" },
   // mission-102 P3-B1: the Decision authority-resolution spine (no lease anywhere —
   // the entity has no liveness by design).
   Decision: { status: "status.phase", class: "spec.class", curatedBy: "status.curatedBy", curationRecordRef: "status.curationRecordRef", routedTo: "status.routedTo", routedBy: "status.routedBy", resolution: "status.resolution", mergedInto: "status.mergedInto", disposedReason: "status.disposedReason", enteredCurrentStateAt: "status.enteredCurrentStateAt", stateDurations: "status.stateDurations" },
@@ -159,6 +173,13 @@ const MODULE_FACTORIES: Record<string, (s: SchemaDef) => KindMigrationModule> = 
   RepoEventBridgeDedupe: createRepoEventBridgeDedupeMigrationModule,
   Document: createDocumentMigrationModule,
   WorkItem: createWorkItemMigrationModule,  // C1-R2 mission-94
+  WorkRevisionFamily: createWorkRevisionFamilyMigrationModule,
+  WorkGraphTopologyGeneration: createWorkGraphTopologyGenerationMigrationModule,
+  WorkGraphTopologyShard: createWorkGraphTopologyShardMigrationModule,
+  WorkGraphTopologyHead: createWorkGraphTopologyHeadMigrationModule,
+  WorkGraphTopologyEdge: createWorkGraphTopologyEdgeMigrationModule,
+  WorkGraphRevisionOperation: createWorkGraphRevisionOperationMigrationModule,
+  WorkGraphRevisionNotice: createWorkGraphRevisionNoticeMigrationModule,
   Decision: createDecisionMigrationModule,  // mission-102 P3-B1
   ClassGrant: createClassGrantMigrationModule,  // mission-102 P3-B3
 };
@@ -251,11 +272,9 @@ describe("W1.1 renameMap inventory + faithfulness — complete field-movement au
         expect(expectedKinds.has(def.kind), `unexpected renameMap on kind=${def.kind}`).toBe(true);
       }
     }
-    // 27 runtime consts total; exactly 23 carry renameMap (mission-102 P3-B1 added
-    // Decision with one; P3-B4 added DirectorSignal + DirectorConfirmation WITHOUT —
-    // no `status` field, get-by-id only).
-    expect(ALL_SCHEMAS.filter((s) => s.renameMap !== undefined)).toHaveLength(21); // work-162 (A1): -Task -Turn (both had renameMap)
-    expect(ALL_SCHEMAS).toHaveLength(33); // mission-103 S4: -Tele; work-162 (A1): -Task -Turn
+    // Mission-140 adds seven preserve-not-inject revision storage kinds.
+    expect(ALL_SCHEMAS.filter((s) => s.renameMap !== undefined)).toHaveLength(28);
+    expect(ALL_SCHEMAS).toHaveLength(40);
   });
 
   it("W1.1b every renameMap entry resolves to the encoder's ACTUAL placement (sentinel-probe vs migrateOne)", () => {
