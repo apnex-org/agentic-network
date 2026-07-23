@@ -563,6 +563,7 @@ const WorkItem: SchemaDef = {
     { name: "workitem_status_phase_idx", fields: ["status.phase"] },
     { name: "workitem_status_lease_holder_idx", fields: ["status.lease.holder"] },
     { name: "workitem_status_lease_expiresat_idx", fields: ["status.lease.expiresAt"] },
+    { name: "workitem_status_failedsealnoticepending_idx", fields: ["status.failedSealNoticePending"] },
     // C1-R2: GIN index backing the $contains (@>) array-membership on roleEligibility.
     { name: "workitem_spec_roleeligibility_gin_idx", fields: ["spec.roleEligibility"], type: "gin" },
     // work-88 (arc-node): GIN index backing the reverse-ancestor lookup over the
@@ -600,6 +601,12 @@ const WorkItem: SchemaDef = {
     attestationHistory: "status.attestationHistory",
     attestations: "status.attestations",
     executorHistory: "status.executorHistory",
+    // Mission-140 failed-gate-seal-v2: immutable failure authority + persist-first
+    // exact-holder outbox and read-served effective terminality.
+    failedGateSeal: "status.failedGateSeal",
+    pendingFailedSealNotices: "status.pendingFailedSealNotices",
+    failedSealNoticePending: "status.failedSealNoticePending",
+    effectiveDisposition: "status.effectiveDisposition",
     // W1 (idea-446 / work-181): the node-native pulse subtree — status (lifecycle),
     // non-filterable (surfaced on get_work, swept by role, not queried). Sweeper-written
     // bookkeeping → status so every owner-path write round-trips it (preserve-not-inject);

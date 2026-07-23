@@ -859,7 +859,7 @@ export class PulseSweeper {
       );
     }
     const terminal = new Set(["done", "abandoned"]);
-    const pulseNodes = items.filter((n) => n.nodeConfig?.pulse && !terminal.has(n.status));
+    const pulseNodes = items.filter((n) => n.nodeConfig?.pulse && n.effectiveDisposition !== "failed_sealed" && !terminal.has(n.status));
     for (const node of pulseNodes) {
       result.scanned += 1;
       try {

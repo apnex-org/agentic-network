@@ -7,7 +7,7 @@ const NO_FRICTION = { observed: false, summary: "no friction observed" } as cons
  * Exercises the load-bearing kernel against steve's ratification checklist (§4/§5):
  * server-stamped verifier path, executor/holder/creator-HISTORY exclusion, executor-evidence
  * hard fence, non-empty related evidenceRefs, relocation freeze, preserve-not-inject CAS merge,
- * dual-edge review→done reconciliation, fail→pass supersede, and the verify_attestation recompute.
+ * dual-edge review→done reconciliation, immutable failed-gate sealing, and the verify_attestation recompute.
  * Real repo over the memory substrate (the envelope round-trip is proven in A1).
  */
 
@@ -196,16 +196,19 @@ describe("SEAL A2 — attest_evidence authority", () => {
     await expect(repo.attestEvidence(workId, "att", "agent-verifier", "pass", [{ kind: "external", ref: "https://github.com/o/r/pull/1" }])).rejects.toThrow(AttestationRejected);
   });
 
-  it("FAIL keeps the item in review; a later PASS supersedes + unparks to done (append-only)", async () => {
+  it("FAIL keeps raw review but seals effective terminality; later same-row PASS is rejected", async () => {
     const { repo } = await setup();
     const { workId } = await sealItemInReview(repo);
     const failed = await repo.attestEvidence(workId, "att", "agent-verifier", "fail", [{ kind: "evidence", ref: "pr-1" }]);
     expect(failed.item.status).toBe("review");
-    const passed = await repo.attestEvidence(workId, "att", "agent-verifier", "pass", [{ kind: "evidence", ref: "pr-1" }]);
-    expect(passed.item.status).toBe("done");
-    expect(passed.attestation.supersedes).toBeDefined();
-    expect(passed.item.attestationHistory).toHaveLength(2); // history is append-only
-    expect(passed.item.attestations["att"].verdict).toBe("pass"); // active projection repointed
+    expect(failed.item.effectiveDisposition).toBe("failed_sealed");
+    expect(failed.item.lease).toBeNull();
+    expect(failed.item.attestationHistory).toHaveLength(1);
+    await expect(repo.attestEvidence(workId, "att", "agent-verifier", "pass", [{ kind: "evidence", ref: "pr-1" }]))
+      .rejects.toThrow(TransitionRejected);
+    const fresh = await repo.getWorkItem(workId);
+    expect(fresh?.attestations["att"].verdict).toBe("fail");
+    expect(fresh?.attestationHistory).toHaveLength(1);
   });
 
   it("PRESERVE-NOT-INJECT: attesting one requirement merges into the map, preserving the other", async () => {

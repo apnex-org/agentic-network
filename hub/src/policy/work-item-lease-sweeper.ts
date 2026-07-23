@@ -22,6 +22,7 @@ import { escalateBareEnvelope } from "./bare-envelope-escalation.js";
 // work-54 (idea-357 pt-2): lease-expiry transitions are FSM transitions too —
 // emit them push-native (requeue = "claimable again"; poison-abandon = terminal).
 import { emitWorkTransition } from "./work-item-events.js";
+import { projectPendingFailedSealNotices } from "./failed-gate-notice-projector.js";
 
 /** Default per-ITEM poison cap (architect-confirmed N=3; configurable). After this many
  *  lease-expiry re-queue cycles the item is terminally abandoned. */
@@ -60,6 +61,8 @@ export interface WorkItemLeaseSweepResult {
   scanned: number;
   requeued: number;
   abandoned: number;
+  /** Legacy active verifier FAILs reconciled before raw-phase lease expiry. */
+  failedSealed: number;
   /** Items a concurrent renew/release/complete made not-expired between list + CAS. */
   skipped: number;
   errors: number;
@@ -140,8 +143,18 @@ export class WorkItemLeaseSweeper {
    * escalated + quarantined out of the cycle.
    */
   async fullSweep(nowISO: string): Promise<WorkItemLeaseSweepResult> {
-    const result: WorkItemLeaseSweepResult = { scanned: 0, requeued: 0, abandoned: 0, skipped: 0, errors: 0, quarantined: 0, agentsQuarantined: 0 };
+    const result: WorkItemLeaseSweepResult = { scanned: 0, requeued: 0, abandoned: 0, failedSealed: 0, skipped: 0, errors: 0, quarantined: 0, agentsQuarantined: 0 };
     const ctx = this.contextProvider.forSweeper();
+
+    // Restart path for born-native persist-first intents. Projection failure never
+    // weakens FAIL authority or prevents the lease safety pass; retry next tick.
+    try {
+      await projectPendingFailedSealNotices(ctx, this.store);
+    } catch (projectionError) {
+      result.errors += 1;
+      this.metrics?.increment("workitem_failed_seal.notice_projection_error", { error: (projectionError as Error)?.message ?? String(projectionError) });
+      this.logger.warn("failed-seal notice outbox projection deferred:", projectionError);
+    }
 
     let expired;
     try {
@@ -179,6 +192,21 @@ export class WorkItemLeaseSweeper {
             this.logger.warn(`poison-abandon audit write failed for ${w.id}:`, auditErr);
           }
           await emitWorkTransition(ctx, { item: w, verb: "lease_expired", fromStatus: w.status, toStatus: "abandoned" });
+        } else if (outcome === "failed_sealed") {
+          result.failedSealed += 1;
+          this.metrics?.increment("workitem_failed_seal.legacy_reconciled", { workId: w.id });
+          try {
+            await this.audit?.logEntry("hub", "workitem_failed_gate_legacy_reconciled",
+              `WorkItem ${w.id} carried an active verifier FAIL before failed-gate-seal-v2; preserved raw review, sealed effective disposition, cleared the obsolete lease, and persisted exact-holder notice intent`, w.id);
+          } catch (auditErr) {
+            this.logger.warn(`legacy failed-seal audit write failed for ${w.id}:`, auditErr);
+          }
+          try {
+            await projectPendingFailedSealNotices(ctx, this.store, { workId: w.id });
+          } catch (projectionError) {
+            result.errors += 1;
+            this.logger.warn(`legacy failed-seal notice projection deferred for ${w.id}:`, projectionError);
+          }
         } else {
           result.skipped += 1; // renewed/released/completed between list + CAS (race-safe)
         }
@@ -214,7 +242,7 @@ export class WorkItemLeaseSweeper {
       }
     }
 
-    this.logger.log(`lease sweep: scanned=${result.scanned} requeued=${result.requeued} abandoned=${result.abandoned} skipped=${result.skipped} errors=${result.errors} quarantined=${result.quarantined} agentsQuarantined=${result.agentsQuarantined}`);
+    this.logger.log(`lease sweep: scanned=${result.scanned} requeued=${result.requeued} abandoned=${result.abandoned} failedSealed=${result.failedSealed} skipped=${result.skipped} errors=${result.errors} quarantined=${result.quarantined} agentsQuarantined=${result.agentsQuarantined}`);
     return result;
   }
 }

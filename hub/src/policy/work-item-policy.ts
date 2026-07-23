@@ -29,6 +29,7 @@ import type { PrWorkGraphBindingProof } from "./pr-review-workitem-event-contrac
 // never-throws — the store transition is the source of truth; the event is
 // enhancement (the mission-policy runTriggers posture).
 import { emitWorkTransition, emitDependencyUnblocks, emitWorkUpdated } from "./work-item-events.js";
+import { projectPendingFailedSealNotices } from "./failed-gate-notice-projector.js";
 import { DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 import {
   TransitionRejected,
@@ -1227,7 +1228,18 @@ async function attestEvidence(args: Record<string, unknown>, ctx: IPolicyContext
   const note = typeof args.note === "string" ? args.note : undefined;
   try {
     const { item, attestation } = await store.attestEvidence(workId, requirementId, caller.agentId, verdict, evidenceRefs, note);
-    return ok({ workItem: item, attestation });
+    let failedSealNoticeProjection: unknown;
+    if (verdict === "fail" && item.effectiveDisposition === "failed_sealed") {
+      try {
+        failedSealNoticeProjection = await projectPendingFailedSealNotices(ctx, store, { workId });
+      } catch (projectionError) {
+        // Authority is already committed. Never roll it back or misreport FAIL as
+        // rejected because the downstream wake failed; the restart sweeper retries.
+        console.error(`[attest_evidence] failed-seal notice projection deferred for ${workId}: ${(projectionError as Error)?.message ?? String(projectionError)}`);
+        failedSealNoticeProjection = { deferred: true, reason: (projectionError as Error)?.message ?? String(projectionError) };
+      }
+    }
+    return ok({ workItem: item, attestation, ...(failedSealNoticeProjection ? { failedSealNoticeProjection } : {}) });
   } catch (e) {
     return mapVerbError(e);
   }

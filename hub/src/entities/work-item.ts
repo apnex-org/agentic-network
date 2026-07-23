@@ -219,6 +219,76 @@ export interface Attestation {
   supersedes?: string;
 }
 
+/**
+ * Mission-140 failed-gate-seal-v2: the exact pre-clear lease/status authority
+ * captured in the SAME WorkItem CAS that makes a verifier FAIL effective.
+ * The raw lease token is deliberately absent; only a domain-separated
+ * fingerprint is retained for forensic correlation.
+ */
+export interface FailedGatePreClearReceiptV2 {
+  workId: string;
+  logicalId: string;
+  revision: number;
+  topologyGeneration: number;
+  requirementId: string;
+  verifierId: string;
+  verdict: "fail";
+  producedAt: string;
+  operationId: string;
+  before: {
+    phase: WorkItemPhase;
+    holder: string | null;
+    claimedAt: string | null;
+    expiresAt: string | null;
+    heartbeatAt: string | null;
+    tokenFingerprint: string | null;
+    blockedOn: WorkItemBlockedOn | null;
+    stateHash: string;
+    evidenceSetHash: string;
+    activeAttestationProjectionHash: string;
+    resourceVersion: string;
+  };
+  after: {
+    phase: "review";
+    effectiveDisposition: "failed_sealed";
+    leaseCleared: true;
+    blockedOnCleared: true;
+  };
+  attestationHistoryIndex: number;
+  attestationId: string;
+  requirementHash: string;
+  targetRefHash: string;
+  attestationEvidenceSetHash: string;
+  sealedAt: string;
+}
+
+/** Immutable active seal projection. A distinct repair/revision must replace it. */
+export interface FailedGateSealV2 {
+  version: 2;
+  operationId: string;
+  sealHash: string;
+  receipt: FailedGatePreClearReceiptV2;
+  holderNoticeIntentId: string | null;
+}
+
+/**
+ * Persist-first exact-holder notification intent. Projection to Message is
+ * restart-safe via intentId as migrationSourceId; no role/broadcast fallback.
+ */
+export interface PendingFailedSealNotice {
+  intentId: string;
+  sealHash: string;
+  workId: string;
+  requirementId: string;
+  verifierId: string;
+  verdict: "fail";
+  producedAt: string;
+  exactHolderAgentId: string;
+  createdAt: string;
+  projectedMessageId: string | null;
+  projectedAt: string | null;
+}
+
 /** SEAL (idea-444) — `verify_attestation` output: the active attestation + full per-requirement
  *  history + the RECOMPUTED validity (not a passive read — the validator re-derives the hashes,
  *  re-resolves the verifier role + refs, and re-checks the no-self-attestation history), plus the
@@ -423,6 +493,13 @@ export interface WorkItem {
    *  — so an executor cannot release/role-switch then attest their own work. status-partitioned,
    *  non-filterable, birth-empty. */
   executorHistory: string[];
+  /** failed-gate-seal-v2: immutable FAIL authority and restart-safe notice outbox. */
+  failedGateSeal?: FailedGateSealV2 | null;
+  pendingFailedSealNotices?: PendingFailedSealNotice[];
+  /** Indexed outbox projection bit; true iff an exact-holder intent is unprojected. */
+  failedSealNoticePending?: boolean;
+  /** Read-served effective terminality, independent from the raw FSM phase. */
+  effectiveDisposition?: "failed_sealed" | null;
   /** W1 (idea-446 / work-181): the node-native anti-idle backstop. The pulse CONFIG
    *  (interval/message/threshold) is authored at create/seed_blueprint; the BOOKKEEPING
    *  (lastFiredAt/lastResponseAt/missedCount/lastEscalatedAt) is sweeper-written — so, like
@@ -558,6 +635,10 @@ export interface IWorkItemStore {
    *  role + is NOT in the executor/creator history, evidenceRefs resolve/relate) + return
    *  invalid-reasons. Reports legacy executor review/audit evidence as NOT-SEAL-grade. */
   verifyAttestation(workId: string, requirementId: string): Promise<AttestationVerification>;
+
+  /** failed-gate-seal-v2: restart-safe exact-holder outbox projection support. */
+  listPendingFailedSealNoticeItems(limit?: number): Promise<{ items: WorkItem[]; truncated: boolean }>;
+  markFailedSealNoticeProjected(workId: string, intentId: string, messageId: string): Promise<WorkItem | null>;
 
   /** work-88 (arc-node): the k/N COMPLETION-gate progress projection over a node's DIRECT
    *  completionDependsOn children — `{done, total, pending}` (done = children at phase=done;

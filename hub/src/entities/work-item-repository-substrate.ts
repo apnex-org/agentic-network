@@ -45,12 +45,16 @@ import type {
   AttestationVerdict,
   AttestationVerification,
   AttestationEvidenceRef,
+  FailedGatePreClearReceiptV2,
+  FailedGateSealV2,
+  PendingFailedSealNotice,
 } from "./work-item.js";
 import { DEFAULT_STATE_DURATIONS, evaluateCompletionGate } from "./work-item.js";
 import { SubstrateCounter } from "./substrate-counter.js";
 import { withAdvisoryLock, LOCK_CLASS } from "../storage-substrate/advisory-lock.js";
 import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 import { type Clock, systemClock } from "./clock.js";
+import { hashCanonicalDomain } from "./work-item-contract-v4.js";
 
 const KIND = "WorkItem";
 const LIST_CAP = 500;
@@ -408,6 +412,15 @@ function cloneWorkItem(w: WorkItem): WorkItem {
   flat.attestationHistory = (flat.attestationHistory as unknown[] | undefined) ?? [];
   flat.attestations = (flat.attestations as Record<string, unknown> | undefined) ?? {};
   flat.executorHistory = (flat.executorHistory as string[] | undefined) ?? [];
+  // failed-gate-seal-v2: legacy rows default without a write-on-read. Effective
+  // terminality is DERIVED before every claim/sweep projection so a pre-v2 active
+  // verifier FAIL can never re-enter the ready queue while awaiting reconciliation.
+  flat.failedGateSeal = flat.failedGateSeal ?? null;
+  flat.pendingFailedSealNotices = (flat.pendingFailedSealNotices as unknown[] | undefined) ?? [];
+  flat.failedSealNoticePending = (flat.pendingFailedSealNotices as PendingFailedSealNotice[])
+    .some((notice) => notice.projectedMessageId === null);
+  const decoded = flat as unknown as WorkItem;
+  flat.effectiveDisposition = isFailedGateSealed(decoded) ? "failed_sealed" : null;
   return flat as unknown as WorkItem;
 }
 
@@ -466,6 +479,141 @@ const hashTargetRef = (tr: { kind: string; id: string } | null): string => sha25
 const hashEvidenceSet = (refs: AttestationEvidenceRef[]): string =>
   sha256Canonical([...refs].map((r) => `${r.kind}:${r.ref}`).sort());
 
+/** Active verifier FAIL derivation for legacy (pre-v2-receipt) rows. */
+export function hasActiveVerifierFail(item: WorkItem): boolean {
+  return item.evidenceRequirements.some((req) =>
+    req.evidenceAuthority === "verifier-attestation" && item.attestations?.[req.id]?.verdict === "fail");
+}
+
+/** Effective failed-sealed classification is authoritative before ANY raw phase check. */
+export function isFailedGateSealed(item: WorkItem): boolean {
+  return item.effectiveDisposition === "failed_sealed" || item.failedGateSeal != null || hasActiveVerifierFail(item);
+}
+
+/** Exported for exact-receipt/failpoint tests: complete persisted domain row, no substrate RV. */
+export function failedGateStateHash(item: WorkItem): string {
+  // JSON persistence omits undefined optional properties. Normalize to that exact
+  // domain before invoking foundation-v4's strict canonical hasher.
+  const persistedDomain = JSON.parse(JSON.stringify(item)) as unknown;
+  return hashCanonicalDomain("failed-gate-preclear-state-v2", persistedDomain);
+}
+
+function failedGateOperationId(
+  workId: string,
+  requirementId: string,
+  verifierId: string,
+  verdict: AttestationVerdict,
+  evidenceRefs: AttestationEvidenceRef[],
+): string {
+  return hashCanonicalDomain("failed-gate-operation-v2", {
+    workId, requirementId, verifierId, verdict, evidenceSetHash: hashEvidenceSet(evidenceRefs),
+  });
+}
+
+function tokenFingerprint(token: string | undefined): string | null {
+  return token ? hashCanonicalDomain("failed-gate-token-v2", { token }) : null;
+}
+
+function legacyRevisionIdentity(item: WorkItem): { logicalId: string; revision: number; topologyGeneration: number } {
+  const maybe = item as WorkItem & { logicalId?: string; revision?: number; topologyGeneration?: number };
+  return {
+    logicalId: maybe.logicalId ?? item.id,
+    revision: maybe.revision ?? 1,
+    topologyGeneration: maybe.topologyGeneration ?? 0,
+  };
+}
+
+function attestationIdentity(attestation: Attestation): string {
+  return `${attestation.requirementId}:${attestation.verifierId}:${attestation.producedAt}`;
+}
+
+function buildFailedGateSeal(input: {
+  item: WorkItem;
+  resourceVersion: string;
+  attestation: Attestation;
+  attestationHistoryIndex: number;
+  operationId: string;
+  sealedAt: string;
+}): { seal: FailedGateSealV2; notice: PendingFailedSealNotice | null } {
+  const { item, resourceVersion, attestation, attestationHistoryIndex, operationId, sealedAt } = input;
+  const identity = legacyRevisionIdentity(item);
+  const receipt: FailedGatePreClearReceiptV2 = {
+    workId: item.id,
+    ...identity,
+    requirementId: attestation.requirementId,
+    verifierId: attestation.verifierId,
+    verdict: "fail",
+    producedAt: attestation.producedAt,
+    operationId,
+    before: {
+      phase: item.status,
+      holder: item.lease?.holder ?? null,
+      claimedAt: item.lease?.claimedAt ?? null,
+      expiresAt: item.lease?.expiresAt ?? null,
+      heartbeatAt: item.lease?.heartbeatAt ?? null,
+      tokenFingerprint: tokenFingerprint(item.lease?.token),
+      blockedOn: item.blockedOn ? structuredClone(item.blockedOn) : null,
+      stateHash: failedGateStateHash(item),
+      evidenceSetHash: hashCanonicalDomain("failed-gate-work-evidence-set-v2", item.evidence),
+      activeAttestationProjectionHash: hashCanonicalDomain("failed-gate-active-attestation-projection-v2", item.attestations),
+      resourceVersion,
+    },
+    after: {
+      phase: "review",
+      effectiveDisposition: "failed_sealed",
+      leaseCleared: true,
+      blockedOnCleared: true,
+    },
+    attestationHistoryIndex,
+    attestationId: attestationIdentity(attestation),
+    requirementHash: attestation.requirementHash,
+    targetRefHash: attestation.targetRefHash,
+    attestationEvidenceSetHash: attestation.evidenceSetHash,
+    sealedAt,
+  };
+  const sealHash = hashCanonicalDomain("failed-gate-seal-v2", receipt);
+  const holder = item.lease?.holder ?? null;
+  const holderNoticeIntentId = holder
+    ? hashCanonicalDomain("failed-seal-holder-notice-v2", { workId: item.id, sealHash, holder })
+    : null;
+  const seal: FailedGateSealV2 = { version: 2, operationId, sealHash, receipt, holderNoticeIntentId };
+  const notice: PendingFailedSealNotice | null = holder && holderNoticeIntentId
+    ? {
+        intentId: holderNoticeIntentId,
+        sealHash,
+        workId: item.id,
+        requirementId: attestation.requirementId,
+        verifierId: attestation.verifierId,
+        verdict: "fail",
+        producedAt: attestation.producedAt,
+        exactHolderAgentId: holder,
+        createdAt: sealedAt,
+        projectedMessageId: null,
+        projectedAt: null,
+      }
+    : null;
+  return { seal, notice };
+}
+
+export class FailedGateSealedRejected extends TransitionRejected {
+  constructor(workId: string) {
+    super(`${workId} has effectiveDisposition=failed_sealed; same-row replay/claim/attestation is forbidden — create a distinct repair/revision`);
+    this.name = "FailedGateSealedRejected";
+  }
+}
+
+class IdempotentFailedSeal extends Error {
+  constructor(public readonly item: WorkItem) {
+    super("idempotent failed-gate seal replay");
+  }
+}
+
+class IdempotentNoticeProjection extends Error {
+  constructor(public readonly item: WorkItem) {
+    super("idempotent failed-gate notice projection replay");
+  }
+}
+
 export class WorkItemRepositorySubstrate implements IWorkItemStore {
   constructor(
     private readonly substrate: HubStorageSubstrate,
@@ -521,6 +669,10 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       attestationHistory: [],
       attestations: {},
       executorHistory: [],
+      failedGateSeal: null,
+      pendingFailedSealNotices: [],
+      failedSealNoticePending: false,
+      effectiveDisposition: null,
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
@@ -569,6 +721,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const existing = await this.substrate.getWithRevision<WorkItem>(KIND, workId);
     if (!existing) throw new TransitionRejected(`update rejected: WorkItem ${workId} does not resolve`);
     const before = cloneWorkItem(existing.entity);
+    this.assertNotFailedSealed(before);
     // Authority: author or architect (the ratified model — no lease-holder writes in v1).
     if (before.createdBy?.agentId !== actor.agentId && actor.role !== "architect") {
       throw new TransitionRejected(`update rejected: ${actor.role}/${actor.agentId} is neither the item's author (${before.createdBy?.agentId}) nor an architect — the ratified authority model is author+architect`);
@@ -667,6 +820,10 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       attestationHistory: [],
       attestations: {},
       executorHistory: [],
+      failedGateSeal: null,
+      pendingFailedSealNotices: [],
+      failedSealNoticePending: false,
+      effectiveDisposition: null,
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
@@ -775,7 +932,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const readyChildren: WorkItem[] = [];
     for (const childId of childIds) {
       const child = await this.getWorkItem(childId);
-      if (!child || child.status !== "ready") continue;
+      if (!child || isFailedGateSealed(child) || child.status !== "ready") continue;
       if (role && child.roleEligibility.length > 0 && !child.roleEligibility.includes(role)) continue;
       if (child.dependsOn.length > 0 && (await this.unmetDependencies(child.dependsOn)).length > 0) continue;
       readyChildren.push(child);
@@ -913,6 +1070,11 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     if (!w) return null;
     const status = w.status;
     const isHolder = !!w.lease && w.lease.holder === caller.agentId;
+    if (isFailedGateSealed(w)) {
+      const reason = "effectiveDisposition=failed_sealed; no same-row lifecycle verb is legal — create a distinct repair/revision";
+      const verbs: WorkItemVerb[] = ["claim", "start", "block", "resume", "renew", "release", "abandon", "complete", "pause", "unpause"];
+      return { workId: w.id, status, isHolder, gateMet: false, moves: verbs.map((verb) => ({ verb, legal: false, reason })) };
+    }
     const isCreator = w.createdBy?.agentId === caller.agentId;
     const notHolder = "the caller is not the lease-holder";
 
@@ -1083,9 +1245,10 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const { items } = await this.substrate.list<WorkItem>(KIND, { filter: { status: "ready" }, limit: READY_SCAN_CAP });
     const truncated = items.length >= READY_SCAN_CAP;
     const ready = items.map(cloneWorkItem);
+    const nonFailed = ready.filter((w) => !isFailedGateSealed(w));
     const eligible = role
-      ? ready.filter((w) => w.roleEligibility.length === 0 || w.roleEligibility.includes(role))
-      : ready;
+      ? nonFailed.filter((w) => w.roleEligibility.length === 0 || w.roleEligibility.includes(role))
+      : nonFailed;
     // bug-181 (idea-353 fold): the `ready` phase + role-eligibility alone is NOT
     // claimability. claimWorkItem is the AUTHORITY and re-checks dependency-readiness
     // fail-CLOSED (lines ~392-401): an item whose dependsOn are not all `done` rejects
@@ -1145,6 +1308,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         const depsNotDone = await this.unmetDependencies(cloneWorkItem(pre).dependsOn);
 
         return this.tryCasUpdate(workId, (w) => {
+          this.assertNotFailedSealed(w);
           if (w.status !== "ready") throw new TransitionRejected(`claim requires ready, was ${w.status}`);
           assertRoleEligible(w, role); // (a) role ∈ roleEligibility (empty = any-role)
           if (depsNotDone.length > 0) { // (b) all dependsOn must be phase=done
@@ -1199,6 +1363,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   // ── S3 (idea-454) — paused/disabled dormancy state ────────────────────────
   async pauseWork(workId: string, actor: { agentId: string; role: string }, _reason?: string): Promise<WorkItem | null> {
     return this.tryCasUpdate(workId, (w) => {
+      this.assertNotFailedSealed(w);
       // AUTHZ (high-stakes lifecycle-suspension): CREATOR-only (server-stamped createdBy) OR Director.
       const isCreator = w.createdBy?.agentId === actor.agentId;
       if (!isCreator && actor.role !== "director") {
@@ -1216,6 +1381,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
 
   async unpauseWork(workId: string, actor: { agentId: string; role: string }): Promise<WorkItem | null> {
     return this.tryCasUpdate(workId, (w) => {
+      this.assertNotFailedSealed(w);
       const isCreator = w.createdBy?.agentId === actor.agentId;
       if (!isCreator && actor.role !== "director") {
         throw new TransitionRejected(`unpause requires the item's creator (${w.createdBy?.agentId ?? "unknown"}) or Director, not ${actor.role}/${actor.agentId}`);
@@ -1370,6 +1536,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    */
   async systemUnblock(workId: string, decisionRef: string): Promise<WorkItem | null> {
     return this.tryCasUpdate(workId, (w) => {
+      this.assertNotFailedSealed(w);
       if (w.status !== "blocked") {
         throw new TransitionRejected(`systemUnblock requires blocked, was ${w.status}`);
       }
@@ -1383,6 +1550,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
 
   async abandonWork(workId: string, agentId: string, opts?: { reason?: string; leaseToken?: string }): Promise<WorkItem | null> {
     return this.tryCasUpdate(workId, (w) => {
+      this.assertNotFailedSealed(w);
       const isHolderWithToken = w.lease?.holder === agentId && w.lease?.token === opts?.leaseToken;
       const isCreator = w.createdBy?.agentId === agentId;
       if (!isHolderWithToken && !isCreator) {
@@ -1669,72 +1837,118 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         throw new AttestationRejected(`malformed evidenceRef ${JSON.stringify(r)} — each is { kind: 'evidence'|'entity'|'external', ref: <non-empty> }`);
       }
     }
+    const operationId = failedGateOperationId(workId, requirementId, verifierId, verdict, evidenceRefs);
     const pre = await this.substrate.get<WorkItem>(KIND, workId);
     if (!pre) throw new AttestationRejected(`work item ${workId} not found`);
+    const preItem = cloneWorkItem(pre);
+    // A v2 FAIL is immutable. The exact same operation is a read-only replay; every
+    // later same-row attestation (PASS or a different FAIL) is rejected. A legacy
+    // active FAIL is already effectively sealed and must be reconciled, not superseded.
+    if (preItem.failedGateSeal) {
+      if (verdict === "fail" && preItem.failedGateSeal.operationId === operationId) {
+        return { item: preItem, attestation: preItem.attestations[requirementId] };
+      }
+      throw new FailedGateSealedRejected(workId);
+    }
+    if (hasActiveVerifierFail(preItem)) throw new FailedGateSealedRejected(workId);
+
     // (b) async ENTITY existence resolution (monotonic — safe pre-CAS; relatedness runs on fresh w).
     const resolved = await this.resolveEntityRefs(evidenceRefs);
-    // (c) CAS: derive requirement/hashes/HISTORY/ref-validation ALL from the FRESH w (steve
-    //     audit-11832 #1: closes the first-attestation relocation TOCTOU — an attestation built
-    //     from a stale pre-read must never be merged onto a moved row / auto-advance).
-    const written = await this.tryCasUpdate(workId, async (w) => {
-      const req = w.evidenceRequirements.find((r) => r.id === requirementId);
-      if (!req) throw new AttestationRejected(`requirement '${requirementId}' not found on ${workId}`);
-      if (req.evidenceAuthority !== "verifier-attestation") {
-        throw new AttestationRejected(`requirement '${requirementId}' is evidenceAuthority=${req.evidenceAuthority ?? "executor-evidence"} — attest_evidence only applies to verifier-attestation requirements`);
-      }
-      // fold 2 HISTORY exclusion (idea-528): reject only when the verifier authored the VERIFIED
-      // work. If no verified work can be resolved, fail safe to the historical gate-node check.
-      const selfExclusion = await this.selfAttestationExclusionFor(w);
-      if (selfExclusion.excluded.has(verifierId)) {
-        const targetSuffix = selfExclusion.basis === "target-work" ? `target work ${selfExclusion.targetIds.join(",")}` : workId;
-        throw new AttestationRejected(`verifier ${verifierId} is in the executor/holder/creator history of ${targetSuffix} — self-attestation rejected (fold 2)`);
-      }
-      // typed-ref validation against the fresh w (steve audit-11839): every ref validated, ≥1 load-bearing.
-      const { reasons } = this.classifyEvidenceRefs(evidenceRefs, w, resolved);
-      if (reasons.length > 0) throw new AttestationRejected(`evidenceRefs invalid: ${reasons.join("; ")}`);
-      // relocation anchor guard (belt): a prior attestation stamped for a different targetRef.
-      const anchor = w.attestationHistory[0];
-      if (anchor && anchor.targetRefHash !== hashTargetRef(w.targetRef)) {
-        throw new AttestationRejected(`targetRef of ${workId} changed after an attestation exists — relocation rejected (point-at-A-then-move-to-B laundering)`);
-      }
-      // Build the attestation FROM THE FRESH w (hashes, targetRef snapshot, supersedes).
-      const producedAt = this.clock.now().toISOString();
-      const prior = w.attestations[requirementId];
-      const attestation: Attestation = {
-        requirementId,
-        verifierId,
-        verdict,
-        producedAt,
-        evidenceRefs: evidenceRefs.map((r) => ({ ...r })),
-        requirementHash: hashRequirement(req),
-        targetRefSnapshot: w.targetRef,
-        targetRefHash: hashTargetRef(w.targetRef),
-        evidenceSetHash: hashEvidenceSet(evidenceRefs),
-        ...(prior ? { supersedes: `${prior.requirementId}:${prior.verifierId}:${prior.producedAt}` } : {}),
-      };
-      // preserve-not-inject: MERGE into the CURRENT map/history (never overwrite the subtree).
-      const attestationHistory = [...w.attestationHistory, attestation];
-      const attestations = { ...w.attestations, [requirementId]: attestation };
-      // dual-edge edge #2: LEAF-only auto-advance (a gated ARC completes only via complete_work,
-      // which re-checks completionDependsOn — steve/architect: no gated-arc auto-advance until a
-      // fresh-row completionDependsOn reconciler exists).
-      if (w.status === "review") {
-        const gate = evaluateCompletionGate({ evidenceRequirements: w.evidenceRequirements, attestations });
-        let executorDone = false;
-        try {
-          executorDone = evaluateEvidence(w.evidenceRequirements, w.evidence, w.lease, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey))).nextPhase === "done";
-        } catch {
-          executorDone = false;
+    try {
+      // (c) ONE CAS: FAIL authority + exact pre-clear receipt + active projection + lease/blocker
+      // clear + persist-first exact-holder notice intent are indivisible on the WorkItem row.
+      const written = await this.tryCasUpdate(workId, async (w, resourceVersion) => {
+        if (w.failedGateSeal) {
+          if (verdict === "fail" && w.failedGateSeal.operationId === operationId) throw new IdempotentFailedSeal(w);
+          throw new FailedGateSealedRejected(workId);
         }
-        const isLeaf = w.completionDependsOn.length === 0;
-        if (gate.attestationReqsSatisfied && executorDone && isLeaf) {
-          const nowISO = this.clock.now().toISOString();
-          return { ...w, attestationHistory, attestations, status: "done" as const, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
+        if (hasActiveVerifierFail(w)) throw new FailedGateSealedRejected(workId);
+        const req = w.evidenceRequirements.find((r) => r.id === requirementId);
+        if (!req) throw new AttestationRejected(`requirement '${requirementId}' not found on ${workId}`);
+        if (req.evidenceAuthority !== "verifier-attestation") {
+          throw new AttestationRejected(`requirement '${requirementId}' is evidenceAuthority=${req.evidenceAuthority ?? "executor-evidence"} — attest_evidence only applies to verifier-attestation requirements`);
         }
+        if (verdict === "fail" && w.status !== "review") {
+          throw new AttestationRejected(`failed-gate-seal-v2 requires raw phase=review, was ${w.status}`);
+        }
+        // fold 2 HISTORY exclusion (idea-528): reject only when the verifier authored the VERIFIED
+        // work. If no verified work can be resolved, fail safe to the historical gate-node check.
+        const selfExclusion = await this.selfAttestationExclusionFor(w);
+        if (selfExclusion.excluded.has(verifierId)) {
+          const targetSuffix = selfExclusion.basis === "target-work" ? `target work ${selfExclusion.targetIds.join(",")}` : workId;
+          throw new AttestationRejected(`verifier ${verifierId} is in the executor/holder/creator history of ${targetSuffix} — self-attestation rejected (fold 2)`);
+        }
+        const { reasons } = this.classifyEvidenceRefs(evidenceRefs, w, resolved);
+        if (reasons.length > 0) throw new AttestationRejected(`evidenceRefs invalid: ${reasons.join("; ")}`);
+        const anchor = w.attestationHistory[0];
+        if (anchor && anchor.targetRefHash !== hashTargetRef(w.targetRef)) {
+          throw new AttestationRejected(`targetRef of ${workId} changed after an attestation exists — relocation rejected (point-at-A-then-move-to-B laundering)`);
+        }
+        const producedAt = this.clock.now().toISOString();
+        const prior = w.attestations[requirementId];
+        const attestation: Attestation = {
+          requirementId,
+          verifierId,
+          verdict,
+          producedAt,
+          evidenceRefs: evidenceRefs.map((r) => ({ ...r })),
+          requirementHash: hashRequirement(req),
+          targetRefSnapshot: w.targetRef,
+          targetRefHash: hashTargetRef(w.targetRef),
+          evidenceSetHash: hashEvidenceSet(evidenceRefs),
+          ...(prior ? { supersedes: attestationIdentity(prior) } : {}),
+        };
+        const attestationHistory = [...w.attestationHistory, attestation];
+        const attestations = { ...w.attestations, [requirementId]: attestation };
+
+        if (verdict === "fail") {
+          const { seal, notice } = buildFailedGateSeal({
+            item: w,
+            resourceVersion,
+            attestation,
+            attestationHistoryIndex: w.attestationHistory.length,
+            operationId,
+            sealedAt: producedAt,
+          });
+          return {
+            ...w,
+            status: "review" as const,
+            attestationHistory,
+            attestations,
+            failedGateSeal: seal,
+            effectiveDisposition: "failed_sealed" as const,
+            pendingFailedSealNotices: notice ? [...(w.pendingFailedSealNotices ?? []), notice] : (w.pendingFailedSealNotices ?? []),
+            failedSealNoticePending: notice !== null,
+            lease: null,
+            blockedOn: null,
+            ...accrueExitingState(w, producedAt),
+            updatedAt: producedAt,
+          };
+        }
+
+        // PASS dual-edge: LEAF-only auto-advance. A gated ARC completes only through
+        // complete_work, which independently re-checks completionDependsOn.
+        if (w.status === "review") {
+          const gate = evaluateCompletionGate({ evidenceRequirements: w.evidenceRequirements, attestations });
+          let executorDone = false;
+          try {
+            executorDone = evaluateEvidence(w.evidenceRequirements, w.evidence, w.lease, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey))).nextPhase === "done";
+          } catch {
+            executorDone = false;
+          }
+          if (gate.attestationReqsSatisfied && executorDone && w.completionDependsOn.length === 0) {
+            return { ...w, attestationHistory, attestations, status: "done" as const, ...accrueExitingState(w, producedAt), updatedAt: producedAt };
+          }
+        }
+        return { ...w, attestationHistory, attestations, updatedAt: producedAt };
+      });
+      return { item: written!, attestation: written!.attestations[requirementId] };
+    } catch (err) {
+      if (err instanceof IdempotentFailedSeal) {
+        return { item: err.item, attestation: err.item.attestations[requirementId] };
       }
-      return { ...w, attestationHistory, attestations, updatedAt: this.clock.now().toISOString() };
-    });
-    return { item: written!, attestation: written!.attestations[requirementId] };
+      throw err;
+    }
   }
 
   async verifyAttestation(workId: string, requirementId: string): Promise<AttestationVerification> {
@@ -1773,6 +1987,58 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return { workId, requirementId, valid: invalidReasons.length === 0, invalidReasons, active, history, legacyReviewEvidencePresent };
   }
 
+  /** Restart-safe outbox scan. The filter is status-partitioned/index-governed;
+   *  exact pending-intent filtering is in memory because JSON-array predicates are
+   *  intentionally not added to the substrate query language. Truncation is loud. */
+  async listPendingFailedSealNoticeItems(limit = LIST_CAP): Promise<{ items: WorkItem[]; truncated: boolean }> {
+    const cap = Math.min(Math.max(1, limit), LIST_CAP);
+    const { items } = await this.substrate.list<WorkItem>(KIND, {
+      filter: { "status.failedSealNoticePending": true },
+      limit: cap,
+    });
+    const pending = items.map(cloneWorkItem).filter((item) =>
+      (item.pendingFailedSealNotices ?? []).some((notice) => notice.projectedMessageId === null));
+    return { items: pending, truncated: items.length >= cap };
+  }
+
+  async markFailedSealNoticeProjected(workId: string, intentId: string, messageId: string): Promise<WorkItem | null> {
+    const pre = await this.getWorkItem(workId);
+    if (!pre) return null;
+    const existing = (pre.pendingFailedSealNotices ?? []).find((notice) => notice.intentId === intentId);
+    if (!existing) throw new TransitionRejected(`failed-seal notice intent ${intentId} does not exist on ${workId}`);
+    if (existing.projectedMessageId !== null) {
+      if (existing.projectedMessageId !== messageId) {
+        throw new TransitionRejected(`failed-seal notice intent ${intentId} already projects to ${existing.projectedMessageId}, not ${messageId}`);
+      }
+      return pre;
+    }
+    try {
+      return await this.tryCasUpdate(workId, (w) => {
+        const notices = w.pendingFailedSealNotices ?? [];
+        const index = notices.findIndex((notice) => notice.intentId === intentId);
+        if (index < 0) throw new TransitionRejected(`failed-seal notice intent ${intentId} does not exist on ${workId}`);
+        const current = notices[index];
+        if (current.projectedMessageId !== null) {
+          if (current.projectedMessageId !== messageId) {
+            throw new TransitionRejected(`failed-seal notice intent ${intentId} already projects to ${current.projectedMessageId}, not ${messageId}`);
+          }
+          throw new IdempotentNoticeProjection(w);
+        }
+        const next = [...notices];
+        next[index] = { ...current, projectedMessageId: messageId, projectedAt: this.clock.now().toISOString() };
+        return {
+          ...w,
+          pendingFailedSealNotices: next,
+          failedSealNoticePending: next.some((notice) => notice.projectedMessageId === null),
+          updatedAt: this.clock.now().toISOString(),
+        };
+      });
+    } catch (err) {
+      if (err instanceof IdempotentNoticeProjection) return err.item;
+      throw err;
+    }
+  }
+
   // ── Lease-expiry sweep surface (sub-PR-4a) ────────────────────────────────
 
   /**
@@ -1798,7 +2064,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * to ready (leaseExpiryCount < poisonCap) or POISON-ABANDONS (>= poisonCap). The lease
    * is cleared either way (a re-claim mints a fresh token → the old holder is token-fenced).
    */
-  async expireLease(workId: string, nowISO: string, poisonCap: number): Promise<"requeued" | "abandoned" | "skipped"> {
+  async expireLease(workId: string, nowISO: string, poisonCap: number): Promise<"requeued" | "abandoned" | "failed_sealed" | "skipped"> {
     for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
       const existing = await this.substrate.getWithRevision<WorkItem>(KIND, workId);
       if (!existing) return "skipped";
@@ -1807,15 +2073,56 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (!LEASE_HELD_PHASES.includes(w.status) || !w.lease || w.lease.expiresAt >= nowISO) {
         return "skipped";
       }
+
+      // failed-gate-seal-v2 LEGACY RECONCILIATION RUNS BEFORE raw-phase sweep logic.
+      // An active verifier FAIL is effective terminality even without a v2 receipt; it
+      // can never fall through to review→ready. The same CAS backfills the receipt,
+      // clears the obsolete lease/blocker, and persists the exact-holder outbox intent.
+      if (hasActiveVerifierFail(w)) {
+        if (w.failedGateSeal) return "skipped"; // born-native seals clear the lease; defensive only
+        const requirementId = w.evidenceRequirements
+          .filter((req) => req.evidenceAuthority === "verifier-attestation" && w.attestations[req.id]?.verdict === "fail")
+          .map((req) => req.id)
+          .sort()[0];
+        const attestation = w.attestations[requirementId];
+        const historyIndex = w.attestationHistory.findIndex((candidate) => attestationIdentity(candidate) === attestationIdentity(attestation));
+        if (historyIndex < 0) {
+          throw new Error(`[WorkItemRepositorySubstrate] legacy active FAIL projection ${workId}/${requirementId} has no append-only history row; refusing sweep`);
+        }
+        const operationId = hashCanonicalDomain("failed-gate-legacy-reconcile-v2", {
+          workId, attestationId: attestationIdentity(attestation),
+        });
+        const { seal, notice } = buildFailedGateSeal({
+          item: w,
+          resourceVersion: existing.resourceVersion,
+          attestation,
+          attestationHistoryIndex: historyIndex,
+          operationId,
+          sealedAt: nowISO,
+        });
+        const next: WorkItem = {
+          ...w,
+          status: "review",
+          failedGateSeal: seal,
+          effectiveDisposition: "failed_sealed",
+          pendingFailedSealNotices: notice ? [...(w.pendingFailedSealNotices ?? []), notice] : (w.pendingFailedSealNotices ?? []),
+          failedSealNoticePending: notice !== null,
+          lease: null,
+          blockedOn: null,
+          ...accrueExitingState(w, nowISO),
+          updatedAt: nowISO,
+        };
+        const result = await this.substrate.putIfMatch(KIND, next, existing.resourceVersion);
+        if (result.ok) return "failed_sealed";
+        continue;
+      }
+
       // audit-4103 #3: only claimed/in_progress lapses accrue item-poison. review/blocked
       // re-queue WITHOUT incrementing → never terminal-abandon (evidence preserved on
       // re-queue, so a parked review item that loses its holder is recoverable, not lost).
       const poisonEligible = POISON_ELIGIBLE_PHASES.includes(w.status);
       const nextCount = poisonEligible ? w.leaseExpiryCount + 1 : w.leaseExpiryCount;
       const poisoned = poisonEligible && nextCount >= poisonCap;
-      // work-98 (idea-384 Part A): accrue the EXITING lease-held state's dwell before the sweep.
-      // On requeue→ready the node re-enters ready (re-stamped here), so its next ready-dwell
-      // RE-ACCUMULATES onto the prior ready total — a thrashing node shows its time in `ready`.
       const accrued = accrueExitingState(w, nowISO);
       const next: WorkItem = poisoned
         ? { ...w, status: "abandoned", lease: null, blockedOn: null, leaseExpiryCount: nextCount, ...accrued, updatedAt: nowISO }
@@ -1868,9 +2175,11 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   private async inFlightCount(agentId: string, cap: number): Promise<number> {
     const { items } = await this.substrate.list<WorkItem>(KIND, {
       filter: { status: { $in: [...WIP_PHASES] }, "status.lease.holder": agentId },
-      limit: cap,
+      // A legacy active FAIL may still carry an obsolete lease until reconciliation;
+      // scan broadly enough to exclude that effective-terminal row without consuming WIP.
+      limit: LIST_CAP,
     });
-    return items.length;
+    return items.map(cloneWorkItem).filter((item) => !isFailedGateSealed(item)).slice(0, cap).length;
   }
 
   /** Resolve each dependency's phase; return the ids NOT in phase=done (audit-4085 #1).
@@ -1888,7 +2197,12 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   /** Holder + token guard for lease-bound verbs (audit-4082 #1/#4). A non-holder OR a
    *  stale token (after a lease-expiry-requeue or a fresh re-claim) REJECTS — even for
    *  the SAME agentId — fencing a zombie old-process. Fail-CLOSED, row unchanged. */
+  private assertNotFailedSealed(w: WorkItem): void {
+    if (isFailedGateSealed(w)) throw new FailedGateSealedRejected(w.id);
+  }
+
   private assertLease(w: WorkItem, agentId: string, leaseToken: string, verb: string): void {
+    this.assertNotFailedSealed(w);
     if (w.lease?.holder !== agentId) {
       throw new TransitionRejected(`${verb} requires the lease-holder (${w.lease?.holder ?? "none"}), not ${agentId}`);
     }
@@ -1933,12 +2247,12 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
 
   private async tryCasUpdate(
     workId: string,
-    transform: (current: WorkItem) => WorkItem | Promise<WorkItem>,
+    transform: (current: WorkItem, resourceVersion: string) => WorkItem | Promise<WorkItem>,
   ): Promise<WorkItem | null> {
     for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
       const existing = await this.substrate.getWithRevision<WorkItem>(KIND, workId);
       if (!existing) return null;
-      const next = await transform(cloneWorkItem(existing.entity));
+      const next = await transform(cloneWorkItem(existing.entity), existing.resourceVersion);
       const result = await this.substrate.putIfMatch(KIND, next, existing.resourceVersion);
       if (result.ok) {
         console.log(`[WorkItemRepositorySubstrate] WorkItem ${workId} → ${next.status}`);
