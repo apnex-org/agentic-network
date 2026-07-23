@@ -21,6 +21,7 @@ import {
   EvidencePredicateFailed,
 } from "../../entities/work-item-repository-substrate.js";
 import { LockAcquisitionTimeoutError } from "../../storage-substrate/advisory-lock.js";
+import { WorkGraphCurrentnessRejected } from "../../entities/workgraph-currentness-fence-v4.js";
 import type { IWorkItemStore, WorkItem } from "../../entities/work-item.js";
 
 type Call = { method: string; args: unknown[] };
@@ -143,6 +144,21 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     const r = await router.handle("unpause_work", { workId: "work-1" }, ctxFor(stub, "engineer"));
     expect(r.isError).toBe(true);
     expect(body(r).errorKind).toBe("transition_rejected");
+  });
+
+  it("unpause_work: a frozen-authority mismatch is a loud transition rejection, not an internal fault", async () => {
+    const stub = makeStub({
+      unpauseWork: () => {
+        throw new WorkGraphCurrentnessRejected(
+          "workgraph.currentness.revision_required",
+          "claimant row changed while paused; create a semantic revision",
+        );
+      },
+    });
+    const r = await router.handle("unpause_work", { workId: "work-1" }, ctxFor(stub, "engineer"));
+    expect(r.isError).toBe(true);
+    expect(body(r).errorKind).toBe("transition_rejected");
+    expect(String(body(r).error)).toContain("workgraph.currentness.revision_required");
   });
 
   it("list_work: the status schema ADMITS `paused` (digest-excluded items are findable via the snapshot)", async () => {

@@ -807,6 +807,22 @@ export interface RecallBeforeStateV4 {
   blockedOn: null | { blockerKind: string; blockerIds: string[]; reason: string };
   lease: RecallLeaseSnapshotV4 | null;
 }
+export interface FrozenRecallAuthorityV4 {
+  /** The exact claimant/topology authority frozen by pause, recomputed from persisted fields. */
+  version: "frozen-recall-authority-v4";
+  mode: "legacy" | "generation";
+  logicalId: string;
+  physicalId: string;
+  revision: number;
+  /** Active head generation, not the row's first-materialization generation. */
+  generation: number | null;
+  nodeContractHash: Sha256Hex;
+  nodeTopologyHash: Sha256Hex;
+  dependsOnLogicalIds: string[];
+  completionDependsOnLogicalIds: string[];
+  localExecutionIdentity: Sha256Hex | null;
+  authorityHash: Sha256Hex;
+}
 export interface RecallHistoryEntryV4 {
   operationId: string;
   requestHash: Sha256Hex;
@@ -815,6 +831,8 @@ export interface RecallHistoryEntryV4 {
   recalledAt: string;
   beforeStateHash: Sha256Hex;
   before: RecallBeforeStateV4;
+  /** Optional only for backward decode. New pauses always persist it; unpause fails closed without it. */
+  frozenAuthority?: FrozenRecallAuthorityV4;
   holderNoticeIntentId: string | null;
 }
 export interface PendingRecallIntentV4 {

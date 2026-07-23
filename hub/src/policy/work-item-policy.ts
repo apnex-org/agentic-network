@@ -42,6 +42,7 @@ import {
   isPauseOperationReplay,
 } from "../entities/work-item-repository-substrate.js";
 import { LockAcquisitionTimeoutError } from "../storage-substrate/advisory-lock.js";
+import { WorkGraphCurrentnessRejected } from "../entities/workgraph-currentness-fence-v4.js";
 import type {
   WorkItem,
   WorkItemBlockedOn,
@@ -160,6 +161,7 @@ function mapVerbError(e: unknown): PolicyResult {
   if (e instanceof CompletionGateRejected) return err("completion_gate_unmet", e.message);
   if (e instanceof AttestationRejected) return err("attestation_rejected", e.message);
   if (e instanceof LockAcquisitionTimeoutError) return err("lock_timeout", e.message);
+  if (e instanceof WorkGraphCurrentnessRejected) return err("transition_rejected", e.message);
   if (e instanceof TransitionRejected) return err("transition_rejected", e.message);
   throw e;
 }
@@ -807,7 +809,9 @@ async function updateWork(args: Record<string, unknown>, ctx: IPolicyContext): P
     await emitWorkUpdated(ctx, after, { agentId: caller.agentId, role: caller.role }, Object.keys(changes));
     return ok({ workItem: after, changed: Object.keys(changes) });
   } catch (e) {
-    if (e instanceof TransitionRejected) return err("update_rejected", e.message);
+    if (e instanceof TransitionRejected || e instanceof WorkGraphCurrentnessRejected) {
+      return err("update_rejected", e.message);
+    }
     throw e;
   }
 }
@@ -1513,7 +1517,7 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "update_work",
-    "[Any] work-136 (idea-419, ratified contract v1.0 / decision-11): mutate a WorkItem per the field-mutability table. AUTHORITY: the item's AUTHOR or the ARCHITECT (Hub-derived from the session — no lease-holder writes in v1). set{} replaces priority/targetRef anytime pre-terminal; runbook/payload/roleEligibility PRE-CLAIM only (the claimant's contract freezes at claim). Structural edges are APPEND-ONLY explicit params (never via set): appendDependsOn (while ready; re-gating is the intended effect — the work-133 case), appendCompletionDependsOn (until done; arc accretion), appendReferences (pre-claim; required refs fail-closed resolve). Rejects: empty mutation, terminal item, phase violations, dangling/cyclic edges, unclaimable roleEligibility, stale CAS (re-read and re-decide). Every accepted call: one audit entry (actor + before→after) + one work-updated event, role-targeted per work-124. type + evidenceRequirements are IMMUTABLE FOREVER (the anti-gameability contract).",
+    "[Any] work-136 + Mission-140 frozen-generation repair: mutate a WorkItem per the field-mutability table. AUTHORITY: the item's AUTHOR or the ARCHITECT (Hub-derived; no lease-holder writes). priority is scalar pre-terminal metadata. targetRef/runbook/payload/roleEligibility and all dependency/completion/reference appends are CLAIMANT-SIGNIFICANT: they reject with workgraph.currentness.revision_required while paused or whenever a topology generation is active; use the semantic revision protocol instead. In legacy ready state, prior pre-claim/append-only rules remain. Rejects: empty mutation, terminal/phase violations, dangling/cyclic edges, unclaimable roles, stale CAS. Every accepted call writes one audit and one role-targeted work-updated event. type + evidenceRequirements remain immutable forever.",
     {
       workId: z.string(),
       set: z.object({
@@ -1524,7 +1528,7 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
         roleEligibility: z.array(z.string()).optional(),
       }).strict().optional().describe("Replace-semantics fields, per-field phase rules; UNKNOWN KEYS REJECT (strict)"),
       appendDependsOn: z.array(z.string()).optional().describe("Append claim-gate deps (while ready; existence+cycle checked)"),
-      appendCompletionDependsOn: z.array(z.string()).optional().describe("Append completion-gate children (until done; existence+cycle checked)"),
+      appendCompletionDependsOn: z.array(z.string()).optional().describe("Append completion-gate children in legacy non-paused mode (until done; existence+cycle checked); active-generation or paused rows require semantic revision"),
       appendReferences: z.array(referenceSchema).optional().describe("Append node-contract inputs (pre-claim; required refs must resolve)"),
     },
     updateWork,

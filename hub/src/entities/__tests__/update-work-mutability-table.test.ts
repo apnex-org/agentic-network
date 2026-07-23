@@ -11,13 +11,13 @@ const NO_FRICTION = { observed: false, summary: "no friction observed" } as cons
  * seal-B writer-inventory harness (memory substrate + real repo).
  *
  * Contract (updateWorkItem, author-or-architect authz):
- *   priority          — anytime PRE-TERMINAL
- *   targetRef         — anytime PRE-TERMINAL, but FROZEN once any attestation exists (SEAL-C)
+ *   priority          — anytime PRE-TERMINAL (including paused scalar metadata)
+ *   targetRef         — PRE-TERMINAL except paused; also FROZEN once any attestation exists (SEAL-C)
  *   runbook           — PRE-CLAIM only (status=ready)
  *   payload           — PRE-CLAIM only
  *   roleEligibility   — PRE-CLAIM only
  *   appendDependsOn   — READY only
- *   appendCompletionDependsOn — UNTIL-DONE (existence + cycle checked)
+ *   appendCompletionDependsOn — UNTIL-DONE except paused; active-generation edits require revision
  *   appendReferences  — PRE-CLAIM only (required refs resolve)
  *   type, evidenceRequirements — IMMUTABLE forever (not in the mutation surface)
  *   + empty-mutation reject · CAS stale-reject · author-or-architect authz.
@@ -46,6 +46,10 @@ async function itemAt(repo: WorkItemRepositorySubstrate, phase: WorkItemPhase, r
   const evidenceRequirements = reqs ?? (phase === "review" ? [{ id: "rev", kind: "review" as const }] : phase === "done" ? [{ id: "f", kind: "freeform" as const }] : []);
   const w = await repo.createWorkItem({ type: "task", roleEligibility: [], evidenceRequirements, targetRef: { kind: "mission", id: "m-1" } });
   if (phase === "ready") return w.id;
+  if (phase === "paused") {
+    await repo.pauseWork({ workId: w.id, operationId: "mutability-paused", reason: "matrix" }, ARCH);
+    return w.id;
+  }
   const c = await repo.claimWorkItem(w.id, "agent-eng", "engineer");
   const t = c!.lease!.token;
   if (phase === "claimed") return w.id;
@@ -60,16 +64,17 @@ async function itemAt(repo: WorkItemRepositorySubstrate, phase: WorkItemPhase, r
 
 const PRE_CLAIM: WorkItemPhase[] = ["ready"];
 const PRE_TERMINAL: WorkItemPhase[] = ["ready", "claimed", "in_progress", "blocked", "review"];
-const UNTIL_DONE = PRE_TERMINAL; // = pre-terminal (done + abandoned are the terminal excludes)
+const SCALAR_PRE_TERMINAL: WorkItemPhase[] = [...PRE_TERMINAL, "paused"];
+const UNTIL_DONE = PRE_TERMINAL; // paused contract/topology is frozen; done + abandoned terminal
 const TERMINAL: WorkItemPhase[] = ["done", "abandoned"];
-const ALL: WorkItemPhase[] = [...PRE_TERMINAL, ...TERMINAL];
+const ALL: WorkItemPhase[] = [...SCALAR_PRE_TERMINAL, ...TERMINAL];
 
 const upd = (repo: WorkItemRepositorySubstrate, id: string, mutation: Parameters<WorkItemRepositorySubstrate["updateWorkItem"]>[2]) =>
   repo.updateWorkItem(id, ARCH, mutation);
 
 /** A field's mutation payload + the allowed-phase set. */
 const FIELDS: Array<{ name: string; allowed: WorkItemPhase[]; mut: () => Parameters<WorkItemRepositorySubstrate["updateWorkItem"]>[2]; assertApplied: (after: any) => void }> = [
-  { name: "priority", allowed: PRE_TERMINAL, mut: () => ({ set: { priority: "high" } }), assertApplied: (a) => expect(a.priority).toBe("high") },
+  { name: "priority", allowed: SCALAR_PRE_TERMINAL, mut: () => ({ set: { priority: "high" } }), assertApplied: (a) => expect(a.priority).toBe("high") },
   { name: "targetRef", allowed: PRE_TERMINAL, mut: () => ({ set: { targetRef: { kind: "mission", id: "m-2" } } }), assertApplied: (a) => expect(a.targetRef).toEqual({ kind: "mission", id: "m-2" }) },
   { name: "runbook", allowed: PRE_CLAIM, mut: () => ({ set: { runbook: "amended" } }), assertApplied: (a) => expect(a.runbook).toBe("amended") },
   { name: "payload", allowed: PRE_CLAIM, mut: () => ({ set: { payload: { v: 1 } } }), assertApplied: (a) => expect(a.payload).toEqual({ v: 1 }) },
@@ -89,6 +94,10 @@ describe("S2 mutability-table — {field × phase} allow/deny (the executable co
         if (shouldAllow) {
           const { after } = await upd(repo, id, field.mut());
           field.assertApplied(after);
+        } else if (phase === "paused") {
+          await expect(upd(repo, id, field.mut())).rejects.toMatchObject({
+            code: "workgraph.currentness.revision_required",
+          });
         } else {
           await expect(upd(repo, id, field.mut())).rejects.toThrow(TransitionRejected);
         }

@@ -57,10 +57,17 @@ import { withAdvisoryLock, LOCK_CLASS } from "../storage-substrate/advisory-lock
 import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 import { type Clock, systemClock } from "./clock.js";
 import {
+  NODE_CONTRACT_HASH_VERSION,
+  NODE_TOPOLOGY_HASH_VERSION,
+  deriveLocalExecutionIdentityV4,
+  deriveNodeContractV4,
+  deriveNodeTopologyV4,
   hashCanonicalDomain,
+  type FrozenRecallAuthorityV4,
   type PendingRecallIntentV4,
   type RecallBeforeStateV4,
   type RecallHistoryEntryV4,
+  type TargetBindingV4,
 } from "./work-item-contract-v4.js";
 import {
   WorkGraphCurrentnessFenceV4,
@@ -772,8 +779,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    *      (status === "ready": the claimant's contract freezes at claim; a
    *      reaped item back in ready has no current claimant, so the next
    *      claimant claims the CURRENT definition);
-   *    - dependsOn appends only while ready (re-gating is the intended
-   *      effect); completionDependsOn appends until done (arc accretion);
+   *    - legacy dependsOn appends only while ready; legacy completionDependsOn
+   *      appends until done; paused or active-generation claimant/edge changes
+   *      reject with revision_required and must use semantic revision;
    *    - empty mutations reject (a no-op call is a caller bug, not a write);
    *    - SINGLE-SHOT CAS: a stale write rejects with the current version —
    *      the caller re-reads and re-decides (the contract's concurrency rule;
@@ -807,6 +815,21 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     }
     if (before.status === "done" || before.status === "abandoned") {
       throw new TransitionRejected(`update rejected: ${workId} is terminal (${before.status}) — terminal items reject all mutation`);
+    }
+    const changesClaimantAuthority = setKeys.some((key) => ["targetRef", "runbook", "payload", "roleEligibility"].includes(key))
+      || (mutation.appendDependsOn?.length ?? 0) > 0
+      || (mutation.appendCompletionDependsOn?.length ?? 0) > 0
+      || (mutation.appendReferences?.length ?? 0) > 0;
+    // Mission-140 repair2: once a topology generation is active, claimant-contract and
+    // edge edits are revisions, never scalar owner amendments. Paused rows retain the
+    // same freeze even in legacy/shadow mode so no alias of update_work can launder a
+    // changed row through creator unpause. updateWorkItem is the common repository seam
+    // behind the public tool and internal policy aliases; priority remains a scalar.
+    if (changesClaimantAuthority && (activePin.mode === "generation" || before.status === "paused")) {
+      throw new WorkGraphCurrentnessRejected(
+        "workgraph.currentness.revision_required",
+        `update rejected: ${workId} claimant contract/topology is frozen ${before.status === "paused" ? "while paused" : `by active generation ${activePin.mode === "generation" ? activePin.head.generation : "unknown"}`}; create a semantic revision`,
+      );
     }
     const preClaim = before.status === "ready";
     const next: WorkItem = { ...before };
@@ -1547,6 +1570,192 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     }
   }
 
+  /** Recompute claimant and edge authority from the persisted row plus the pinned
+   *  immutable generation. Stored node* hashes are outputs to cross-check, never
+   *  inputs trusted as proof. This is invoked at BOTH pause and unpause. */
+  private deriveFrozenRecallAuthority(item: WorkItem): FrozenRecallAuthorityV4 {
+    const pin = this.currentness.currentPin();
+    if (!pin) throw new TransitionRejected("pause authority requires a pinned WorkGraph snapshot");
+    const logicalId = item.logicalId ?? item.id;
+    const revision = item.revision ?? 1;
+    let nodeContractHash: string;
+    let dependsOnLogicalIds: string[];
+    let completionDependsOnLogicalIds: string[];
+    let localExecutionIdentity: string | null = null;
+
+    if (pin.mode === "generation") {
+      const binding = pin.generation.bindings[logicalId];
+      if (!binding || binding.physicalId !== item.id || binding.revision !== revision) {
+        throw new WorkGraphCurrentnessRejected(
+          "workgraph.currentness.old_or_draft",
+          `persisted row ${item.id} is not the active binding for ${logicalId}@${revision}`,
+        );
+      }
+      const physicalToLogical = new Map(Object.entries(pin.generation.bindings)
+        .map(([id, target]) => [target.physicalId, id] as const));
+      const resolveEdge = (locator: string): string => {
+        if (pin.generation.bindings[locator]) return locator;
+        const resolved = physicalToLogical.get(locator);
+        if (!resolved) {
+          throw new WorkGraphCurrentnessRejected(
+            "workgraph.currentness.integrity",
+            `persisted row ${item.id} carries an edge to non-generation target ${locator}`,
+          );
+        }
+        return resolved;
+      };
+      dependsOnLogicalIds = (item.dependsOn ?? []).map(resolveEdge).sort();
+      completionDependsOnLogicalIds = (item.completionDependsOn ?? []).map(resolveEdge).sort();
+      if (new Set(dependsOnLogicalIds).size !== dependsOnLogicalIds.length ||
+          new Set(completionDependsOnLogicalIds).size !== completionDependsOnLogicalIds.length) {
+        throw new WorkGraphCurrentnessRejected(
+          "workgraph.currentness.identity_mismatch",
+          `persisted row ${item.id} carries duplicate topology edges`,
+        );
+      }
+      const expectedDependsOn = [...(pin.generation.dependsOn[logicalId] ?? [])].sort();
+      const expectedCompletion = [...(pin.generation.completionDependsOn[logicalId] ?? [])].sort();
+      if (JSON.stringify(dependsOnLogicalIds) !== JSON.stringify(expectedDependsOn) ||
+          JSON.stringify(completionDependsOnLogicalIds) !== JSON.stringify(expectedCompletion)) {
+        throw new WorkGraphCurrentnessRejected(
+          "workgraph.currentness.revision_required",
+          `persisted row ${item.id} edges changed outside active generation ${pin.head.generation}; semantic revision required`,
+        );
+      }
+      try {
+        const contract = deriveNodeContractV4({
+          type: item.type,
+          roleEligibility: item.roleEligibility ?? [],
+          ...(item.runbook !== undefined ? { runbook: item.runbook } : {}),
+          ...(item.payload !== undefined ? { payload: item.payload } : {}),
+          targetRef: item.targetRef ?? null,
+          evidenceRequirements: item.evidenceRequirements ?? [],
+          references: item.references ?? [],
+          ...(item.leaseWindowMs !== undefined ? { leaseWindowMs: item.leaseWindowMs } : {}),
+          ...(item.nodeConfig !== undefined ? { nodeConfig: item.nodeConfig } : {}),
+        }, item.boundReferences ?? []);
+        nodeContractHash = contract.hash;
+      } catch (error) {
+        throw new WorkGraphCurrentnessRejected(
+          "workgraph.currentness.identity_mismatch",
+          `persisted row ${item.id} claimant contract cannot be exactly recomputed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      if (nodeContractHash !== binding.nodeContractHash || item.nodeContractHashVersion !== NODE_CONTRACT_HASH_VERSION ||
+          item.nodeContractHash !== binding.nodeContractHash) {
+        throw new WorkGraphCurrentnessRejected(
+          "workgraph.currentness.revision_required",
+          `persisted row ${item.id} claimant contract changed outside active generation ${pin.head.generation}; semantic revision required`,
+        );
+      }
+      const topology = deriveNodeTopologyV4(logicalId, dependsOnLogicalIds, completionDependsOnLogicalIds);
+      if (topology.hash !== binding.nodeTopologyHash || item.nodeTopologyHashVersion !== NODE_TOPOLOGY_HASH_VERSION ||
+          item.nodeTopologyHash !== binding.nodeTopologyHash) {
+        throw new WorkGraphCurrentnessRejected(
+          "workgraph.currentness.revision_required",
+          `persisted row ${item.id} topology changed outside active generation ${pin.head.generation}; semantic revision required`,
+        );
+      }
+      const outgoing: TargetBindingV4[] = [
+        ...dependsOnLogicalIds.map((targetLogicalId) => ({ edgeClass: "dependsOn" as const, targetLogicalId })),
+        ...completionDependsOnLogicalIds.map((targetLogicalId) => ({ edgeClass: "completionDependsOn" as const, targetLogicalId })),
+      ].map(({ edgeClass, targetLogicalId }) => {
+        const target = pin.generation.bindings[targetLogicalId]!;
+        return {
+          edgeClass,
+          targetLogicalId,
+          targetPhysicalId: target.physicalId,
+          targetRevision: target.revision,
+          targetNodeContractHashVersion: target.nodeContractHashVersion,
+          targetNodeContractHash: target.nodeContractHash,
+        };
+      });
+      localExecutionIdentity = deriveLocalExecutionIdentityV4({
+        logicalId,
+        physicalId: item.id,
+        revision,
+        nodeContractHashVersion: NODE_CONTRACT_HASH_VERSION,
+        nodeContractHash,
+        nodeTopologyHashVersion: NODE_TOPOLOGY_HASH_VERSION,
+        nodeTopologyHash: topology.hash,
+        outgoingTargetBindings: outgoing,
+      });
+      if (item.localExecutionIdentity !== localExecutionIdentity) {
+        throw new WorkGraphCurrentnessRejected(
+          "workgraph.currentness.revision_required",
+          `persisted row ${item.id} local execution identity changed outside active generation ${pin.head.generation}; semantic revision required`,
+        );
+      }
+    } else {
+      // Legacy/shadow has no immutable generation to bind content identities against.
+      // Freeze the exact persisted claimant projection so a paused row still cannot
+      // be mutated and laundered through creator scalar unpause.
+      const claimantProjection = JSON.parse(JSON.stringify({
+        type: item.type,
+        roleEligibility: item.roleEligibility ?? [],
+        runbook: item.runbook,
+        payload: item.payload,
+        targetRef: item.targetRef ?? null,
+        evidenceRequirements: item.evidenceRequirements ?? [],
+        references: item.references ?? [],
+        boundReferences: item.boundReferences ?? [],
+        leaseWindowMs: item.leaseWindowMs,
+        nodeConfig: item.nodeConfig ? {
+          pulse: item.nodeConfig.pulse ? {
+            intervalSeconds: item.nodeConfig.pulse.intervalSeconds,
+            message: item.nodeConfig.pulse.message,
+            responseShape: item.nodeConfig.pulse.responseShape,
+            missedThreshold: item.nodeConfig.pulse.missedThreshold,
+            firstFireDelaySeconds: item.nodeConfig.pulse.firstFireDelaySeconds,
+          } : null,
+        } : undefined,
+      })) as unknown;
+      nodeContractHash = hashCanonicalDomain("legacy-frozen-claimant-contract-v4", claimantProjection);
+      dependsOnLogicalIds = [...(item.dependsOn ?? [])].sort();
+      completionDependsOnLogicalIds = [...(item.completionDependsOn ?? [])].sort();
+    }
+
+    const topology = deriveNodeTopologyV4(logicalId, dependsOnLogicalIds, completionDependsOnLogicalIds);
+    const authority = {
+      version: "frozen-recall-authority-v4" as const,
+      mode: pin.mode,
+      logicalId,
+      physicalId: item.id,
+      revision,
+      generation: pin.mode === "generation" ? pin.head.generation : null,
+      nodeContractHash,
+      nodeTopologyHash: topology.hash,
+      dependsOnLogicalIds,
+      completionDependsOnLogicalIds,
+      localExecutionIdentity,
+    };
+    return {
+      ...authority,
+      authorityHash: hashCanonicalDomain("frozen-recall-authority-v4", authority),
+    };
+  }
+
+  private assertFrozenRecallAuthorityUnchanged(
+    frozen: FrozenRecallAuthorityV4 | undefined,
+    current: FrozenRecallAuthorityV4,
+    workId: string,
+  ): void {
+    if (!frozen) {
+      throw new WorkGraphCurrentnessRejected(
+        "workgraph.currentness.revision_required",
+        `unpause rejected: ${workId} has no frozen paused-row authority; create a semantic revision`,
+      );
+    }
+    const { authorityHash: storedHash, ...storedPayload } = frozen;
+    if (hashCanonicalDomain("frozen-recall-authority-v4", storedPayload) !== storedHash ||
+        storedHash !== current.authorityHash) {
+      throw new WorkGraphCurrentnessRejected(
+        "workgraph.currentness.revision_required",
+        `unpause rejected: ${workId} claimant row or generation edges changed while paused; create a semantic revision`,
+      );
+    }
+  }
+
   async pauseWork(request: PauseWorkRequestV4, actor: { agentId: string; role: string }): Promise<WorkItem | null> {
     if (!this.currentness.currentPin()) return this.withWriterFence(() => this.pauseWork(request, actor));
     if (!request.operationId?.trim()) throw new TransitionRejected("pause operationId is required");
@@ -1582,6 +1791,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
 
         const nowISO = this.clock.now().toISOString();
         const identity = legacyRevisionIdentity(w);
+        const frozenAuthority = this.deriveFrozenRecallAuthority(w);
         const stateHash = recallStateHash(w);
         const before: RecallBeforeStateV4 = {
           physicalId: w.id,
@@ -1618,6 +1828,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
           recalledAt: nowISO,
           beforeStateHash: stateHash,
           before,
+          frozenAuthority,
           holderNoticeIntentId,
         };
         const notice: PendingRecallIntentV4 | null = w.lease ? {
@@ -1657,8 +1868,10 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       this.assertNotFailedSealed(w);
       this.assertPauseExpectations(w, request);
       if (w.status !== "paused") throw new TransitionRejected(`unpause requires paused, was ${w.status}`);
-      const isCreator = await this.originalCreatorAgentId(w) === actor.agentId;
       const lastRecall = (w.recallHistory ?? []).at(-1);
+      const currentAuthority = this.deriveFrozenRecallAuthority(w);
+      this.assertFrozenRecallAuthorityUnchanged(lastRecall?.frozenAuthority, currentAuthority, w.id);
+      const isCreator = await this.originalCreatorAgentId(w) === actor.agentId;
       const creatorCompatibility = isCreator
         && !w.predecessorPhysicalId
         && lastRecall?.actor.agentId === actor.agentId;

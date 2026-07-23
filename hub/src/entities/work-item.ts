@@ -626,7 +626,8 @@ export interface IWorkItemStore {
    *  WorkItem per the field-mutability table. Caller-side validation
    *  (dangling/cycle/reference checks) happens in the policy layer; THIS
    *  method owns authority (author|architect, Hub-derived actor), phase
-   *  rules, empty-mutation + terminal rejection, and the single-shot CAS
+   *  rules, paused/active-generation semantic-revision fencing,
+   *  empty-mutation + terminal rejection, and the single-shot CAS
    *  (stale write → reject with the current version; caller re-reads).
    *  Returns {before, after} for the mutation audit. */
   updateWorkItem(
