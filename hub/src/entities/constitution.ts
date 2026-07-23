@@ -37,7 +37,12 @@ export interface ConstitutionSnapshot {
   id: string;
   /** The mission-kit commit this snapshot mirrors (B1: HEAD-of-main). */
   sha: string;
+  /** When these exact content bytes were committed. Immutable across verification-only polls. */
   syncedAt: string;
+  /** Last durable successful upstream HEAD verification for this exact `sha`.
+   *  Optional only for legacy rows; provenance falls back to syncedAt until the
+   *  first successful unchanged verification upgrades the singleton. */
+  lastVerifiedAt?: string;
   /** sha256 over the canonical JSON of `manifest` — cheap corpus identity. */
   manifestHash: string;
   /** path → verbatim markdown. */
@@ -53,9 +58,12 @@ export interface ConstitutionSnapshot {
 export interface ConstitutionProvenance {
   sourceRepo: string;
   sha: string;
+  /** Content acquisition/commit time; never rewritten by verification-only polls. */
   syncedAt: string;
+  /** Durable successful upstream verification time for this exact sha. */
+  lastVerifiedAt: string;
   manifestHash: string;
-  /** True when the last successful sync is older than the staleness
+  /** True when the last successful upstream verification is older than the
    *  threshold (10× cadence class). Content still serves — fail-open with
    *  honesty, never blanking (C7 recall-proofness). */
   stale: boolean;
@@ -100,9 +108,18 @@ export interface IConstitutionStore {
    *  distinct from an empty corpus; no unlabeled bootstrap content ever). */
   getCurrent(): Promise<ConstitutionSnapshot | null>;
   /** CAS-swap the singleton to `candidate` (sync-loop-only writer). Retains
-   *  the prior snapshot as a history row best-effort. Returns the committed
-   *  snapshot. */
-  swapSnapshot(candidate: Omit<ConstitutionSnapshot, "id" | "status" | "createdAt" | "updatedAt">): Promise<ConstitutionSnapshot>;
+   *  the prior snapshot as a history row best-effort. `expectedCurrentSha`
+   *  fences a candidate fetched from a stale HEAD/current observation. */
+  swapSnapshot(
+    candidate: Omit<ConstitutionSnapshot, "id" | "status" | "createdAt" | "updatedAt">,
+    expectedCurrentSha?: string | null,
+  ): Promise<ConstitutionSnapshot>;
+  /** Durably advance successful upstream verification health for exactly the
+   *  expected current sha. Never changes content identity or creates history. */
+  markVerified(
+    expectedSha: string,
+    verifiedAt: string,
+  ): Promise<"verified" | "sha_mismatch" | "not_synced">;
   /** Provenance beside content, computed against the staleness threshold. */
   buildProvenance(snapshot: ConstitutionSnapshot): ConstitutionProvenance;
 }

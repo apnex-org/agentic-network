@@ -6,8 +6,8 @@
  * the current OrgCharter version. All [Any]: the constitution is for everyone.
  *
  * The payload law (binding, contract-tested): every response carries
- * `provenance {sourceRepo, sha, syncedAt, manifestHash, stale, ageSeconds}`
- * BESIDE content; charter responses additionally carry per-binding
+ * `provenance {sourceRepo, sha, syncedAt, lastVerifiedAt, manifestHash, stale,
+ * ageSeconds}` BESIDE content; charter responses additionally carry per-binding
  * {ratifiedBy, proofRef}. A response omitting provenance is a defect.
  *
  * Zero write verbs — enforcement by absence (T2: the PR gauntlet is the
@@ -82,7 +82,7 @@ async function getCharter(_args: Record<string, unknown>, ctx: IPolicyContext): 
 export function registerConstitutionPolicy(router: PolicyRouter): void {
   router.register(
     "get_constitution",
-    "[Any] THE COLD-START VERB (recall-proofness = one round trip): the whole constitutional corpus — manifest + every axiom body + the current org charter — with provenance {sourceRepo, sha, syncedAt, manifestHash, stale, ageSeconds} beside content. Serves the last-good snapshot marked stale:true when sync lags (fail-open with honesty); loud not_synced before the first sync (never unlabeled bootstrap content).",
+    "[Any] THE COLD-START VERB (recall-proofness = one round trip): the whole constitutional corpus — manifest + every axiom body + the current org charter — with provenance {sourceRepo, sha, syncedAt, lastVerifiedAt, manifestHash, stale, ageSeconds} beside content. syncedAt identifies content acquisition; lastVerifiedAt drives freshness after successful upstream verification. Serves the last-good snapshot marked stale:true when verification lags (fail-open with honesty); loud not_synced before the first sync (never unlabeled bootstrap content).",
     {},
     getConstitution,
   );
