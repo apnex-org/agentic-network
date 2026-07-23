@@ -2,8 +2,9 @@
  * mission-103 P3-S1 — ConstitutionSnapshot KindMigrationModule (WRITE-side
  * envelope authority; decision-17 design §1). The singleton read-serve mirror
  * of the git-canonical axiom set: the corpus (files + manifest) and its
- * provenance (sha/syncedAt/manifestHash) are spec (what the sync declared);
- * the serving state is status. Get-by-id only (`current` + `snap-<sha>`
+ * content provenance (sha/syncedAt/manifestHash) is spec (what bytes the sync
+ * committed); mutable verification health (lastVerifiedAt) is status. Get-by-id
+ * only (`current` + `snap-<sha>`
  * history rows) — no renameMap, no filtered queries. Born-envelope kind:
  * migrateOne exists for contract-uniformity, not for legacy rows.
  */
@@ -21,7 +22,7 @@ export function createConstitutionSnapshotMigrationModule(schema: SchemaDef): Ki
     partition: {
       metadata: ["createdAt", "updatedAt"],
       spec: ["sha", "syncedAt", "manifestHash", "files", "manifest"],
-      status: ["status"],
+      status: ["status", "lastVerifiedAt"],
     },
   };
 

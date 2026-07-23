@@ -684,7 +684,9 @@ const DirectorConfirmation: SchemaDef = {
 // markdown (validation = sync-time parse gate, never a schema at rest).
 const ConstitutionSnapshot: SchemaDef = {
   kind: "ConstitutionSnapshot",
-  version: 1,
+  // bug-335: v2 adds status.lastVerifiedAt (verification health distinct from
+  // immutable content syncedAt; no filter/index because singleton point-read).
+  version: 2,
   fields: [
     { name: "id", type: "string", required: true },
   ],

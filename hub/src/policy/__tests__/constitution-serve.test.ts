@@ -279,6 +279,7 @@ describe("constitution serve substrate (work-150 / mission-103 S1)", () => {
       expect(p!.sourceRepo).toBe("apnex/mission-kit");
       expect(p!.sha).toBe("sha-1");
       expect(typeof p!.syncedAt).toBe("string");
+      expect(typeof p!.lastVerifiedAt).toBe("string");
       expect(typeof p!.manifestHash).toBe("string");
       expect(p!.stale).toBe(false);
       expect(typeof p!.ageSeconds).toBe("number");
