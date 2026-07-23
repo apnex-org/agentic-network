@@ -52,27 +52,57 @@ export class ConstitutionRepositorySubstrate implements IConstitutionStore {
     return row ? cloneFlat(row, SNAPSHOT_KIND) : null;
   }
 
-  async swapSnapshot(candidate: Omit<ConstitutionSnapshot, "id" | "status" | "createdAt" | "updatedAt">): Promise<ConstitutionSnapshot> {
+  async swapSnapshot(
+    candidate: Omit<ConstitutionSnapshot, "id" | "status" | "createdAt" | "updatedAt">,
+    expectedCurrentSha?: string | null,
+  ): Promise<ConstitutionSnapshot> {
     const nowISO = new Date().toISOString();
+    const normalized = { ...candidate, lastVerifiedAt: candidate.lastVerifiedAt ?? candidate.syncedAt };
     for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
       const existing = await this.substrate.getWithRevision<ConstitutionSnapshot>(SNAPSHOT_KIND, CURRENT_ID);
-      const next: ConstitutionSnapshot = {
-        ...candidate,
-        id: CURRENT_ID,
-        status: "active",
-        createdAt: existing ? cloneFlat(existing.entity, SNAPSHOT_KIND).createdAt : nowISO,
-        updatedAt: nowISO,
-      };
       if (!existing) {
+        if (expectedCurrentSha !== undefined && expectedCurrentSha !== null) {
+          throw new Error(`[ConstitutionRepository] swapSnapshot expected current sha ${expectedCurrentSha}, but no snapshot exists`);
+        }
+        const next: ConstitutionSnapshot = {
+          ...normalized,
+          id: CURRENT_ID,
+          status: "active",
+          createdAt: nowISO,
+          updatedAt: nowISO,
+        };
         const created = await this.substrate.createOnly(SNAPSHOT_KIND, next);
         if (created.ok) {
           await this.retainHistory(next);
           console.log(`[ConstitutionRepository] first snapshot committed: sha=${next.sha} (${next.manifest.length} axioms)`);
           return next;
         }
-        continue; // lost the create race → re-read and CAS
+        continue; // lost the create race → re-read and validate the winner
       }
+
       const prior = cloneFlat(existing.entity, SNAPSHOT_KIND);
+      // Concurrent instances may fetch the SAME changed candidate. The first swap
+      // wins; the loser observes the byte-identical committed snapshot and returns
+      // it idempotently — no second history row or content rewrite.
+      if (prior.sha === normalized.sha) {
+        if (prior.manifestHash !== normalized.manifestHash) {
+          throw new Error(`[ConstitutionRepository] sha ${normalized.sha} already serves with a different manifestHash`);
+        }
+        return prior;
+      }
+      // A candidate is valid only against the current snapshot observed before
+      // fetch-all. If another instance advances the singleton, never overwrite it
+      // with bytes fetched from an older HEAD/current pair.
+      if (expectedCurrentSha !== undefined && prior.sha !== expectedCurrentSha) {
+        throw new Error(`[ConstitutionRepository] swapSnapshot current sha changed: expected ${expectedCurrentSha ?? "none"}, actual ${prior.sha}`);
+      }
+      const next: ConstitutionSnapshot = {
+        ...normalized,
+        id: CURRENT_ID,
+        status: "active",
+        createdAt: prior.createdAt,
+        updatedAt: nowISO,
+      };
       const result = await this.substrate.putIfMatch(SNAPSHOT_KIND, next, existing.resourceVersion);
       if (result.ok) {
         await this.retainHistory(prior, "superseded");
@@ -81,6 +111,32 @@ export class ConstitutionRepositorySubstrate implements IConstitutionStore {
       }
     }
     throw new Error(`[ConstitutionRepository] swapSnapshot exhausted ${MAX_CAS_RETRIES} CAS retries`);
+  }
+
+  /**
+   * Verification-only health update. The successful HEAD observation is bound
+   * to `expectedSha` on every CAS attempt. It cannot refresh a concurrently
+   * swapped snapshot, cannot change content identity, and creates no history.
+   */
+  async markVerified(expectedSha: string, verifiedAt: string): Promise<"verified" | "sha_mismatch" | "not_synced"> {
+    const verifiedMs = Date.parse(verifiedAt);
+    if (!Number.isFinite(verifiedMs)) throw new Error(`[ConstitutionRepository] invalid verifiedAt: ${verifiedAt}`);
+    for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
+      const existing = await this.substrate.getWithRevision<ConstitutionSnapshot>(SNAPSHOT_KIND, CURRENT_ID);
+      if (!existing) return "not_synced";
+      const prior = cloneFlat(existing.entity, SNAPSHOT_KIND);
+      if (prior.sha !== expectedSha) return "sha_mismatch";
+      const priorVerifiedMs = Date.parse(prior.lastVerifiedAt ?? prior.syncedAt);
+      if (Number.isFinite(priorVerifiedMs) && priorVerifiedMs >= verifiedMs) return "verified";
+      const next: ConstitutionSnapshot = {
+        ...prior,
+        lastVerifiedAt: verifiedAt,
+        updatedAt: verifiedAt,
+      };
+      const result = await this.substrate.putIfMatch(SNAPSHOT_KIND, next, existing.resourceVersion);
+      if (result.ok) return "verified";
+    }
+    throw new Error(`[ConstitutionRepository] markVerified exhausted ${MAX_CAS_RETRIES} CAS retries for sha ${expectedSha}`);
   }
 
   /** Best-effort history retention — never blocks or fails the swap. */
@@ -93,11 +149,16 @@ export class ConstitutionRepositorySubstrate implements IConstitutionStore {
   }
 
   buildProvenance(snapshot: ConstitutionSnapshot): ConstitutionProvenance {
-    const ageMs = Math.max(0, Date.now() - Date.parse(snapshot.syncedAt));
+    // Legacy rows have no lastVerifiedAt. Falling back to syncedAt preserves the
+    // old stale-honest behavior until a successful unchanged HEAD check upgrades
+    // health; it never fabricates freshness on read.
+    const lastVerifiedAt = snapshot.lastVerifiedAt ?? snapshot.syncedAt;
+    const ageMs = Math.max(0, Date.now() - Date.parse(lastVerifiedAt));
     return {
       sourceRepo: this.opts.sourceRepo,
       sha: snapshot.sha,
       syncedAt: snapshot.syncedAt,
+      lastVerifiedAt,
       manifestHash: snapshot.manifestHash,
       stale: ageMs > this.opts.staleAfterMs,
       ageSeconds: Math.round(ageMs / 1000),

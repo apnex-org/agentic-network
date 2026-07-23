@@ -3,7 +3,7 @@
  *
  * The pipeline per tick, in order, with the commit point LAST:
  *   HEAD-sha check (1 API call — steady-state cost)
- *   → unchanged? done : rate-budget check (skip fetch-all under headroom floor)
+ *   → unchanged? CAS-refresh verification health only : rate-budget check (skip fetch-all under headroom floor)
  *   → fetch-all (tree + blobs at the PINNED sha — never a moving ref)
  *   → PARSE GATE      (fail-closed WHOLE snapshot: malformed axiom file)
  *   → REFERENTIAL GATE (fail-closed: live charter bindings must resolve in-candidate)
@@ -34,7 +34,7 @@
  * disabled in prod. See selectConstitutionSyncToken.
  */
 import { createHash } from "node:crypto";
-import type { AxiomManifestEntry } from "../entities/constitution.js";
+import type { AxiomManifestEntry, ConstitutionSnapshot } from "../entities/constitution.js";
 import type { ConstitutionRepositorySubstrate } from "../entities/constitution-repository-substrate.js";
 import type { IOrgCharterStore } from "../entities/constitution.js";
 import { manifestHashOf } from "../entities/constitution-repository-substrate.js";
@@ -139,7 +139,21 @@ export class ConstitutionSync {
       return { result: "error", reason: `HEAD check failed: ${e instanceof Error ? e.message : e}` };
     }
     const current = await this.opts.store.getCurrent();
-    if (current?.sha === head.sha) return { result: "unchanged", sha: head.sha };
+    if (current?.sha === head.sha) {
+      // bug-335: unchanged content is still a successful authenticated upstream
+      // verification. Advance ONLY durable health for this exact sha; keep the
+      // content syncedAt/manifest/files/history byte-identical. A concurrent
+      // snapshot swap yields sha_mismatch and must not refresh the winner.
+      try {
+        const health = await this.opts.store.markVerified(head.sha, new Date().toISOString());
+        if (health !== "verified") {
+          return { result: "error", reason: `unchanged HEAD verification could not bind to current snapshot: ${health}` };
+        }
+      } catch (e) {
+        return { result: "error", reason: `unchanged HEAD verification health persistence failed: ${e instanceof Error ? e.message : e}` };
+      }
+      return { result: "unchanged", sha: head.sha };
+    }
 
     // Rate budget: keep (1-pct)·limit headroom for the rest of the Hub.
     const floor = Math.floor((1 - this.opts.rateBudgetPct) * head.limit);
@@ -177,13 +191,20 @@ export class ConstitutionSync {
       }
     }
 
-    const committed = await this.opts.store.swapSnapshot({
-      sha: head.sha,
-      syncedAt: new Date().toISOString(),
-      manifestHash: manifestHashOf(manifest),
-      files,
-      manifest,
-    });
+    const syncedAt = new Date().toISOString();
+    let committed: ConstitutionSnapshot;
+    try {
+      committed = await this.opts.store.swapSnapshot({
+        sha: head.sha,
+        syncedAt,
+        lastVerifiedAt: syncedAt,
+        manifestHash: manifestHashOf(manifest),
+        files,
+        manifest,
+      }, current?.sha ?? null);
+    } catch (e) {
+      return { result: "error", reason: `snapshot CAS swap failed: ${e instanceof Error ? e.message : e}` };
+    }
 
     // Post-commit, best-effort — never unwinds the swap.
     if (this.opts.announce) {
