@@ -9,6 +9,8 @@
  * substrate (A4 zero-loss); there is no read path or type.
  */
 
+import type { CompleteListResult } from "./storage-substrate/complete-list.js";
+
 export type SessionRole = "engineer" | "architect" | "director" | "verifier" | "unknown";
 
 /**
@@ -1065,6 +1067,8 @@ export interface IThreadStore {
   replyToThread(threadId: string, message: string, author: ThreadAuthor, options?: ReplyToThreadOptions): Promise<Thread | null>;
   getThread(threadId: string): Promise<Thread | null>;
   listThreads(status?: ThreadStatus, equalityFilter?: Record<string, string>): Promise<Thread[]>;
+  /** Stable complete paging for truncation-sensitive aggregate consumers. */
+  listThreadsComplete(status?: ThreadStatus, equalityFilter?: Record<string, string>): Promise<CompleteListResult<Thread>>;
   closeThread(threadId: string): Promise<boolean>;
   /**
    * Mission-24 Phase 2 (ADR-014, M24-T6): participant-initiated exit
@@ -1149,6 +1153,8 @@ export interface IProposalStore {
   submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: ProposedExecutionPlan, labels?: Record<string, string>, backlink?: CascadeBacklink, createdBy?: EntityProvenance): Promise<Proposal>;
   setScaffoldResult(proposalId: string, result: ScaffoldResult): Promise<boolean>;
   getProposals(status?: ProposalStatus): Promise<Proposal[]>;
+  /** Stable complete paging for truncation-sensitive aggregate consumers. */
+  getProposalsComplete(status?: ProposalStatus): Promise<CompleteListResult<Proposal>>;
   getProposal(proposalId: string): Promise<Proposal | null>;
   reviewProposal(proposalId: string, decision: ProposalStatus, feedback: string): Promise<boolean>;
   closeProposal(proposalId: string): Promise<boolean>;

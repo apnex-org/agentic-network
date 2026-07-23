@@ -1,0 +1,9 @@
+failedAt=2026-07-23T17:35:26Z
+command=anonymous read-only MCP get_document + local exact-byte extraction
+exitCode=1
+error=local parser attempted json.loads() on result.content[0].text, but this Hub returns the document body as raw Markdown rather than a JSON-encoded document object
+hubReadSucceeded=true
+responseBytes=15273
+responseSha256=6151673bbcb4448087ff8997a1e744cb51fe14a9f67984cf8909dfed07cfa19c
+sourceOrHubMutation=false
+resolution=distinct parser reads result.content[0].text directly; no retry/replay of any gate or WorkItem

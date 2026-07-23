@@ -1,0 +1,15 @@
+
+> hub@1.0.0 build
+> tsc && cp -r src/storage-substrate/migrations dist/storage-substrate/
+
+src/storage-substrate/__tests__/complete-list.test.ts(9,27): error TS2339: Property 'offset' does not exist on type '{}'.
+src/storage-substrate/__tests__/complete-list.test.ts(10,35): error TS2339: Property 'limit' does not exist on type '{}'.
+npm error Lifecycle script `build` failed with error:
+npm error code 2
+npm error path /home/apnex/taceng/agentic-network-drew-bug343-truncation/hub
+npm error workspace hub@1.0.0
+npm error location /home/apnex/taceng/agentic-network-drew-bug343-truncation/hub
+npm error command failed
+npm error command sh -c tsc && cp -r src/storage-substrate/migrations dist/storage-substrate/
+
+exitCode=2

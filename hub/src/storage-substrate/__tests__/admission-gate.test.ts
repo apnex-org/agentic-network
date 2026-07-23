@@ -42,7 +42,21 @@ describe("bug-343 storage admission gate", () => {
     holds[3]!.resolve();
     await Promise.all(runs);
     expect(maxActive).toBe(2);
-    expect(gate.snapshot()).toMatchObject({ active: 0, queued: 0 });
+    expect(gate.snapshot()).toMatchObject({
+      active: 0,
+      queued: 0,
+      highWaterActive: 2,
+      highWaterQueued: 2,
+      admitted: 4,
+      rejectedQueueFull: 0,
+      rejectedTimeout: 0,
+    });
+    gate.resetObservations();
+    expect(gate.snapshot()).toMatchObject({
+      highWaterActive: 0,
+      highWaterQueued: 0,
+      admitted: 0,
+    });
   });
 
   it("rejects loudly when the bounded queue is full", async () => {
@@ -57,6 +71,11 @@ describe("bug-343 storage admission gate", () => {
       name: "StorageAdmissionError",
       code: "storage_admission_backpressure",
     } satisfies Partial<StorageAdmissionError>);
+    expect(gate.snapshot()).toMatchObject({
+      highWaterActive: 1,
+      highWaterQueued: 1,
+      rejectedQueueFull: 1,
+    });
 
     hold.resolve();
     await first;

@@ -47,4 +47,29 @@ describe("bug-343 reconnect state-sync admission", () => {
     expect(maxActive).toBe(1);
     expect(completed).toBe(true);
   });
+
+  it("logs an incomplete aggregate loudly instead of coercing null totalPending to zero", async () => {
+    const log = new LogCapture();
+
+    await performStateSync({
+      role: "architect",
+      log: log.logger,
+      completeSync: () => {},
+      executeTool: async (name) => {
+        if (name === "get_pending_actions") {
+          return {
+            totalPending: null,
+            visiblePending: 500,
+            truncated: true,
+            retrieval: { complete: false, truncated: true },
+          };
+        }
+        if (name === "drain_pending_actions") return { items: [] };
+        return { now: "1970-01-01T00:00:00.000Z", epochMs: 0 };
+      },
+    });
+
+    expect(log.has("INCOMPLETE — visible=500")).toBe(true);
+    expect(log.has("Pending actions: 0")).toBe(false);
+  });
 });

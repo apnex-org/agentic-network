@@ -1,0 +1,12 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+Error: required container CPU cgroup unavailable for bug343-pg-overcap
+    at main (/home/apnex/taceng/agentic-network-drew-bug343-truncation/hub/scripts/bug343-reconnect-scale.ts:390:41)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async <anonymous> (/home/apnex/taceng/agentic-network-drew-bug343-truncation/hub/scripts/bug343-reconnect-scale.ts:456:3)
+
+Node.js v24.12.0
+
+exitCode=1

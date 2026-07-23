@@ -14,6 +14,7 @@
  */
 
 import type { EntityProvenance } from "../state.js";
+import type { CompleteListResult } from "../storage-substrate/complete-list.js";
 
 export type PendingActionDispatchType =
   | "thread_message"
@@ -122,6 +123,11 @@ export interface IPendingActionStore {
     targetAgentId: string,
     filter?: { state?: PendingActionState; states?: PendingActionState[] },
   ): Promise<PendingActionItem[]>;
+  /** Stable complete paging for truncation-sensitive aggregate consumers. */
+  listForAgentComplete(
+    targetAgentId: string,
+    filter?: { state?: PendingActionState; states?: PendingActionState[] },
+  ): Promise<CompleteListResult<PendingActionItem>>;
   receiptAck(id: string): Promise<PendingActionItem | null>;
   completionAck(id: string): Promise<PendingActionItem | null>;
   escalate(id: string, reason: string): Promise<PendingActionItem | null>;

@@ -25,6 +25,16 @@ export type {
 
 export { createPostgresStorageSubstrate } from "./postgres-substrate.js";
 export type { PostgresSubstrate, WriteEncoder } from "./postgres-substrate.js";
+export {
+  listCompleteStable,
+  COMPLETE_LIST_PAGE_SIZE,
+  COMPLETE_LIST_MAX_ITEMS,
+} from "./complete-list.js";
+export type {
+  CompleteListResult,
+  CompleteListPageInfo,
+  CompleteListStopReason,
+} from "./complete-list.js";
 export { buildEnvelopeWriteEncoder } from "./migrations/v2-envelope/write-encoder.js";
 export type { EnvelopeWriteEncoder } from "./migrations/v2-envelope/write-encoder.js";
 export { createMemoryStorageSubstrate } from "./memory-substrate.js";

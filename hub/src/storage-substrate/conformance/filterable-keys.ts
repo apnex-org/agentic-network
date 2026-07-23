@@ -138,6 +138,20 @@ export const ANNOTATED_FILTER_SITES: AnnotatedFilterSite[] = [
     note: "listAllStableWithSnapshot(kind, filter) is the revision-storage uncapped paging primitive. kind/filter are internally selected from the closed WORK_REVISION_KINDS registry; id is the deterministic universal sort key and each supplied filter key is pinned in SUBSTRATE_FILTERABLE_KEYS above.",
   },
   {
+    file: "complete-list.ts",
+    kind: null,
+    reason: "unresolved-kind",
+    keys: ["id"],
+    note: "generic stable pager receives kind + filter from a typed repository and contributes only the universal immutable id sort; repository call-sites remain the domain-key authority.",
+  },
+  {
+    file: "pending-action-repository-substrate.ts",
+    kind: "PendingAction",
+    reason: "unresolved-filter-var",
+    keys: ["targetAgentId", "state"],
+    note: "agentListFilter centralizes the targetAgentId plus state/states predicates shared by capped and complete PendingAction reads.",
+  },
+  {
     file: "curation-repository-substrate.ts",
     kind: null,
     reason: "unresolved-kind",

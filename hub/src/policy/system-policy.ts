@@ -32,23 +32,29 @@ async function getPendingActions(_args: Record<string, unknown>, ctx: IPolicyCon
   // backup path, independent of the ADR-017 queue.
   const callerAgent = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
   const inFlightThreadIds = new Set<string>();
-  if (callerAgent) {
-    const callerQueue = await ctx.stores.pendingAction.listForAgent(callerAgent.id, {
-      states: ["enqueued", "receipt_acked"],
-    });
-    for (const item of callerQueue) {
-      if (item.dispatchType === "thread_message") inFlightThreadIds.add(item.entityRef);
-    }
+  const callerQueue = callerAgent
+    ? await ctx.stores.pendingAction.listForAgentComplete(callerAgent.id, {
+        states: ["enqueued", "receipt_acked"],
+      })
+    : unavailableCallerResult();
+  for (const item of callerQueue.items) {
+    if (item.dispatchType === "thread_message") inFlightThreadIds.add(item.entityRef);
   }
 
-  // Exact status queries preserve the prior projection semantics while avoiding
-  // historical/terminal rows entirely.
-  const pendingProposals = await ctx.stores.proposal.getProposals("submitted");
-  const approvedProposals = await ctx.stores.proposal.getProposals("approved");
-  const activeArchitectThreads = await ctx.stores.thread.listThreads("active", {
+  // bug-343 successor: each dimension is reconstructed through stable id-ordered
+  // pages. Every page must share one high-water revision; concurrent drift or the
+  // 10k safety ceiling returns an explicit incomplete receipt rather than a false
+  // 500-row exact count.
+  const pendingProposalResult = await ctx.stores.proposal.getProposalsComplete("submitted");
+  const approvedProposalResult = await ctx.stores.proposal.getProposalsComplete("approved");
+  const activeArchitectThreadResult = await ctx.stores.thread.listThreadsComplete("active", {
     currentTurn: "architect",
   });
-  const convergedThreads = await ctx.stores.thread.listThreads("converged");
+  const convergedThreadResult = await ctx.stores.thread.listThreadsComplete("converged");
+  const pendingProposals = pendingProposalResult.items;
+  const approvedProposals = approvedProposalResult.items;
+  const activeArchitectThreads = activeArchitectThreadResult.items;
+  const convergedThreads = convergedThreadResult.items;
 
   // Threads awaiting Architect reply — excluding threads already in-flight via
   // the queue (Phase 2c ckpt-B, see note above).
@@ -63,12 +69,38 @@ async function getPendingActions(_args: Record<string, unknown>, ctx: IPolicyCon
   );
 
   const anomalyCount = danglingProposals.length;
+  const sources = {
+    inFlightPendingActions: callerQueue.pageInfo,
+    pendingProposals: pendingProposalResult.pageInfo,
+    approvedProposals: approvedProposalResult.pageInfo,
+    activeArchitectThreads: activeArchitectThreadResult.pageInfo,
+    convergedThreads: convergedThreadResult.pageInfo,
+  };
+  const complete = Object.values(sources).every((source) => source.complete);
+  const visiblePending =
+    pendingProposals.length +
+    threadsAwaitingArchitect.length +
+    convergedThreads.length;
 
   const summary = {
-    totalPending:
-      pendingProposals.length +
-      threadsAwaitingArchitect.length +
-      convergedThreads.length,
+    // A number is emitted only when every source dimension is complete. During
+    // snapshot churn/safety truncation, null + visiblePending + retrieval makes
+    // the uncertainty machine-readable and impossible to mistake for exactness.
+    totalPending: complete ? visiblePending : null,
+    visiblePending,
+    truncated: !complete,
+    retrieval: {
+      complete,
+      truncated: !complete,
+      dimensions: sources,
+      derivedCounts: {
+        pendingProposals: pendingProposals.length,
+        threadsAwaitingReply: threadsAwaitingArchitect.length,
+        convergedThreads: convergedThreads.length,
+        danglingProposals: danglingProposals.length,
+        totalPending: complete ? visiblePending : null,
+      },
+    },
     pendingProposals: pendingProposals.map((p) => ({
       proposalId: p.id,
       title: p.title,
@@ -113,6 +145,23 @@ async function getPendingActions(_args: Record<string, unknown>, ctx: IPolicyCon
 // rejections, etc.). Closes task-304 CP1 Finding §4.4. Counters live
 // per-process, so a restart resets them — not a replacement for the
 // audit-log channel, but a live-debugging affordance for the architect.
+
+function unavailableCallerResult() {
+  return {
+    items: [],
+    pageInfo: {
+      complete: false,
+      truncated: true,
+      returnedCount: 0,
+      exactCount: null,
+      pagesRead: 0,
+      pageSize: 500,
+      snapshotRevision: "unavailable:no-caller-agent",
+      nextOffset: 0,
+      reason: "caller_agent_unavailable",
+    },
+  } as const;
+}
 
 async function getMetrics(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const bucket = typeof args.bucket === "string" ? args.bucket : undefined;
@@ -161,7 +210,7 @@ async function getNow(_args: Record<string, unknown>, ctx: IPolicyContext): Prom
 export function registerSystemPolicy(router: PolicyRouter): void {
   router.register(
     "get_pending_actions",
-    "[Architect] Get a summary of all items requiring Architect attention: pending proposals, active threads awaiting Architect reply, and converged threads awaiting closure (plus dangling-proposal anomalies). Designed for autonomous event loop polling. (work-162/A3: the Task-derived dimensions — unread reports, unreviewed/escalated tasks, task clarifications — were retired with the Task subsystem; the inbox is now WorkItem-native, so its terminal-legacy-Task noise is gone by construction.)",
+    "[Architect] Get a truncation-honest summary of all items requiring Architect attention: pending proposals, active threads awaiting Architect reply, and converged threads awaiting closure (plus dangling-proposal anomalies). Every Proposal/Thread/PendingAction dimension is reconstructed with stable paging beyond 500; retrieval dimensions expose exact counts when complete or loud truncation + nextOffset/reason when snapshot drift or the safety ceiling prevents completeness. totalPending is null rather than falsely exact when any source is incomplete. Designed for autonomous event loop polling. (work-162/A3: the Task-derived dimensions — unread reports, unreviewed/escalated tasks, task clarifications — were retired with the Task subsystem; the inbox is now WorkItem-native, so its terminal-legacy-Task noise is gone by construction.)",
     {},
     getPendingActions,
   );

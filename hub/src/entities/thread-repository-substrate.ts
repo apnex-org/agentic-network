@@ -37,7 +37,11 @@
  * W4.x.10 — eleventh-slice of W4.x sweep after W4.x.9 TeleRepositorySubstrate.
  */
 
-import type { HubStorageSubstrate } from "../storage-substrate/index.js";
+import {
+  listCompleteStable,
+  type CompleteListResult,
+  type HubStorageSubstrate,
+} from "../storage-substrate/index.js";
 import type {
   IThreadStore,
   Thread,
@@ -432,6 +436,21 @@ export class ThreadRepositorySubstrate implements IThreadStore {
       sort: [{ field: "metadata.updatedAt", order: "desc" }],
     });
     return items.map((t) => truncateClosedThreadMessages(normalizeThreadShape(t)));
+  }
+
+  async listThreadsComplete(
+    status?: ThreadStatus,
+    equalityFilter?: Record<string, string>,
+  ): Promise<CompleteListResult<Thread>> {
+    const filter: Record<string, string> = { ...(equalityFilter ?? {}) };
+    if (status) filter.status = status;
+    const result = await listCompleteStable<Thread>(this.substrate, KIND, {
+      filter: Object.keys(filter).length > 0 ? filter : undefined,
+    });
+    return {
+      ...result,
+      items: result.items.map((t) => truncateClosedThreadMessages(normalizeThreadShape(t))),
+    };
   }
 
   async closeThread(threadId: string): Promise<boolean> {

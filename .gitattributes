@@ -1,0 +1,5 @@
+# Raw work-470 execution logs are immutable evidence bytes; do not text-normalize
+# or whitespace-diff them (their exact SHA-256 identities are bound in the packet).
+docs/evidence/bug343-work470-*.txt -diff -text
+docs/evidence/work470-*.txt -diff -text
+docs/evidence/work470-failed-runs/*.txt -diff -text

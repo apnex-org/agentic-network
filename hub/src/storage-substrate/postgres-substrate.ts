@@ -30,7 +30,7 @@ import type {
 } from "./types.js";
 import { translateKeyOrThrow } from "./filter-translation-error.js";
 import { assertKnownFilterOps, hasImplementedFilterOp } from "./types.js";
-import { AdmissionGate } from "./admission-gate.js";
+import { AdmissionGate, type AdmissionGateSnapshot } from "./admission-gate.js";
 
 const { Pool, Client } = pg;
 
@@ -51,6 +51,9 @@ export interface PostgresSubstrate extends HubStorageSubstrate {
   setFieldTranslator(translator: FieldTranslator | null): void;
   setWriteEncoder(encoder: WriteEncoder | null): void;
   setPartitionedKindCheck(check: ((kind: string) => boolean) | null): void;
+  /** bug-343 successor: observed, phase-resettable list-admission telemetry. */
+  getListAdmissionSnapshot(): AdmissionGateSnapshot;
+  resetListAdmissionObservations(): void;
 }
 
 /** Per-instance pool tuning (C1-R2 audit-4103). Both fall back to env / defaults when
@@ -198,6 +201,14 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
     this.writeEncoder = encoder;
   }
 
+  getListAdmissionSnapshot(): AdmissionGateSnapshot {
+    return this.listAdmission.snapshot();
+  }
+
+  resetListAdmissionObservations(): void {
+    this.listAdmission.resetObservations();
+  }
+
   /** Encode an entity for storage (envelope-shape) via the injected write-encoder; no-op if unwired. */
   private encodeForWrite<T>(kind: string, entity: T): T {
     return (this.writeEncoder ? this.writeEncoder(kind, entity) : entity) as T;
@@ -307,10 +318,16 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
     }
 
     // Sort translation: bare key → envelope JSONB path (mission-90 W2, same hook),
-    // then dotted-path field → JSONB extract (jsonbField unchanged).
+    // then dotted-path field → JSONB extract. Reserved immutable `id` maps to
+    // the canonical column so stable complete paging uses entities_pkey instead
+    // of sorting on a JSON expression (bug-343 truncation-honesty successor).
     let orderSql = "";
     if (sort && sort.length > 0) {
-      const parts = sort.map(s => `${jsonbField(this.translateKey(kind, s.field))} ${s.order === "desc" ? "DESC" : "ASC"}`);
+      const parts = sort.map((s) => {
+        const translated = this.translateKey(kind, s.field);
+        const expression = translated === "id" ? "id" : jsonbField(translated);
+        return `${expression} ${s.order === "desc" ? "DESC" : "ASC"}`;
+      });
       orderSql = ` ORDER BY ${parts.join(", ")}`;
     }
 

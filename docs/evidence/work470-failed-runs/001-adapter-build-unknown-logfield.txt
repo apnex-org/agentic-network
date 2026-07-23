@@ -1,0 +1,19 @@
+
+> @apnex/network-adapter@0.1.14 prebuild
+> node ../../scripts/build/write-build-info.js
+
+[build-info] dist/build-info.json: be7272dd-dirty on drew/bug343-truncation-honesty at 2026-07-23T17:16:51.109Z
+
+> @apnex/network-adapter@0.1.14 build
+> tsc
+
+src/kernel/state-sync.ts(117,61): error TS2322: Type 'unknown' is not assignable to type 'LogField | readonly LogField[]'.
+npm error Lifecycle script `build` failed with error:
+npm error code 2
+npm error path /home/apnex/taceng/agentic-network-drew-bug343-truncation/packages/network-adapter
+npm error workspace @apnex/network-adapter@0.1.14
+npm error location /home/apnex/taceng/agentic-network-drew-bug343-truncation/packages/network-adapter
+npm error command failed
+npm error command sh -c tsc
+
+exitCode=2

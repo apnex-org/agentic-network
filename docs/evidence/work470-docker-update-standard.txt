@@ -1,0 +1,3 @@
+bug343-pg-overcap
+
+exitCode=0

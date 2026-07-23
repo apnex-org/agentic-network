@@ -31,11 +31,22 @@ export interface AdmissionGateSnapshot {
   queued: number;
   maxActive: number;
   maxQueued: number;
+  /** Phase-resettable observed high-water marks (not configuration claims). */
+  highWaterActive: number;
+  highWaterQueued: number;
+  admitted: number;
+  rejectedQueueFull: number;
+  rejectedTimeout: number;
 }
 
 export class AdmissionGate {
   private active = 0;
   private readonly queue: Waiter[] = [];
+  private highWaterActive = 0;
+  private highWaterQueued = 0;
+  private admitted = 0;
+  private rejectedQueueFull = 0;
+  private rejectedTimeout = 0;
 
   constructor(
     private readonly maxActive: number,
@@ -59,11 +70,26 @@ export class AdmissionGate {
       queued: this.queue.length,
       maxActive: this.maxActive,
       maxQueued: this.maxQueued,
+      highWaterActive: this.highWaterActive,
+      highWaterQueued: this.highWaterQueued,
+      admitted: this.admitted,
+      rejectedQueueFull: this.rejectedQueueFull,
+      rejectedTimeout: this.rejectedTimeout,
     };
+  }
+
+  /** Begin a distinct measurement phase without disturbing active/queued work. */
+  resetObservations(): void {
+    this.highWaterActive = this.active;
+    this.highWaterQueued = this.queue.length;
+    this.admitted = 0;
+    this.rejectedQueueFull = 0;
+    this.rejectedTimeout = 0;
   }
 
   async run<T>(fn: () => Promise<T>): Promise<T> {
     const release = await this.acquire();
+    this.admitted++;
     try {
       return await fn();
     } finally {
@@ -74,10 +100,12 @@ export class AdmissionGate {
   private acquire(): Promise<() => void> {
     if (this.active < this.maxActive) {
       this.active++;
+      this.highWaterActive = Math.max(this.highWaterActive, this.active);
       return Promise.resolve(this.makeRelease());
     }
 
     if (this.queue.length >= this.maxQueued) {
+      this.rejectedQueueFull++;
       return Promise.reject(new StorageAdmissionError(
         `storage list admission queue full (${this.active} active, ${this.queue.length} queued)`,
         this.timeoutMs,
@@ -91,6 +119,7 @@ export class AdmissionGate {
         timer: setTimeout(() => {
           const index = this.queue.indexOf(waiter);
           if (index >= 0) this.queue.splice(index, 1);
+          this.rejectedTimeout++;
           reject(new StorageAdmissionError(
             `storage list admission timed out after ${this.timeoutMs}ms`,
             this.timeoutMs,
@@ -98,6 +127,7 @@ export class AdmissionGate {
         }, this.timeoutMs),
       };
       this.queue.push(waiter);
+      this.highWaterQueued = Math.max(this.highWaterQueued, this.queue.length);
     });
   }
 

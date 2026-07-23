@@ -111,11 +111,19 @@ export async function performStateSync(ctx: StateSyncContext): Promise<void> {
 
     if (pendingActions && typeof pendingActions === "object") {
       const pa = pendingActions as Record<string, unknown>;
-      log.log(
-        "agent.sync.pending_actions",
-        { totalPending: Number(pa.totalPending ?? 0) },
-        `[StateSync] Pending actions: ${pa.totalPending ?? 0}`
-      );
+      if (pa.truncated === true || pa.totalPending === null) {
+        log.log(
+          "agent.sync.pending_actions.truncated",
+          { visiblePending: Number(pa.visiblePending ?? 0), retrieval: JSON.stringify(pa.retrieval ?? null) },
+          `[StateSync] Pending actions INCOMPLETE — visible=${pa.visiblePending ?? 0}; inspect retrieval dimensions`,
+        );
+      } else {
+        log.log(
+          "agent.sync.pending_actions",
+          { totalPending: Number(pa.totalPending ?? 0) },
+          `[StateSync] Pending actions: ${pa.totalPending ?? 0}`,
+        );
+      }
     }
 
     // ADR-017: dispatch drained queue items to the adapter's handler.
