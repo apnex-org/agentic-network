@@ -139,6 +139,69 @@ export const APNEX_AGENTIC_NETWORK_REVIEW_POLICY: RepoReviewPolicy = {
   ],
 };
 
+/**
+ * Mission-140 authority-separated review policy for apnex/mission-kit.
+ *
+ * The exact reviewed base has no CODEOWNERS file, so this does not pretend to
+ * mirror GitHub code-owner enforcement. The Continuation3 authority envelope
+ * instead requires actual-author-aware independent source review. Every path in
+ * this bounded repository is therefore classified identically and routed to the
+ * architect GitHub identity. That repository-wide invariant is what makes the
+ * all-path fallback safe when the unique Hub binding carries exact PR/head/base
+ * identity but no per-file inventory.
+ */
+export const APNEX_MISSION_KIT_REVIEW_POLICY: RepoReviewPolicy = {
+  contractVersion: PR_REVIEWER_ELIGIBILITY_CONTRACT_VERSION,
+  repo: "apnex/mission-kit",
+  version: "apnex-mission-kit-review-policy-2026-07-23",
+  source: "audited-static-fixture",
+  provenance: {
+    sourceRef:
+      "docs/authority/workgraph-safe-revision-implementation-authority-envelope-continuation3.md@rv=56552051",
+    revision: "8d3886823dfc1c971e5a47eec53d22eee3b91911",
+    capturedAt: "2026-07-23T13:49:52.196Z",
+    driftBounded: true,
+    caveat:
+      "Mission-140 bounded policy: every mission-kit path requires independent architect review; refresh through a distinct authority revision if repository governance changes.",
+  },
+  teams: {
+    architect: ["apnex-lily"],
+  },
+  ruleset: {
+    requiredApprovingReviewCount: 1,
+    requireCodeOwnerReview: false,
+    requireLastPushApproval: true,
+    dismissStaleReviewsOnPush: true,
+    requiredReviewThreadResolution: true,
+  },
+  pathClasses: [
+    {
+      id: "all_paths_independent_architect",
+      patterns: ["*"],
+      githubSatisfiableOwnerTeams: ["architect"],
+      processRequiredTeams: ["architect"],
+      note:
+        "Authority-envelope review class for all mission-kit paths; no narrower class exists in this policy version.",
+    },
+  ],
+  allPathsFallbackClassIds: ["all_paths_independent_architect"],
+};
+
+/** Versioned exact-repository selector. Unknown names and legacy aliases fail closed. */
+export const REPO_REVIEW_POLICY_SELECTION_VERSION =
+  "repo-review-policy-selection-2026-07-23" as const;
+export const REPO_REVIEW_POLICY_SELECTION_SOURCE_REF =
+  "docs/authority/workgraph-safe-revision-implementation-authority-envelope-continuation3.md@rv=56552051" as const;
+
+const AUTHORITATIVE_REVIEW_POLICIES = new Map<string, RepoReviewPolicy>([
+  [APNEX_AGENTIC_NETWORK_REVIEW_POLICY.repo, APNEX_AGENTIC_NETWORK_REVIEW_POLICY],
+  [APNEX_MISSION_KIT_REVIEW_POLICY.repo, APNEX_MISSION_KIT_REVIEW_POLICY],
+]);
+
+export function selectRepoReviewPolicy(repo: string): RepoReviewPolicy | null {
+  return AUTHORITATIVE_REVIEW_POLICIES.get(repo) ?? null;
+}
+
 function normalizePath(path: string): string {
   if (!path.startsWith("/")) return `/${path}`;
   return path;

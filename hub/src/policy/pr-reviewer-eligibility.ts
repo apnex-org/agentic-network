@@ -66,6 +66,14 @@ export interface RepoReviewPolicy {
   teams: Record<string, string[]>;
   ruleset: RepoReviewRulesetPolicy;
   pathClasses: RepoReviewPathClass[];
+  /**
+   * Optional fail-closed declaration for repositories whose authoritative review
+   * policy maps every possible changed path to the same class set. This permits
+   * evaluation when a Hub-owned binding has trusted repo/PR/head/base identity
+   * but no per-file inventory. Omit for path-sensitive repositories. Unknown
+   * class ids are still rejected by the normal path-class validator.
+   */
+  allPathsFallbackClassIds?: string[];
 }
 
 export interface ReviewerAgentIdentity {
@@ -284,7 +292,7 @@ export function evaluateReviewerEligibility(input: ReviewerEligibilityInput): Re
   }
 
   let pathClasses = input.paths.pathClasses ? unique(input.paths.pathClasses) : undefined;
-  if (!pathClasses && input.paths.changedPaths) {
+  if (!pathClasses && input.paths.changedPaths && input.paths.changedPaths.length > 0) {
     const resolved = input.paths.changedPaths.map((path) => resolvePathClassId(path, input.policy));
     if (resolved.some((id) => id === null)) {
       return {
@@ -296,6 +304,14 @@ export function evaluateReviewerEligibility(input: ReviewerEligibilityInput): Re
       };
     }
     pathClasses = unique(resolved as string[]);
+  }
+  if (
+    (!pathClasses || pathClasses.length === 0) &&
+    (!input.paths.changedPaths || input.paths.changedPaths.length === 0) &&
+    input.policy.allPathsFallbackClassIds &&
+    input.policy.allPathsFallbackClassIds.length > 0
+  ) {
+    pathClasses = unique(input.policy.allPathsFallbackClassIds);
   }
   if (!pathClasses || pathClasses.length === 0) {
     return {

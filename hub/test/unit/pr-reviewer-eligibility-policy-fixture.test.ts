@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   APNEX_AGENTIC_NETWORK_REVIEW_POLICY,
+  APNEX_MISSION_KIT_REVIEW_POLICY,
   resolveReviewPolicyPathClass,
   resolveReviewPolicyPathClasses,
+  selectRepoReviewPolicy,
 } from "../../src/policy/pr-reviewer-eligibility-policy-fixture.js";
 
 const policy = APNEX_AGENTIC_NETWORK_REVIEW_POLICY;
@@ -56,5 +58,28 @@ describe("apnex agentic-network review policy fixture", () => {
     const pathClass = resolveReviewPolicyPathClass("README.md");
     expect(pathClass.id).toBe("catch_all");
     expect(pathClass.githubSatisfiableOwnerTeams).toEqual(["architect", "engineer"]);
+  });
+
+  it("selects exact authoritative policies by repository and rejects aliases/unknown repos", () => {
+    expect(selectRepoReviewPolicy("apnex-org/agentic-network")).toBe(APNEX_AGENTIC_NETWORK_REVIEW_POLICY);
+    expect(selectRepoReviewPolicy("apnex/mission-kit")).toBe(APNEX_MISSION_KIT_REVIEW_POLICY);
+    expect(selectRepoReviewPolicy("apnex-org/mission-kit")).toBeNull();
+    expect(selectRepoReviewPolicy("apnex/other")).toBeNull();
+  });
+
+  it("carries the bounded mission-kit all-path independent-architect policy", () => {
+    const missionKit = APNEX_MISSION_KIT_REVIEW_POLICY;
+    expect(missionKit.repo).toBe("apnex/mission-kit");
+    expect(missionKit.provenance.sourceRef).toContain(
+      "workgraph-safe-revision-implementation-authority-envelope-continuation3.md@rv=56552051",
+    );
+    expect(missionKit.teams).toEqual({ architect: ["apnex-lily"] });
+    expect(missionKit.allPathsFallbackClassIds).toEqual(["all_paths_independent_architect"]);
+    expect(resolveReviewPolicyPathClass("skills/arc-lifecycle/SKILL.md", missionKit).id).toBe(
+      "all_paths_independent_architect",
+    );
+    expect(resolveReviewPolicyPathClass("axioms/A0-sovereign-intelligence-engine.md", missionKit).id).toBe(
+      "all_paths_independent_architect",
+    );
   });
 });

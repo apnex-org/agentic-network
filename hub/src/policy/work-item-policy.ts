@@ -21,7 +21,11 @@ import { parsePrEvidenceLocator } from "./pr-evidence-admission-contract.js";
 import { resolvePrEvidenceBinding } from "./pr-evidence-admission-binding.js";
 import { prEvidenceAdmittedProjection, prEvidenceDeniedProjection, prManualCheckRequiredProjection, prReviewRequiredProjection, type PrEvidenceActionabilityProjection } from "./pr-evidence-actionability.js";
 import { findExistingPrReviewProjection, buildPrEvidenceReviewProjectionKey, projectPrEvidenceReviewWorkItem, reconcilePrReviewProjection } from "./pr-review-workitem-projection.js";
-import { APNEX_AGENTIC_NETWORK_REVIEW_POLICY } from "./pr-reviewer-eligibility-policy-fixture.js";
+import {
+  REPO_REVIEW_POLICY_SELECTION_SOURCE_REF,
+  REPO_REVIEW_POLICY_SELECTION_VERSION,
+  selectRepoReviewPolicy,
+} from "./pr-reviewer-eligibility-policy-fixture.js";
 import { projectReviewerGithubIdentities } from "./pr-reviewer-identity-source.js";
 import { evaluateReviewerEligibility, PR_REVIEWER_ELIGIBILITY_CONTRACT_VERSION, summarizeReviewerEligibility, type ReviewerEligibilityProjectionSummary } from "./pr-reviewer-eligibility.js";
 import type { PrWorkGraphBindingProof } from "./pr-review-workitem-event-contract.js";
@@ -102,6 +106,7 @@ function prAdmissionDenied(projection: PrEvidenceActionabilityProjection, detail
 function failedPrEvidenceReviewerEligibility(
   binding: PrWorkGraphBindingProof,
   reason: ReviewerEligibilityProjectionSummary["reason"],
+  policyIdentity: { version: string; sourceRef: string },
 ): ReviewerEligibilityProjectionSummary {
   return {
     contractVersion: PR_REVIEWER_ELIGIBILITY_CONTRACT_VERSION,
@@ -112,8 +117,8 @@ function failedPrEvidenceReviewerEligibility(
     selectedReviewers: [],
     requestedReviewerStatus: "insufficient_no_alternative",
     disqualified: [],
-    policyVersion: APNEX_AGENTIC_NETWORK_REVIEW_POLICY.version,
-    policySourceRef: APNEX_AGENTIC_NETWORK_REVIEW_POLICY.provenance.sourceRef,
+    policyVersion: policyIdentity.version,
+    policySourceRef: policyIdentity.sourceRef,
     lastPusherLogin: binding.lastPusherLogin,
   };
 }
@@ -122,8 +127,20 @@ async function buildPrEvidenceReviewerEligibility(
   ctx: IPolicyContext,
   binding: PrWorkGraphBindingProof,
 ): Promise<ReviewerEligibilityProjectionSummary> {
-  if (!binding.authorLogin) return failedPrEvidenceReviewerEligibility(binding, "identity_missing");
-  if (!binding.lastPusherLogin) return failedPrEvidenceReviewerEligibility(binding, "last_pusher_missing");
+  const policy = selectRepoReviewPolicy(binding.repo);
+  if (!policy) {
+    return failedPrEvidenceReviewerEligibility(binding, "unsupported_policy", {
+      version: REPO_REVIEW_POLICY_SELECTION_VERSION,
+      sourceRef: REPO_REVIEW_POLICY_SELECTION_SOURCE_REF,
+    });
+  }
+  const policyIdentity = { version: policy.version, sourceRef: policy.provenance.sourceRef };
+  if (!binding.authorLogin) {
+    return failedPrEvidenceReviewerEligibility(binding, "identity_missing", policyIdentity);
+  }
+  if (!binding.lastPusherLogin) {
+    return failedPrEvidenceReviewerEligibility(binding, "last_pusher_missing", policyIdentity);
+  }
   const agents = await ctx.stores.engineerRegistry.listAgents();
   const identityProjection = projectReviewerGithubIdentities(
     agents.map((agent) => ({
@@ -144,9 +161,9 @@ async function buildPrEvidenceReviewerEligibility(
     paths: {
       changedPaths: binding.changedPaths,
       pathClasses: binding.pathClasses,
-      provenance: APNEX_AGENTIC_NETWORK_REVIEW_POLICY.provenance,
+      provenance: policy.provenance,
     },
-    policy: APNEX_AGENTIC_NETWORK_REVIEW_POLICY,
+    policy,
     agents: identityProjection.identities,
   }));
   return { ...summary, lastPusherLogin: binding.lastPusherLogin };

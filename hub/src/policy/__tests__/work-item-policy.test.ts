@@ -435,6 +435,197 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     expect(stub.calls.some((c) => c.method === "completeWork")).toBe(false);
   });
 
+  it("complete_work: mission-kit selects one authoritative reviewer, projects once, and deterministically reuses the done review", async () => {
+    const before = sampleItem({
+      id: "work-skills",
+      status: "in_progress",
+      lease: { holder: "anonymous-engineer", token: "tok-abc", claimedAt: "t", expiresAt: "t", heartbeatAt: "t" },
+    });
+    const createdNodes: Array<Record<string, unknown>> = [];
+    const projectionKeys: string[] = [];
+    const completed: unknown[] = [];
+    let reviewWorkId: string | undefined;
+    const stub = makeStub({
+      getWorkItem: () => before,
+      listWorkItemsByProjectionKey: (projectionKey: unknown) => {
+        projectionKeys.push(String(projectionKey));
+        return reviewWorkId
+          ? { items: [sampleItem({ id: reviewWorkId, status: "done", payload: { projectionKey } })], truncated: false }
+          : { items: [], truncated: false };
+      },
+      createBlueprintNode: (input: unknown) => {
+        const spec = input as Record<string, unknown>;
+        createdNodes.push(spec);
+        reviewWorkId = String(spec.id);
+        return {
+          item: sampleItem({ id: reviewWorkId, status: "ready", payload: spec.payload }),
+          created: true,
+        };
+      },
+      updateWorkItem: () => ({
+        before,
+        after: { ...before, completionDependsOn: reviewWorkId ? [reviewWorkId] : [] },
+      }),
+      completeWork: (...args: unknown[]) => {
+        completed.push(args);
+        return sampleItem({
+          id: "work-skills",
+          status: "done",
+          completionDependsOn: reviewWorkId ? [reviewWorkId] : [],
+          lease: before.lease,
+        });
+      },
+    });
+    (stub as unknown as { listPrReviewBindingWorkItems: unknown }).listPrReviewBindingWorkItems = async () => ({
+      items: [sampleItem({
+        id: "work-465",
+        createdBy: { role: "architect", agentId: "agent-architect" },
+        payload: {
+          obligationKind: "github_pr_workgraph_binding",
+          repo: "apnex/mission-kit",
+          prNumber: 13,
+          targetWorkId: "work-skills",
+          headSha: "23c49d3282f29e8831cefa836d23f6d56ababe4e",
+          baseSha: "8d3886823dfc1c971e5a47eec53d22eee3b91911",
+          version: "1",
+          authorLogin: "apnex-greg",
+          lastPusherLogin: "apnex-greg",
+          changedPathSource: "PR #13 exact head",
+        },
+      })],
+      truncated: false,
+    });
+    const registry = stubRegistry({
+      listAgents: async () => [
+        { id: "agent-greg", name: "greg", role: "engineer", labels: {} },
+        { id: "agent-ruby", name: "ruby", role: "engineer", labels: {} },
+        { id: "agent-lily", name: "lily", role: "architect", labels: {} },
+        { id: "agent-steve", name: "steve", role: "verifier", labels: {} },
+      ],
+    });
+    const evidence = [{
+      requirementId: "pr",
+      kind: "pr",
+      ref: "https://github.com/apnex/mission-kit/pull/13",
+      producedAt: "t",
+    }];
+
+    const first = await router.handle(
+      "complete_work",
+      { workId: "work-skills", leaseToken: "tok-abc", evidence },
+      ctxFor(stub, "engineer", registry),
+    );
+    expect(first.isError).toBeFalsy();
+    const firstBody = body(first);
+    expect(firstBody).toMatchObject({
+      completionBlocked: "pr_review_required",
+      prEvidenceActionability: {
+        classifier: "PR_REVIEW_REQUIRED",
+        bindingId: "work-465",
+      },
+      prReviewProjection: {
+        eligibility: {
+          ok: true,
+          pathClasses: ["all_paths_independent_architect"],
+          selectedReviewers: [
+            { agentId: "agent-lily", role: "architect", githubLogin: "apnex-lily" },
+          ],
+          policyVersion: "apnex-mission-kit-review-policy-2026-07-23",
+        },
+      },
+    });
+    expect(createdNodes).toHaveLength(1);
+    expect(createdNodes[0]).toMatchObject({
+      type: "review",
+      roleEligibility: ["architect"],
+      targetRef: { kind: "pull_request", id: "apnex/mission-kit#13" },
+      payload: {
+        selectedReviewerLogin: "apnex-lily",
+        reviewerAgentId: "agent-lily",
+        completionPolicy: {
+          requiredReviewerLogin: "apnex-lily",
+          forbiddenReviewerLogins: ["apnex-greg"],
+          lastPusherLogin: "apnex-greg",
+        },
+      },
+    });
+
+    const second = await router.handle(
+      "complete_work",
+      { workId: "work-skills", leaseToken: "tok-abc", evidence },
+      ctxFor(stub, "engineer", registry),
+    );
+    expect(second.isError).toBeFalsy();
+    expect(body(second)).toMatchObject({
+      workItem: { status: "done" },
+      prEvidenceActionability: {
+        classifier: "PR_EVIDENCE_ADMITTED",
+        bindingId: "work-465",
+        reviewWorkId,
+      },
+    });
+    expect(createdNodes).toHaveLength(1);
+    expect(projectionKeys).toHaveLength(2);
+    expect(projectionKeys[1]).toBe(projectionKeys[0]);
+    expect(completed).toHaveLength(1);
+  });
+
+  it("complete_work: unsupported PR repositories fail closed without identity lookup, projection, or evidence persistence", async () => {
+    const before = sampleItem({ id: "work-parent", status: "in_progress" });
+    const stub = makeStub({
+      getWorkItem: () => before,
+      listWorkItemsByProjectionKey: () => { throw new Error("unsupported repo must not look up a projection"); },
+      createBlueprintNode: () => { throw new Error("unsupported repo must not create a projection"); },
+      updateWorkItem: () => { throw new Error("unsupported repo must not mutate graph edges"); },
+      completeWork: () => { throw new Error("unsupported repo must not persist evidence"); },
+    });
+    (stub as unknown as { listPrReviewBindingWorkItems: unknown }).listPrReviewBindingWorkItems = async () => ({
+      items: [sampleItem({
+        id: "prbind-7",
+        createdBy: { role: "architect", agentId: "agent-architect" },
+        payload: {
+          obligationKind: "github_pr_workgraph_binding",
+          repo: "apnex/unsupported",
+          prNumber: 7,
+          targetWorkId: "work-parent",
+          authorLogin: "apnex-greg",
+          lastPusherLogin: "apnex-greg",
+        },
+      })],
+      truncated: false,
+    });
+    const registry = stubRegistry({
+      listAgents: async () => { throw new Error("unsupported repo must fail before identity lookup"); },
+    });
+
+    const result = await router.handle("complete_work", {
+      workId: "work-parent",
+      leaseToken: "tok-abc",
+      evidence: [{ requirementId: "pr", kind: "pr", ref: "apnex/unsupported#7", producedAt: "t" }],
+    }, ctxFor(stub, "engineer", registry));
+
+    expect(result.isError).toBeFalsy();
+    expect(body(result)).toMatchObject({
+      completionBlocked: "pr_review_projection_required",
+      prEvidenceActionability: {
+        classifier: "MANUAL_CHECK_REQUIRED",
+        reason: "reviewer_eligibility_unsupported_policy",
+      },
+      prReviewProjection: {
+        eligibility: {
+          ok: false,
+          reason: "unsupported_policy",
+          policyVersion: "repo-review-policy-selection-2026-07-23",
+        },
+        materialization: {
+          materialized: false,
+          fallbackReason: "reviewer_eligibility_unsupported_policy",
+        },
+      },
+    });
+    expect(stub.calls.some((call) => call.method === "completeWork")).toBe(false);
+  });
+
   it("complete_work: after review child is done, explicit PR evidence retry reaches generic completion with admitted actionability", async () => {
     const before = sampleItem({
       id: "work-parent",
