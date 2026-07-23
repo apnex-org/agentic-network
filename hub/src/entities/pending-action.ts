@@ -127,6 +127,7 @@ export interface IPendingActionStore {
   listForAgentComplete(
     targetAgentId: string,
     filter?: { state?: PendingActionState; states?: PendingActionState[] },
+    expectedRevision?: string,
   ): Promise<CompleteListResult<PendingActionItem>>;
   receiptAck(id: string): Promise<PendingActionItem | null>;
   completionAck(id: string): Promise<PendingActionItem | null>;

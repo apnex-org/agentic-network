@@ -1,0 +1,11 @@
+node:internal/modules/run_main:107
+    triggerUncaughtException(
+    ^
+
+Error: cannot establish exact rv baseline: existing max=424374
+    at prepareCoherenceBaseline (/home/apnex/taceng/agentic-network-drew-bug343-aggregate/hub/scripts/bug343-reconnect-scale.ts:357:13)
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async main (/home/apnex/taceng/agentic-network-drew-bug343-aggregate/hub/scripts/bug343-reconnect-scale.ts:668:3)
+    at async <anonymous> (/home/apnex/taceng/agentic-network-drew-bug343-aggregate/hub/scripts/bug343-reconnect-scale.ts:744:3)
+
+Node.js v24.12.0

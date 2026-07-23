@@ -30,6 +30,8 @@ describe("bug-343 successor stable complete paging", () => {
       pagesRead: 2,
       pageSize: 500,
       snapshotRevision: "rv-1",
+      expectedRevision: null,
+      observedRevision: "rv-1",
       nextOffset: null,
       reason: null,
     });
@@ -49,7 +51,32 @@ describe("bug-343 successor stable complete paging", () => {
       returnedCount: 500,
       pagesRead: 2,
       snapshotRevision: "rv-1",
+      expectedRevision: null,
+      observedRevision: "rv-2",
       nextOffset: 500,
+      reason: "snapshot_changed",
+    });
+  });
+
+  it("rejects the first page before accepting rows when an aggregate revision differs", async () => {
+    const result = await listCompleteStable<{ id: string }>(
+      pagingSubstrate(675, () => "rv-212213"),
+      "Proposal",
+      {},
+      { expectedRevision: "rv-212212" },
+    );
+
+    expect(result.items).toEqual([]);
+    expect(result.pageInfo).toMatchObject({
+      complete: false,
+      truncated: true,
+      exactCount: null,
+      returnedCount: 0,
+      pagesRead: 1,
+      snapshotRevision: "rv-212212",
+      expectedRevision: "rv-212212",
+      observedRevision: "rv-212213",
+      nextOffset: 0,
       reason: "snapshot_changed",
     });
   });

@@ -163,10 +163,11 @@ export class PendingActionRepositorySubstrate implements IPendingActionStore {
   async listForAgentComplete(
     targetAgentId: string,
     filter?: { state?: PendingActionState; states?: PendingActionState[] },
+    expectedRevision?: string,
   ): Promise<CompleteListResult<PendingActionItem>> {
     const result = await listCompleteStable<PendingActionItem>(this.substrate, KIND, {
       filter: agentListFilter(targetAgentId, filter),
-    });
+    }, { expectedRevision });
     return {
       ...result,
       items: result.items.map(decodePendingAction),

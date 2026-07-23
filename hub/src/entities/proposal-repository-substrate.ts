@@ -122,9 +122,12 @@ export class ProposalRepositorySubstrate implements IProposalStore {
     return items.map((p) => decodeEnvelopeToFlat(p, "Proposal"));
   }
 
-  async getProposalsComplete(status?: ProposalStatus): Promise<CompleteListResult<Proposal>> {
+  async getProposalsComplete(
+    status?: ProposalStatus,
+    expectedRevision?: string,
+  ): Promise<CompleteListResult<Proposal>> {
     const filter = status ? { status } : undefined;
-    const result = await listCompleteStable<Proposal>(this.substrate, KIND, { filter });
+    const result = await listCompleteStable<Proposal>(this.substrate, KIND, { filter }, { expectedRevision });
     return {
       ...result,
       items: result.items.map((p) => decodeEnvelopeToFlat(p, "Proposal")),

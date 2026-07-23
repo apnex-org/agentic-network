@@ -441,12 +441,13 @@ export class ThreadRepositorySubstrate implements IThreadStore {
   async listThreadsComplete(
     status?: ThreadStatus,
     equalityFilter?: Record<string, string>,
+    expectedRevision?: string,
   ): Promise<CompleteListResult<Thread>> {
     const filter: Record<string, string> = { ...(equalityFilter ?? {}) };
     if (status) filter.status = status;
     const result = await listCompleteStable<Thread>(this.substrate, KIND, {
       filter: Object.keys(filter).length > 0 ? filter : undefined,
-    });
+    }, { expectedRevision });
     return {
       ...result,
       items: result.items.map((t) => truncateClosedThreadMessages(normalizeThreadShape(t))),

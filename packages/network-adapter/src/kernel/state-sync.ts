@@ -112,10 +112,15 @@ export async function performStateSync(ctx: StateSyncContext): Promise<void> {
     if (pendingActions && typeof pendingActions === "object") {
       const pa = pendingActions as Record<string, unknown>;
       if (pa.truncated === true || pa.totalPending === null) {
+        const visiblePending = typeof pa.visiblePending === "number" ? pa.visiblePending : null;
+        const retrieval = pa.retrieval && typeof pa.retrieval === "object"
+          ? pa.retrieval as Record<string, unknown>
+          : null;
+        const reason = retrieval && typeof retrieval.reason === "string" ? retrieval.reason : "unknown";
         log.log(
           "agent.sync.pending_actions.truncated",
-          { visiblePending: Number(pa.visiblePending ?? 0), retrieval: JSON.stringify(pa.retrieval ?? null) },
-          `[StateSync] Pending actions INCOMPLETE — visible=${pa.visiblePending ?? 0}; inspect retrieval dimensions`,
+          { visiblePending, reason, retrieval: JSON.stringify(retrieval) },
+          `[StateSync] Pending actions INCOMPLETE — visible=${visiblePending ?? "unknown"}; reason=${reason}; do not act on partial aggregate`,
         );
       } else {
         log.log(

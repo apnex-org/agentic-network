@@ -1,0 +1,1042 @@
+
+> @apnex/network-adapter@0.1.14 test
+> vitest run
+
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.7 [39m[90m/home/apnex/taceng/agentic-network-drew-bug343-aggregate/packages/network-adapter[39m
+
+ [32m✓[39m test/integration/mcp-transport.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 29869[2mms[22m[39m
+     [33m[2m✓[22m[39m connect() brings wire up and getMetrics reflects connected state [33m 4156[2mms[22m[39m
+     [33m[2m✓[22m[39m request() ships register_role without Transport knowing its semantics [33m 4030[2mms[22m[39m
+     [33m[2m✓[22m[39m listMethods() returns advertised tool names including register_role [33m 4060[2mms[22m[39m
+     [33m[2m✓[22m[39m close() transitions wire to disconnected and emits closed event [33m 4054[2mms[22m[39m
+     [33m[2m✓[22m[39m SSE drop triggers reconnect: reconnecting + reconnected events, new sessionId [33m 5188[2mms[22m[39m
+     [33m[2m✓[22m[39m hub-event notifications arrive as WireEvent push frames [33m 4320[2mms[22m[39m
+     [33m[2m✓[22m[39m request() after close() rejects [33m 4058[2mms[22m[39m
+ [32m✓[39m test/integration/liveness-chaos.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 13596[2mms[22m[39m
+     [33m[2m✓[22m[39m Arm A — named edge, recoverable: probe surfaces the server-side-dead session while keepalive flows -> L1 heals, NO self-exit [33m 6242[2mms[22m[39m
+     [33m[2m✓[22m[39m Arm B — unrecoverable: probe fails the budget -> self-exit signal (sentinel, code 75) -> fresh client re-handshakes + re-claims [33m 7350[2mms[22m[39m
+ [32m✓[39m test/integration/p1e2-wedge-inject.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 4312[2mms[22m[39m
+     [33m[2m✓[22m[39m evicts the session from transports (probe will 400) WITHOUT closing the SSE (keepalive still flows) [33m 4309[2mms[22m[39m
+ [32m✓[39m test/unit/list-tools-cache-fallback.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 3142[2mms[22m[39m
+     [33m[2m✓[22m[39m does NOT silently return tools=[] when agent is not yet usable [33m 2903[2mms[22m[39m
+ [32m✓[39m test/integration/mcp-agent-client.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 1853[2mms[22m[39m
+     [33m[2m✓[22m[39m call() routes through transport and session-invalid retries once [33m 804[2mms[22m[39m
+     [33m[2m✓[22m[39m wire reconnect (SSE drop) re-runs handshake and returns to streaming [33m 810[2mms[22m[39m
+ [32m✓[39m test/integration/supervisor-seam.test.ts [2m([22m[2m3 tests[22m[2m)[22m[33m 722[2mms[22m[39m
+     [33m[2m✓[22m[39m sentinel appears -> terminates the child + exits 75 (the docker-L2 restart trigger) [33m 357[2mms[22m[39m
+     [33m[2m✓[22m[39m clean SIGTERM (docker stop / §6 safe-update) -> exits 0, NOT a wedged-restart [33m 338[2mms[22m[39m
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-10 open: eng-1 → architect thread pins architect; eng-2 not notified
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-c73ccc3d
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-10 open: eng-1 → architect thread pins architect; eng-2 not notified
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-c73ccc3d identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-10 open: eng-1 → architect thread pins architect; eng-2 not notified
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-c73ccc3d epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-10 open: eng-1 → architect thread pins architect; eng-2 not notified
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-c73ccc3d session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-10 open: eng-1 → architect thread pins architect; eng-2 not notified
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-76ed28f4
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-10 open: eng-1 → architect thread pins architect; eng-2 not notified
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-76ed28f4 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-10 open: eng-1 → architect thread pins architect; eng-2 not notified
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-76ed28f4 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-10 open: eng-1 → architect thread pins architect; eng-2 not notified
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-76ed28f4 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-10 open: eng-1 → architect thread pins architect; eng-2 not notified
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-9fbdab5f
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-10 open: eng-1 → architect thread pins architect; eng-2 not notified
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-9fbdab5f identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-10 open: eng-1 → architect thread pins architect; eng-2 not notified
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-9fbdab5f epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-10 open: eng-1 → architect thread pins architect; eng-2 not notified
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-9fbdab5f session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-10 open: eng-1 → architect thread pins architect; eng-2 not notified
+[22m[39m[ThreadRepositorySubstrate] Thread opened: thread-1 — eng1 to arch
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-02 + WF-TH-14: turn alternation; wrong-party replies rejected
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-b8c22577
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-02 + WF-TH-14: turn alternation; wrong-party replies rejected
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-b8c22577 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-02 + WF-TH-14: turn alternation; wrong-party replies rejected
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-b8c22577 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-02 + WF-TH-14: turn alternation; wrong-party replies rejected
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-b8c22577 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-02 + WF-TH-14: turn alternation; wrong-party replies rejected
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-3c6b5037
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-02 + WF-TH-14: turn alternation; wrong-party replies rejected
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-3c6b5037 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-02 + WF-TH-14: turn alternation; wrong-party replies rejected
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-3c6b5037 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-02 + WF-TH-14: turn alternation; wrong-party replies rejected
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-3c6b5037 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-02 + WF-TH-14: turn alternation; wrong-party replies rejected
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-90208d31
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-02 + WF-TH-14: turn alternation; wrong-party replies rejected
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-90208d31 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-02 + WF-TH-14: turn alternation; wrong-party replies rejected
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-90208d31 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-02 + WF-TH-14: turn alternation; wrong-party replies rejected
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-90208d31 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-02 + WF-TH-14: turn alternation; wrong-party replies rejected
+[22m[39m[ThreadRepositorySubstrate] Thread opened: thread-1 — turn test
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-02 + WF-TH-14: turn alternation; wrong-party replies rejected
+[22m[39m[ThreadRepositorySubstrate] Reply on thread-1 by architect (agent-b8c22577) (round 2/10)
+
+[90mstderr[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-02 + WF-TH-14: turn alternation; wrong-party replies rejected
+[22m[39m[SHADOW-INV] INV-TH17 breach: create_thread_reply rejected: agent-pinning violation — caller agentId=agent-90208d31 but thread pins agent-3c6b5037 (entity=thread-1)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-02 + WF-TH-14: turn alternation; wrong-party replies rejected
+[22m[39m[AuditRepositorySubstrate] hub/inv_th17_shadow_breach: create_thread_reply rejected: agent-pinning violation — caller agentId=agent-902
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-02 + WF-TH-14: turn alternation; wrong-party replies rejected
+[22m[39m[ThreadRepositorySubstrate] Reply on thread-1 by engineer (agent-3c6b5037) (round 3/10)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-03: gate rejects converged=true when summary empty
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-36c3ea04
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-03: gate rejects converged=true when summary empty
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-36c3ea04 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-03: gate rejects converged=true when summary empty
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-36c3ea04 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-03: gate rejects converged=true when summary empty
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-36c3ea04 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-03: gate rejects converged=true when summary empty
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-7e1d71ee
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-03: gate rejects converged=true when summary empty
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-7e1d71ee identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-03: gate rejects converged=true when summary empty
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-7e1d71ee epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-03: gate rejects converged=true when summary empty
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-7e1d71ee session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-03: gate rejects converged=true when summary empty
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-565c8d91
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-03: gate rejects converged=true when summary empty
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-565c8d91 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-03: gate rejects converged=true when summary empty
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-565c8d91 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-03: gate rejects converged=true when summary empty
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-565c8d91 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-03: gate rejects converged=true when summary empty
+[22m[39m[ThreadRepositorySubstrate] Thread opened: thread-1 — gate test
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-03: gate rejects converged=true when summary empty
+[22m[39m[ThreadRepositorySubstrate] Reply on thread-1 by architect (agent-36c3ea04) (round 2/10)
+
+[90mstderr[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-03: gate rejects converged=true when summary empty
+[22m[39m[SHADOW-INV] INV-TH19 breach: convergence gate rejected on create_thread_reply: Thread convergence rejected: summary is empty (narrate the agreed outcome). (entity=thread-1)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-03: gate rejects converged=true when summary empty
+[22m[39m[AuditRepositorySubstrate] hub/inv_th19_shadow_breach: convergence gate rejected on create_thread_reply: Thread convergence rejected: s
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-04: gate rejects converged=true when no stagedActions
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-bea52fae
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-04: gate rejects converged=true when no stagedActions
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-bea52fae identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-04: gate rejects converged=true when no stagedActions
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-bea52fae epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-04: gate rejects converged=true when no stagedActions
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-bea52fae session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-04: gate rejects converged=true when no stagedActions
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-96859c8c
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-04: gate rejects converged=true when no stagedActions
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-96859c8c identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-04: gate rejects converged=true when no stagedActions
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-96859c8c epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-04: gate rejects converged=true when no stagedActions
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-96859c8c session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-04: gate rejects converged=true when no stagedActions
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-0c3ccd8e
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-04: gate rejects converged=true when no stagedActions
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-0c3ccd8e identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-04: gate rejects converged=true when no stagedActions
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-0c3ccd8e epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-04: gate rejects converged=true when no stagedActions
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-0c3ccd8e session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-04: gate rejects converged=true when no stagedActions
+[22m[39m[ThreadRepositorySubstrate] Thread opened: thread-1 — gate test 2
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-04: gate rejects converged=true when no stagedActions
+[22m[39m[ThreadRepositorySubstrate] Reply on thread-1 by architect (agent-bea52fae) (round 2/10)
+
+[90mstderr[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-04: gate rejects converged=true when no stagedActions
+[22m[39m[SHADOW-INV] INV-TH19 breach: convergence gate rejected on create_thread_reply: Thread convergence rejected: no convergenceActions committed (stage at least one — Phase 1 vocab: close_no_action{reason}). (entity=thread-1)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-04: gate rejects converged=true when no stagedActions
+[22m[39m[AuditRepositorySubstrate] hub/inv_th19_shadow_breach: convergence gate rejected on create_thread_reply: Thread convergence rejected: n
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-1b101859
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-1b101859 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-1b101859 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-1b101859 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-88a33e02
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-88a33e02 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-88a33e02 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-88a33e02 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-8fc1ae9d
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-8fc1ae9d identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-8fc1ae9d epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-8fc1ae9d session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close
+[22m[39m[ThreadRepositorySubstrate] Thread opened: thread-1 — happy path
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close
+[22m[39m[ThreadRepositorySubstrate] Reply on thread-1 by architect (agent-1b101859) (round 2/10)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close
+[22m[39m[ThreadRepositorySubstrate] Thread converged: thread-1 (1 committed action(s))
+[ThreadRepositorySubstrate] Reply on thread-1 by engineer (agent-88a33e02) (round 3/10)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close
+[22m[39m[AuditRepositorySubstrate] hub/thread_close_no_action: Thread thread-1 closed (close_no_action). Summary: All good.. Reason: done.
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close
+[22m[39m[ThreadRepositorySubstrate] Thread closed: thread-1
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-05 + WF-TH-12: close_no_action bilateral convergence + cascade close
+[22m[39m[ThreadPolicy] Cascade finalized for thread-1: 1/1 executed, 0 failed, 0 skipped
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-06: stage → revise → retract lineage
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-d6439aa9
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-06: stage → revise → retract lineage
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-d6439aa9 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-06: stage → revise → retract lineage
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-d6439aa9 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-06: stage → revise → retract lineage
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-d6439aa9 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-06: stage → revise → retract lineage
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-7af07b41
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-06: stage → revise → retract lineage
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-7af07b41 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-06: stage → revise → retract lineage
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-7af07b41 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-06: stage → revise → retract lineage
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-7af07b41 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-06: stage → revise → retract lineage
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-4f37ac03
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-06: stage → revise → retract lineage
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-4f37ac03 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-06: stage → revise → retract lineage
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-4f37ac03 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-06: stage → revise → retract lineage
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-4f37ac03 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-06: stage → revise → retract lineage
+[22m[39m[ThreadRepositorySubstrate] Thread opened: thread-1 — lineage
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-06: stage → revise → retract lineage
+[22m[39m[ThreadRepositorySubstrate] Reply on thread-1 by architect (agent-d6439aa9) (round 2/10)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-06: stage → revise → retract lineage
+[22m[39m[ThreadRepositorySubstrate] Reply on thread-1 by engineer (agent-7af07b41) (round 3/10)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-06: stage → revise → retract lineage
+[22m[39m[ThreadRepositorySubstrate] Reply on thread-1 by architect (agent-d6439aa9) (round 4/10)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-07: roundCount == maxRounds transitions to round_limit
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-cf1df171
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-07: roundCount == maxRounds transitions to round_limit
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-cf1df171 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-07: roundCount == maxRounds transitions to round_limit
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-cf1df171 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-07: roundCount == maxRounds transitions to round_limit
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-cf1df171 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-07: roundCount == maxRounds transitions to round_limit
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-d1dcc11c
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-07: roundCount == maxRounds transitions to round_limit
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-d1dcc11c identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-07: roundCount == maxRounds transitions to round_limit
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-d1dcc11c epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-07: roundCount == maxRounds transitions to round_limit
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-d1dcc11c session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-07: roundCount == maxRounds transitions to round_limit
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-e1a3d5ea
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-07: roundCount == maxRounds transitions to round_limit
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-e1a3d5ea identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-07: roundCount == maxRounds transitions to round_limit
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-e1a3d5ea epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-07: roundCount == maxRounds transitions to round_limit
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-e1a3d5ea session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-07: roundCount == maxRounds transitions to round_limit
+[22m[39m[ThreadRepositorySubstrate] Thread opened: thread-1 — short
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-07: roundCount == maxRounds transitions to round_limit
+[22m[39m[ThreadRepositorySubstrate] Thread hit round limit: thread-1
+[ThreadRepositorySubstrate] Reply on thread-1 by architect (agent-cf1df171) (round 2/2)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-08 + WF-TH-09: authorAgentId on every message; participant upsert is idempotent
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-ea89e54e
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-08 + WF-TH-09: authorAgentId on every message; participant upsert is idempotent
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-ea89e54e identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-08 + WF-TH-09: authorAgentId on every message; participant upsert is idempotent
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-ea89e54e epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-08 + WF-TH-09: authorAgentId on every message; participant upsert is idempotent
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-ea89e54e session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-08 + WF-TH-09: authorAgentId on every message; participant upsert is idempotent
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-4e406807
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-08 + WF-TH-09: authorAgentId on every message; participant upsert is idempotent
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-4e406807 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-08 + WF-TH-09: authorAgentId on every message; participant upsert is idempotent
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-4e406807 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-08 + WF-TH-09: authorAgentId on every message; participant upsert is idempotent
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-4e406807 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-08 + WF-TH-09: authorAgentId on every message; participant upsert is idempotent
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-3caff2ed
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-08 + WF-TH-09: authorAgentId on every message; participant upsert is idempotent
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-3caff2ed identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-08 + WF-TH-09: authorAgentId on every message; participant upsert is idempotent
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-3caff2ed epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-08 + WF-TH-09: authorAgentId on every message; participant upsert is idempotent
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-3caff2ed session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-08 + WF-TH-09: authorAgentId on every message; participant upsert is idempotent
+[22m[39m[ThreadRepositorySubstrate] Thread opened: thread-1 — participants
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-08 + WF-TH-09: authorAgentId on every message; participant upsert is idempotent
+[22m[39m[ThreadRepositorySubstrate] Reply on thread-1 by architect (agent-ea89e54e) (round 2/10)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-08 + WF-TH-09: authorAgentId on every message; participant upsert is idempotent
+[22m[39m[ThreadRepositorySubstrate] Reply on thread-1 by engineer (agent-4e406807) (round 3/10)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-11: eng-1 ↔ eng-2 thread; architect silent, both engineers on participants
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-d52d9b49
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-11: eng-1 ↔ eng-2 thread; architect silent, both engineers on participants
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-d52d9b49 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-11: eng-1 ↔ eng-2 thread; architect silent, both engineers on participants
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-d52d9b49 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-11: eng-1 ↔ eng-2 thread; architect silent, both engineers on participants
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-d52d9b49 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-11: eng-1 ↔ eng-2 thread; architect silent, both engineers on participants
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-db4e8bb5
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-11: eng-1 ↔ eng-2 thread; architect silent, both engineers on participants
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-db4e8bb5 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-11: eng-1 ↔ eng-2 thread; architect silent, both engineers on participants
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-db4e8bb5 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-11: eng-1 ↔ eng-2 thread; architect silent, both engineers on participants
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-db4e8bb5 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-11: eng-1 ↔ eng-2 thread; architect silent, both engineers on participants
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-2a144e6a
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-11: eng-1 ↔ eng-2 thread; architect silent, both engineers on participants
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-2a144e6a identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-11: eng-1 ↔ eng-2 thread; architect silent, both engineers on participants
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-2a144e6a epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-11: eng-1 ↔ eng-2 thread; architect silent, both engineers on participants
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-2a144e6a session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-11: eng-1 ↔ eng-2 thread; architect silent, both engineers on participants
+[22m[39m[ThreadRepositorySubstrate] Thread opened: thread-1 — peer review
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-11: eng-1 ↔ eng-2 thread; architect silent, both engineers on participants
+[22m[39m[ThreadRepositorySubstrate] Reply on thread-1 by engineer (agent-2a144e6a) (round 2/10)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-15: non-participant engineer cannot usurp the turn on eng↔eng thread
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-2a348422
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-15: non-participant engineer cannot usurp the turn on eng↔eng thread
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-2a348422 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-15: non-participant engineer cannot usurp the turn on eng↔eng thread
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-2a348422 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-15: non-participant engineer cannot usurp the turn on eng↔eng thread
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-2a348422 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-15: non-participant engineer cannot usurp the turn on eng↔eng thread
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-33b35c1c
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-15: non-participant engineer cannot usurp the turn on eng↔eng thread
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-33b35c1c identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-15: non-participant engineer cannot usurp the turn on eng↔eng thread
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-33b35c1c epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-15: non-participant engineer cannot usurp the turn on eng↔eng thread
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-33b35c1c session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-15: non-participant engineer cannot usurp the turn on eng↔eng thread
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-9adb20be
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-15: non-participant engineer cannot usurp the turn on eng↔eng thread
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-9adb20be identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-15: non-participant engineer cannot usurp the turn on eng↔eng thread
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-9adb20be epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-15: non-participant engineer cannot usurp the turn on eng↔eng thread
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-9adb20be session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-15: non-participant engineer cannot usurp the turn on eng↔eng thread
+[22m[39m[ThreadRepositorySubstrate] Thread opened: thread-1 — peer review 2
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-13: latest-author's summary persists; earlier values are overwritten
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-e89554fa
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-13: latest-author's summary persists; earlier values are overwritten
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-e89554fa identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-13: latest-author's summary persists; earlier values are overwritten
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-e89554fa epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-13: latest-author's summary persists; earlier values are overwritten
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-e89554fa session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-13: latest-author's summary persists; earlier values are overwritten
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-e1b3d57f
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-13: latest-author's summary persists; earlier values are overwritten
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-e1b3d57f identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-13: latest-author's summary persists; earlier values are overwritten
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-e1b3d57f epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-13: latest-author's summary persists; earlier values are overwritten
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-e1b3d57f session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-13: latest-author's summary persists; earlier values are overwritten
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-973e75dd
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-13: latest-author's summary persists; earlier values are overwritten
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-973e75dd identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-13: latest-author's summary persists; earlier values are overwritten
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-973e75dd epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-13: latest-author's summary persists; earlier values are overwritten
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-973e75dd session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-13: latest-author's summary persists; earlier values are overwritten
+[22m[39m[ThreadRepositorySubstrate] Thread opened: thread-1 — summary refinement
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-13: latest-author's summary persists; earlier values are overwritten
+[22m[39m[ThreadRepositorySubstrate] Reply on thread-1 by architect (agent-e89554fa) (round 2/10)
+
+[90mstdout[2m | test/integration/threads-2-smoke.test.ts[2m > [22m[2mThreads 2.0 — 3-agent smoke (Mission-21 Phase 1)[2m > [22m[2mWF-TH-13: latest-author's summary persists; earlier values are overwritten
+[22m[39m[ThreadRepositorySubstrate] Reply on thread-1 by engineer (agent-e1b3d57f) (round 3/10)
+
+ [32m✓[39m test/integration/threads-2-smoke.test.ts [2m([22m[2m11 tests[22m[2m)[22m[33m 894[2mms[22m[39m
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mno cognitive config → legacy behavior, no pipeline state observed
+[22m[39m[McpAgentClient] [agent.session.state] session disconnected → connecting | from=disconnected to=connecting reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mno cognitive config → legacy behavior, no pipeline state observed
+[22m[39m[McpAgentClient] [agent.session.state] session connecting → synchronizing | from=connecting to=synchronizing reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mno cognitive config → legacy behavior, no pipeline state observed
+[22m[39m[McpAgentClient] [agent.handshake.plain_ok] registered as engineer (plain) | role=engineer
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mno cognitive config → legacy behavior, no pipeline state observed
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-28995837
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mno cognitive config → legacy behavior, no pipeline state observed
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-28995837 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mno cognitive config → legacy behavior, no pipeline state observed
+[22m[39m[McpAgentClient] [agent.handshake.registered] [Handshake] Registered as agent-28995837 (epoch=0, newly created) | agentId=agent-28995837 epoch=0 wasCreated=true
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mno cognitive config → legacy behavior, no pipeline state observed
+[22m[39m[McpAgentClient] [agent.sync.start] [StateSync] Starting state sync...
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mno cognitive config → legacy behavior, no pipeline state observed
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-28995837 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mno cognitive config → legacy behavior, no pipeline state observed
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-28995837 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mno cognitive config → legacy behavior, no pipeline state observed
+[22m[39m[McpAgentClient] [agent.session.state] session synchronizing → streaming | from=synchronizing to=streaming reason=undef
+[McpAgentClient] [agent.sync.complete] [StateSync] Sync complete — now streaming
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mno cognitive config → legacy behavior, no pipeline state observed
+[22m[39m[McpAgentClient] [agent.session.state] session streaming → disconnected | from=streaming to=disconnected reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCognitiveTelemetry sink receives tool_call events with sessionId
+[22m[39m[McpAgentClient] [agent.session.state] session disconnected → connecting | from=disconnected to=connecting reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCognitiveTelemetry sink receives tool_call events with sessionId
+[22m[39m[McpAgentClient] [agent.session.state] session connecting → synchronizing | from=connecting to=synchronizing reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCognitiveTelemetry sink receives tool_call events with sessionId
+[22m[39m[McpAgentClient] [agent.handshake.plain_ok] registered as engineer (plain) | role=engineer
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCognitiveTelemetry sink receives tool_call events with sessionId
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-f0459a01
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCognitiveTelemetry sink receives tool_call events with sessionId
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-f0459a01 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCognitiveTelemetry sink receives tool_call events with sessionId
+[22m[39m[McpAgentClient] [agent.handshake.registered] [Handshake] Registered as agent-f0459a01 (epoch=0, newly created) | agentId=agent-f0459a01 epoch=0 wasCreated=true
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCognitiveTelemetry sink receives tool_call events with sessionId
+[22m[39m[McpAgentClient] [agent.sync.start] [StateSync] Starting state sync...
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCognitiveTelemetry sink receives tool_call events with sessionId
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-f0459a01 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCognitiveTelemetry sink receives tool_call events with sessionId
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-f0459a01 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCognitiveTelemetry sink receives tool_call events with sessionId
+[22m[39m[McpAgentClient] [agent.session.state] session synchronizing → streaming | from=synchronizing to=streaming reason=undef
+[McpAgentClient] [agent.sync.complete] [StateSync] Sync complete — now streaming
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCognitiveTelemetry sink receives tool_call events with sessionId
+[22m[39m[McpAgentClient] [agent.session.state] session streaming → disconnected | from=streaming to=disconnected reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCircuitBreaker trips on transport 5xx stream and fails fast with HubUnavailableError
+[22m[39m[McpAgentClient] [agent.session.state] session disconnected → connecting | from=disconnected to=connecting reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCircuitBreaker trips on transport 5xx stream and fails fast with HubUnavailableError
+[22m[39m[McpAgentClient] [agent.session.state] session connecting → synchronizing | from=connecting to=synchronizing reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCircuitBreaker trips on transport 5xx stream and fails fast with HubUnavailableError
+[22m[39m[McpAgentClient] [agent.handshake.plain_ok] registered as engineer (plain) | role=engineer
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCircuitBreaker trips on transport 5xx stream and fails fast with HubUnavailableError
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-6b1992c1
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCircuitBreaker trips on transport 5xx stream and fails fast with HubUnavailableError
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-6b1992c1 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCircuitBreaker trips on transport 5xx stream and fails fast with HubUnavailableError
+[22m[39m[McpAgentClient] [agent.handshake.registered] [Handshake] Registered as agent-6b1992c1 (epoch=0, newly created) | agentId=agent-6b1992c1 epoch=0 wasCreated=true
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCircuitBreaker trips on transport 5xx stream and fails fast with HubUnavailableError
+[22m[39m[McpAgentClient] [agent.sync.start] [StateSync] Starting state sync...
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCircuitBreaker trips on transport 5xx stream and fails fast with HubUnavailableError
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-6b1992c1 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCircuitBreaker trips on transport 5xx stream and fails fast with HubUnavailableError
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-6b1992c1 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCircuitBreaker trips on transport 5xx stream and fails fast with HubUnavailableError
+[22m[39m[McpAgentClient] [agent.session.state] session synchronizing → streaming | from=synchronizing to=streaming reason=undef
+[McpAgentClient] [agent.sync.complete] [StateSync] Sync complete — now streaming
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mCircuitBreaker trips on transport 5xx stream and fails fast with HubUnavailableError
+[22m[39m[McpAgentClient] [agent.session.state] session streaming → disconnected | from=streaming to=disconnected reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mstandard pipeline ordering: Telemetry observes CircuitBreaker fast-fail events
+[22m[39m[McpAgentClient] [agent.session.state] session disconnected → connecting | from=disconnected to=connecting reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mstandard pipeline ordering: Telemetry observes CircuitBreaker fast-fail events
+[22m[39m[McpAgentClient] [agent.session.state] session connecting → synchronizing | from=connecting to=synchronizing reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mstandard pipeline ordering: Telemetry observes CircuitBreaker fast-fail events
+[22m[39m[McpAgentClient] [agent.handshake.plain_ok] registered as engineer (plain) | role=engineer
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mstandard pipeline ordering: Telemetry observes CircuitBreaker fast-fail events
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-0ee39947
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mstandard pipeline ordering: Telemetry observes CircuitBreaker fast-fail events
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-0ee39947 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mstandard pipeline ordering: Telemetry observes CircuitBreaker fast-fail events
+[22m[39m[McpAgentClient] [agent.handshake.registered] [Handshake] Registered as agent-0ee39947 (epoch=0, newly created) | agentId=agent-0ee39947 epoch=0 wasCreated=true
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mstandard pipeline ordering: Telemetry observes CircuitBreaker fast-fail events
+[22m[39m[McpAgentClient] [agent.sync.start] [StateSync] Starting state sync...
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mstandard pipeline ordering: Telemetry observes CircuitBreaker fast-fail events
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-0ee39947 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mstandard pipeline ordering: Telemetry observes CircuitBreaker fast-fail events
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-0ee39947 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mstandard pipeline ordering: Telemetry observes CircuitBreaker fast-fail events
+[22m[39m[McpAgentClient] [agent.session.state] session synchronizing → streaming | from=synchronizing to=streaming reason=undef
+[McpAgentClient] [agent.sync.complete] [StateSync] Sync complete — now streaming
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mstandard pipeline ordering: Telemetry observes CircuitBreaker fast-fail events
+[22m[39m[McpAgentClient] [agent.session.state] session streaming → disconnected | from=streaming to=disconnected reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2monToolError phase routes errors through middlewares (recovery pattern)
+[22m[39m[McpAgentClient] [agent.session.state] session disconnected → connecting | from=disconnected to=connecting reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2monToolError phase routes errors through middlewares (recovery pattern)
+[22m[39m[McpAgentClient] [agent.session.state] session connecting → synchronizing | from=connecting to=synchronizing reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2monToolError phase routes errors through middlewares (recovery pattern)
+[22m[39m[McpAgentClient] [agent.handshake.plain_ok] registered as engineer (plain) | role=engineer
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2monToolError phase routes errors through middlewares (recovery pattern)
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-949e6380
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2monToolError phase routes errors through middlewares (recovery pattern)
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-949e6380 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2monToolError phase routes errors through middlewares (recovery pattern)
+[22m[39m[McpAgentClient] [agent.handshake.registered] [Handshake] Registered as agent-949e6380 (epoch=0, newly created) | agentId=agent-949e6380 epoch=0 wasCreated=true
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2monToolError phase routes errors through middlewares (recovery pattern)
+[22m[39m[McpAgentClient] [agent.sync.start] [StateSync] Starting state sync...
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2monToolError phase routes errors through middlewares (recovery pattern)
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-949e6380 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2monToolError phase routes errors through middlewares (recovery pattern)
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-949e6380 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2monToolError phase routes errors through middlewares (recovery pattern)
+[22m[39m[McpAgentClient] [agent.session.state] session synchronizing → streaming | from=synchronizing to=streaming reason=undef
+[McpAgentClient] [agent.sync.complete] [StateSync] Sync complete — now streaming
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2monToolError phase routes errors through middlewares (recovery pattern)
+[22m[39m[McpAgentClient] [agent.session.state] session streaming → disconnected | from=streaming to=disconnected reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path converts Hub isError envelope → throw so ErrorNormalizer sees it
+[22m[39m[McpAgentClient] [agent.session.state] session disconnected → connecting | from=disconnected to=connecting reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path converts Hub isError envelope → throw so ErrorNormalizer sees it
+[22m[39m[McpAgentClient] [agent.session.state] session connecting → synchronizing | from=connecting to=synchronizing reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path converts Hub isError envelope → throw so ErrorNormalizer sees it
+[22m[39m[McpAgentClient] [agent.handshake.plain_ok] registered as engineer (plain) | role=engineer
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path converts Hub isError envelope → throw so ErrorNormalizer sees it
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-581605c5
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path converts Hub isError envelope → throw so ErrorNormalizer sees it
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-581605c5 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path converts Hub isError envelope → throw so ErrorNormalizer sees it
+[22m[39m[McpAgentClient] [agent.handshake.registered] [Handshake] Registered as agent-581605c5 (epoch=0, newly created) | agentId=agent-581605c5 epoch=0 wasCreated=true
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path converts Hub isError envelope → throw so ErrorNormalizer sees it
+[22m[39m[McpAgentClient] [agent.sync.start] [StateSync] Starting state sync...
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path converts Hub isError envelope → throw so ErrorNormalizer sees it
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-581605c5 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path converts Hub isError envelope → throw so ErrorNormalizer sees it
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-581605c5 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path converts Hub isError envelope → throw so ErrorNormalizer sees it
+[22m[39m[McpAgentClient] [agent.session.state] session synchronizing → streaming | from=synchronizing to=streaming reason=undef
+[McpAgentClient] [agent.sync.complete] [StateSync] Sync complete — now streaming
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path converts Hub isError envelope → throw so ErrorNormalizer sees it
+[22m[39m[McpAgentClient] [agent.session.state] session streaming → disconnected | from=streaming to=disconnected reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path: legacy non-cognitive agent.call() preserves envelope-as-return contract
+[22m[39m[McpAgentClient] [agent.session.state] session disconnected → connecting | from=disconnected to=connecting reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path: legacy non-cognitive agent.call() preserves envelope-as-return contract
+[22m[39m[McpAgentClient] [agent.session.state] session connecting → synchronizing | from=connecting to=synchronizing reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path: legacy non-cognitive agent.call() preserves envelope-as-return contract
+[22m[39m[McpAgentClient] [agent.handshake.plain_ok] registered as engineer (plain) | role=engineer
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path: legacy non-cognitive agent.call() preserves envelope-as-return contract
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-ea0d272b
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path: legacy non-cognitive agent.call() preserves envelope-as-return contract
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-ea0d272b identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path: legacy non-cognitive agent.call() preserves envelope-as-return contract
+[22m[39m[McpAgentClient] [agent.handshake.registered] [Handshake] Registered as agent-ea0d272b (epoch=0, newly created) | agentId=agent-ea0d272b epoch=0 wasCreated=true
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path: legacy non-cognitive agent.call() preserves envelope-as-return contract
+[22m[39m[McpAgentClient] [agent.sync.start] [StateSync] Starting state sync...
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path: legacy non-cognitive agent.call() preserves envelope-as-return contract
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-ea0d272b epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path: legacy non-cognitive agent.call() preserves envelope-as-return contract
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-ea0d272b session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path: legacy non-cognitive agent.call() preserves envelope-as-return contract
+[22m[39m[McpAgentClient] [agent.session.state] session synchronizing → streaming | from=synchronizing to=streaming reason=undef
+[McpAgentClient] [agent.sync.complete] [StateSync] Sync complete — now streaming
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mcognitive path: legacy non-cognitive agent.call() preserves envelope-as-return contract
+[22m[39m[McpAgentClient] [agent.session.state] session streaming → disconnected | from=streaming to=disconnected reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mbaseline: a normal cacheable read is served from cache on repeat (one Hub round-trip)
+[22m[39m[McpAgentClient] [agent.session.state] session disconnected → connecting | from=disconnected to=connecting reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mbaseline: a normal cacheable read is served from cache on repeat (one Hub round-trip)
+[22m[39m[McpAgentClient] [agent.session.state] session connecting → synchronizing | from=connecting to=synchronizing reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mbaseline: a normal cacheable read is served from cache on repeat (one Hub round-trip)
+[22m[39m[McpAgentClient] [agent.handshake.plain_ok] registered as engineer (plain) | role=engineer
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mbaseline: a normal cacheable read is served from cache on repeat (one Hub round-trip)
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-68659f28
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mbaseline: a normal cacheable read is served from cache on repeat (one Hub round-trip)
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-68659f28 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mbaseline: a normal cacheable read is served from cache on repeat (one Hub round-trip)
+[22m[39m[McpAgentClient] [agent.handshake.registered] [Handshake] Registered as agent-68659f28 (epoch=0, newly created) | agentId=agent-68659f28 epoch=0 wasCreated=true
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mbaseline: a normal cacheable read is served from cache on repeat (one Hub round-trip)
+[22m[39m[McpAgentClient] [agent.sync.start] [StateSync] Starting state sync...
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mbaseline: a normal cacheable read is served from cache on repeat (one Hub round-trip)
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-68659f28 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mbaseline: a normal cacheable read is served from cache on repeat (one Hub round-trip)
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-68659f28 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mbaseline: a normal cacheable read is served from cache on repeat (one Hub round-trip)
+[22m[39m[McpAgentClient] [agent.session.state] session synchronizing → streaming | from=synchronizing to=streaming reason=undef
+[McpAgentClient] [agent.sync.complete] [StateSync] Sync complete — now streaming
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2mbaseline: a normal cacheable read is served from cache on repeat (one Hub round-trip)
+[22m[39m[McpAgentClient] [agent.session.state] session streaming → disconnected | from=streaming to=disconnected reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2ma { probe: true } read is cache-exempt end-to-end — every probe is a real Hub round-trip (bug-206)
+[22m[39m[McpAgentClient] [agent.session.state] session disconnected → connecting | from=disconnected to=connecting reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2ma { probe: true } read is cache-exempt end-to-end — every probe is a real Hub round-trip (bug-206)
+[22m[39m[McpAgentClient] [agent.session.state] session connecting → synchronizing | from=connecting to=synchronizing reason=undef
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2ma { probe: true } read is cache-exempt end-to-end — every probe is a real Hub round-trip (bug-206)
+[22m[39m[McpAgentClient] [agent.handshake.plain_ok] registered as engineer (plain) | role=engineer
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2ma { probe: true } read is cache-exempt end-to-end — every probe is a real Hub round-trip (bug-206)
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-9b0241ba
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2ma { probe: true } read is cache-exempt end-to-end — every probe is a real Hub round-trip (bug-206)
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-9b0241ba identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2ma { probe: true } read is cache-exempt end-to-end — every probe is a real Hub round-trip (bug-206)
+[22m[39m[McpAgentClient] [agent.handshake.registered] [Handshake] Registered as agent-9b0241ba (epoch=0, newly created) | agentId=agent-9b0241ba epoch=0 wasCreated=true
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2ma { probe: true } read is cache-exempt end-to-end — every probe is a real Hub round-trip (bug-206)
+[22m[39m[McpAgentClient] [agent.sync.start] [StateSync] Starting state sync...
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2ma { probe: true } read is cache-exempt end-to-end — every probe is a real Hub round-trip (bug-206)
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-9b0241ba epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2ma { probe: true } read is cache-exempt end-to-end — every probe is a real Hub round-trip (bug-206)
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-9b0241ba session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2ma { probe: true } read is cache-exempt end-to-end — every probe is a real Hub round-trip (bug-206)
+[22m[39m[McpAgentClient] [agent.session.state] session synchronizing → streaming | from=synchronizing to=streaming reason=undef
+[McpAgentClient] [agent.sync.complete] [StateSync] Sync complete — now streaming
+
+[90mstdout[2m | test/integration/cognitive-integration.test.ts[2m > [22m[2mMcpAgentClient cognitive integration[2m > [22m[2ma { probe: true } read is cache-exempt end-to-end — every probe is a real Hub round-trip (bug-206)
+[22m[39m[McpAgentClient] [agent.session.state] session streaming → disconnected | from=streaming to=disconnected reason=undef
+
+ [32m✓[39m test/integration/cognitive-integration.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 391[2mms[22m[39m
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mHandshake — labels flow through register_role[2m > [22m[2mstamps labels on Agent entity when provided
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-609d612b
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mHandshake — labels flow through register_role[2m > [22m[2mstamps labels on Agent entity when provided
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-609d612b identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mHandshake — labels flow through register_role[2m > [22m[2mstamps labels on Agent entity when provided
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-609d612b epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mHandshake — labels flow through register_role[2m > [22m[2mstamps labels on Agent entity when provided
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-609d612b session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mHandshake — labels flow through register_role[2m > [22m[2mpersists empty labels when none are provided (legacy broadcast)
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-5fe0a463
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mHandshake — labels flow through register_role[2m > [22m[2mpersists empty labels when none are provided (legacy broadcast)
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-5fe0a463 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mHandshake — labels flow through register_role[2m > [22m[2mpersists empty labels when none are provided (legacy broadcast)
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-5fe0a463 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mHandshake — labels flow through register_role[2m > [22m[2mpersists empty labels when none are provided (legacy broadcast)
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-5fe0a463 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mlabeled broadcast thread from {env:prod} architect reaches only {env:prod} engineer
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-2bc4399d
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mlabeled broadcast thread from {env:prod} architect reaches only {env:prod} engineer
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-2bc4399d identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mlabeled broadcast thread from {env:prod} architect reaches only {env:prod} engineer
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-2bc4399d epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mlabeled broadcast thread from {env:prod} architect reaches only {env:prod} engineer
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-2bc4399d session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mlabeled broadcast thread from {env:prod} architect reaches only {env:prod} engineer
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-afa3bb23
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mlabeled broadcast thread from {env:prod} architect reaches only {env:prod} engineer
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-afa3bb23 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mlabeled broadcast thread from {env:prod} architect reaches only {env:prod} engineer
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-afa3bb23 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mlabeled broadcast thread from {env:prod} architect reaches only {env:prod} engineer
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-afa3bb23 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mlabeled broadcast thread from {env:prod} architect reaches only {env:prod} engineer
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-2f15f78f
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mlabeled broadcast thread from {env:prod} architect reaches only {env:prod} engineer
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-2f15f78f identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mlabeled broadcast thread from {env:prod} architect reaches only {env:prod} engineer
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-2f15f78f epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mlabeled broadcast thread from {env:prod} architect reaches only {env:prod} engineer
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-2f15f78f session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mlabeled broadcast thread from {env:prod} architect reaches only {env:prod} engineer
+[22m[39m[ThreadRepositorySubstrate] Thread opened: thread-1 — Prod-only thread
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mempty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-a3cfa2f8
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mempty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-a3cfa2f8 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mempty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-a3cfa2f8 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mempty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-a3cfa2f8 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mempty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-94ce84a6
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mempty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-94ce84a6 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mempty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-94ce84a6 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mempty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-94ce84a6 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mempty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-287bcb18
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mempty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-287bcb18 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mempty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-287bcb18 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mempty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-287bcb18 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mempty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-f8f6a883
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mempty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-f8f6a883 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mempty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-f8f6a883 epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mempty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-f8f6a883 session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mDispatch — selector matches only labeled Agents[2m > [22m[2mempty matchLabels broadcasts to all role-matching Agents (INV-SYS-L09)
+[22m[39m[ThreadRepositorySubstrate] Thread opened: thread-1 — Unlabeled broadcast
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mImmutability — INV-AG1[2m > [22m[2mre-registering with different labels does not rewrite Agent.labels
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-45d6560e
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mImmutability — INV-AG1[2m > [22m[2mre-registering with different labels does not rewrite Agent.labels
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-45d6560e identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mImmutability — INV-AG1[2m > [22m[2mre-registering with different labels does not rewrite Agent.labels
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-45d6560e epoch=1 (trigger=first_tool_call)
+
+[90mstdout[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mImmutability — INV-AG1[2m > [22m[2mre-registering with different labels does not rewrite Agent.labels
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_implicit_claim: Agent agent-45d6560e session implicitly claimed (trigger=first_tool_call, epoch=
+
+[90mstderr[2m | test/integration/label-routing.test.ts[2m > [22m[2mMission-19 — label routing (loopback E2E)[2m > [22m[2mImmutability — INV-AG1[2m > [22m[2mre-registering with different labels does not rewrite Agent.labels
+[22m[39m[session-policy] register_role(bare) received labels={"env":"smoke"} on sessionId=policy-loopback-2 role=engineer but labels are only persisted via the enriched M18 handshake (globalInstanceId + clientMetadata). Dropping labels — caller will default to broadcast dispatch.
+
+ [32m✓[39m test/integration/label-routing.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 359[2mms[22m[39m
+ [32m✓[39m test/integration/invariant-gaps.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 108[2mms[22m[39m
+ [32m✓[39m test/tool-surface-oracle-s2b.test.ts [2m([22m[2m7 tests[22m[2m)[22m[32m 264[2mms[22m[39m
+ [32m✓[39m test/unit/poll-backstop.test.ts [2m([22m[2m23 tests[22m[2m)[22m[32m 123[2mms[22m[39m
+ [32m✓[39m test/integration/sync-phase-rpcs.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 27[2mms[22m[39m
+ [32m✓[39m test/integration/injection-ack.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 178[2mms[22m[39m
+[90mstdout[2m | test/integration/real-cli-n4-work-surface.test.ts[2m > [22m[2mreal-cli n4 — test-Hub-with-work serves a claimable -> completable item via the real router[2m > [22m[2mdrives register_role -> claim_session -> get_agents -> list_ready_work -> claim -> start -> renew -> complete -> done
+[22m[39m[WorkItemRepositorySubstrate] WorkItem created: work-1 (type=task, roles=[engineer])
+
+[90mstdout[2m | test/integration/real-cli-n4-work-surface.test.ts[2m > [22m[2mreal-cli n4 — test-Hub-with-work serves a claimable -> completable item via the real router[2m > [22m[2mdrives register_role -> claim_session -> get_agents -> list_ready_work -> claim -> start -> renew -> complete -> done
+[22m[39m[AgentRepositorySubstrate] Agent identity asserted (created): agent-4a1b5ad9
+
+[90mstdout[2m | test/integration/real-cli-n4-work-surface.test.ts[2m > [22m[2mreal-cli n4 — test-Hub-with-work serves a claimable -> completable item via the real router[2m > [22m[2mdrives register_role -> claim_session -> get_agents -> list_ready_work -> claim -> start -> renew -> complete -> done
+[22m[39m[AuditRepositorySubstrate] hub/agent_identity_asserted: Agent agent-4a1b5ad9 identity asserted (wasCreated=true)
+
+[90mstdout[2m | test/integration/real-cli-n4-work-surface.test.ts[2m > [22m[2mreal-cli n4 — test-Hub-with-work serves a claimable -> completable item via the real router[2m > [22m[2mdrives register_role -> claim_session -> get_agents -> list_ready_work -> claim -> start -> renew -> complete -> done
+[22m[39m[AgentRepositorySubstrate] Agent session claimed: agent-4a1b5ad9 epoch=1 (trigger=explicit)
+
+[90mstdout[2m | test/integration/real-cli-n4-work-surface.test.ts[2m > [22m[2mreal-cli n4 — test-Hub-with-work serves a claimable -> completable item via the real router[2m > [22m[2mdrives register_role -> claim_session -> get_agents -> list_ready_work -> claim -> start -> renew -> complete -> done
+[22m[39m[AuditRepositorySubstrate] hub/agent_session_claimed: Agent agent-4a1b5ad9 session claimed (trigger=explicit, epoch=1)
+
+[90mstdout[2m | test/integration/real-cli-n4-work-surface.test.ts[2m > [22m[2mreal-cli n4 — test-Hub-with-work serves a claimable -> completable item via the real router[2m > [22m[2mdrives register_role -> claim_session -> get_agents -> list_ready_work -> claim -> start -> renew -> complete -> done
+[22m[39m[WorkItemRepositorySubstrate] WorkItem work-1 → claimed
+
+[90mstdout[2m | test/integration/real-cli-n4-work-surface.test.ts[2m > [22m[2mreal-cli n4 — test-Hub-with-work serves a claimable -> completable item via the real router[2m > [22m[2mdrives register_role -> claim_session -> get_agents -> list_ready_work -> claim -> start -> renew -> complete -> done
+[22m[39m[WorkItemRepositorySubstrate] WorkItem work-1 → in_progress
+
+[90mstdout[2m | test/integration/real-cli-n4-work-surface.test.ts[2m > [22m[2mreal-cli n4 — test-Hub-with-work serves a claimable -> completable item via the real router[2m > [22m[2mdrives register_role -> claim_session -> get_agents -> list_ready_work -> claim -> start -> renew -> complete -> done
+[22m[39m[WorkItemRepositorySubstrate] WorkItem work-1 → in_progress
+
+[90mstdout[2m | test/integration/real-cli-n4-work-surface.test.ts[2m > [22m[2mreal-cli n4 — test-Hub-with-work serves a claimable -> completable item via the real router[2m > [22m[2mdrives register_role -> claim_session -> get_agents -> list_ready_work -> claim -> start -> renew -> complete -> done
+[22m[39m[WorkItemRepositorySubstrate] WorkItem work-1 → done
+
+ [32m✓[39m test/integration/real-cli-n4-work-surface.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 215[2mms[22m[39m
+ [32m✓[39m test/unit/dispatcher-tick-drive.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 129[2mms[22m[39m
+ [32m✓[39m test/tool-surface-propagation-conformance.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 103[2mms[22m[39m
+ [32m✓[39m test/unit/dispatcher-router-integration.test.ts [2m([22m[2m31 tests[22m[2m)[22m[32m 68[2mms[22m[39m
+ [32m✓[39m test/unit/dispatcher-idle-gate.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 52[2mms[22m[39m
+ [32m✓[39m test/skills-set-diff-gate.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 45[2mms[22m[39m
+ [32m✓[39m test/unit/poll-backstop-jitter.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 85[2mms[22m[39m
+ [32m✓[39m test/skill-actuator.test.ts [2m([22m[2m12 tests[22m[2m)[22m[32m 120[2mms[22m[39m
+ [32m✓[39m test/unit/handshake.test.ts [2m([22m[2m34 tests[22m[2m)[22m[32m 84[2mms[22m[39m
+ [32m✓[39m test/unit/state-sync-admission.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m test/skills-seed-bin.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 60[2mms[22m[39m
+ [32m✓[39m test/unit/deferred-backlog.test.ts [2m([22m[2m19 tests[22m[2m)[22m[32m 76[2mms[22m[39m
+ [32m✓[39m test/unit/host-wiring-assertion.test.ts [2m([22m[2m10 tests[22m[2m)[22m[32m 75[2mms[22m[39m
+ [32m✓[39m test/tool-surface-reconciler-repair.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 42[2mms[22m[39m
+ [32m✓[39m test/unit/work-lease-tracker.test.ts [2m([22m[2m13 tests[22m[2m)[22m[32m 33[2mms[22m[39m
+ [32m✓[39m test/skills-manifest.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m test/unit/prompt-format-message-arrived.test.ts [2m([22m[2m11 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m test/unit/claimable-digest-tracker.test.ts [2m([22m[2m16 tests[22m[2m)[22m[32m 51[2mms[22m[39m
+ [32m✓[39m test/unit/harness-manifest.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 28[2mms[22m[39m
+ [32m✓[39m test/unit/liveness-watchdog.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m test/unit/health-revision.test.ts [2m([22m[2m9 tests[22m[2m)[22m[32m 22[2mms[22m[39m
+ [32m✓[39m test/unit/prompt-format-mission-63-w3.test.ts [2m([22m[2m17 tests[22m[2m)[22m[32m 43[2mms[22m[39m
+ [32m✓[39m test/unit/dispatch-transient-drop.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 20[2mms[22m[39m
+ [32m✓[39m test/unit/slot-gate.test.ts [2m([22m[2m4 tests[22m[2m)[22m[32m 11[2mms[22m[39m
+ [32m✓[39m test/integration/register-role-payload.test.ts [2m([22m[2m1 test[22m[2m)[22m[32m 41[2mms[22m[39m
+ [32m✓[39m test/control-plane-reconcile.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m test/unit/liveness-signal.test.ts [2m([22m[2m3 tests[22m[2m)[22m[32m 19[2mms[22m[39m
+ [32m✓[39m test/unit/prompt-format-idea-353.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 15[2mms[22m[39m
+ [32m✓[39m test/control-plane-import-boundary.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m test/unit/prompt-format-thread-message-truncation.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 17[2mms[22m[39m
+ [32m✓[39m test/unit/reconnect-backoff.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 12[2mms[22m[39m
+ [32m✓[39m test/harness-config-dir.test.ts [2m([22m[2m6 tests[22m[2m)[22m[32m 13[2mms[22m[39m
+ [32m✓[39m test/unit/tool-manager-contracts.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 10[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m47 passed[39m[22m[90m (47)[39m
+[2m      Tests [22m [1m[32m382 passed[39m[22m[90m (382)[39m
+[2m   Start at [22m 04:44:06
+[2m   Duration [22m 111.31s[2m (transform 4.50s, setup 0ms, import 30.26s, tests 57.43s, environment 13ms)[22m
+
+
+exitCode=0

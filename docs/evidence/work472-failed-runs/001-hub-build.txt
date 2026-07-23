@@ -1,0 +1,12 @@
+
+> hub@1.0.0 build
+> tsc && cp -r src/storage-substrate/migrations dist/storage-substrate/
+
+sh: tsc: command not found
+npm error Lifecycle script `build` failed with error:
+npm error code 127
+npm error path /home/apnex/taceng/agentic-network-drew-bug343-aggregate/hub
+npm error workspace hub@1.0.0
+npm error location /home/apnex/taceng/agentic-network-drew-bug343-aggregate/hub
+npm error command failed
+npm error command sh -c tsc && cp -r src/storage-substrate/migrations dist/storage-substrate/

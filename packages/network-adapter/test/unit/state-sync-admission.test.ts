@@ -59,9 +59,13 @@ describe("bug-343 reconnect state-sync admission", () => {
         if (name === "get_pending_actions") {
           return {
             totalPending: null,
-            visiblePending: 500,
+            visiblePending: null,
             truncated: true,
-            retrieval: { complete: false, truncated: true },
+            retrieval: {
+              complete: false,
+              truncated: true,
+              reason: "aggregate_snapshot_retry_exhausted",
+            },
           };
         }
         if (name === "drain_pending_actions") return { items: [] };
@@ -69,7 +73,7 @@ describe("bug-343 reconnect state-sync admission", () => {
       },
     });
 
-    expect(log.has("INCOMPLETE — visible=500")).toBe(true);
+    expect(log.has("INCOMPLETE — visible=unknown; reason=aggregate_snapshot_retry_exhausted")).toBe(true);
     expect(log.has("Pending actions: 0")).toBe(false);
   });
 });

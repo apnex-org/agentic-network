@@ -11,131 +11,284 @@ import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import { RECENT_DETAILS_CAP } from "../observability/metrics.js";
 import { systemClock } from "../entities/clock.js";
+import type { PendingActionItem } from "../entities/pending-action.js";
+import type { CompleteListPageInfo, CompleteListResult } from "../storage-substrate/complete-list.js";
+import type { Proposal, Thread } from "../state.js";
 
 // ── Handlers ────────────────────────────────────────────────────────
 
-async function getPendingActions(_args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
-  // work-162 (A1): Task subsystem retired — the task-derived dimensions
-  // (unreadReports / unreviewedTasks / clarificationsPending / orphanedReviews /
-  // escalatedTasks) are dropped. This aggregator now surfaces proposals + threads.
-  //
-  // bug-343: every reconnect dimension is pushed to the substrate. The old
-  // implementation fetched the first 500 proposals, first 500 threads, and every
-  // queue item for the caller, then filtered in memory. Combined with list()'s
-  // former substrate-wide MAX(resource_version), concurrent reconnects became a
-  // whole-entity scan stampede. Keep these reads sequential (one admitted list
-  // per reconnect) and index-addressable by kind/status/turn/target.
+/** Whole-aggregate retries are bounded so reconnect churn cannot amplify forever. */
+export const GET_PENDING_ACTIONS_MAX_SNAPSHOT_ATTEMPTS = 3;
 
-  // idea-117 Phase 2c ckpt-B — suppress legacy-path re-triggers when a
-  // thread already has a non-terminal queue item for the caller. The
-  // architect's EventLoop consumes `threadsAwaitingReply` as a legacy
-  // backup path, independent of the ADR-017 queue.
-  const callerAgent = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
-  const inFlightThreadIds = new Set<string>();
-  const callerQueue = callerAgent
-    ? await ctx.stores.pendingAction.listForAgentComplete(callerAgent.id, {
-        states: ["enqueued", "receipt_acked"],
-      })
-    : unavailableCallerResult();
-  for (const item of callerQueue.items) {
-    if (item.dispatchType === "thread_message") inFlightThreadIds.add(item.entityRef);
-  }
+type PendingAggregateSources = {
+  inFlightPendingActions: CompleteListPageInfo;
+  pendingProposals: CompleteListPageInfo;
+  approvedProposals: CompleteListPageInfo;
+  activeArchitectThreads: CompleteListPageInfo;
+  convergedThreads: CompleteListPageInfo;
+};
 
-  // bug-343 successor: each dimension is reconstructed through stable id-ordered
-  // pages. Every page must share one high-water revision; concurrent drift or the
-  // 10k safety ceiling returns an explicit incomplete receipt rather than a false
-  // 500-row exact count.
-  const pendingProposalResult = await ctx.stores.proposal.getProposalsComplete("submitted");
-  const approvedProposalResult = await ctx.stores.proposal.getProposalsComplete("approved");
-  const activeArchitectThreadResult = await ctx.stores.thread.listThreadsComplete("active", {
-    currentTurn: "architect",
+interface PendingAggregateAttempt {
+  callerQueue: CompleteListResult<PendingActionItem>;
+  pendingProposalResult: CompleteListResult<Proposal>;
+  approvedProposalResult: CompleteListResult<Proposal>;
+  activeArchitectThreadResult: CompleteListResult<Thread>;
+  convergedThreadResult: CompleteListResult<Thread>;
+  sources: PendingAggregateSources;
+  snapshotRevision: string;
+  complete: boolean;
+  retryableDrift: boolean;
+}
+
+interface PendingAggregateAttemptReceipt {
+  attempt: number;
+  anchorRevision: string;
+  complete: boolean;
+  retryableDrift: boolean;
+  observedRevisions: Record<keyof PendingAggregateSources, string>;
+  reasons: Record<keyof PendingAggregateSources, string | null>;
+}
+
+async function readPendingAggregateAttempt(
+  ctx: IPolicyContext,
+  callerAgentId: string,
+): Promise<PendingAggregateAttempt> {
+  // The queue is the aggregate anchor because its thread-message ids suppress
+  // the later Thread dimension. Every later dimension MUST join this exact
+  // high-water or return snapshot_changed before accepting rows.
+  const callerQueue = await ctx.stores.pendingAction.listForAgentComplete(callerAgentId, {
+    states: ["enqueued", "receipt_acked"],
   });
-  const convergedThreadResult = await ctx.stores.thread.listThreadsComplete("converged");
-  const pendingProposals = pendingProposalResult.items;
-  const approvedProposals = approvedProposalResult.items;
-  const activeArchitectThreads = activeArchitectThreadResult.items;
-  const convergedThreads = convergedThreadResult.items;
-
-  // Threads awaiting Architect reply — excluding threads already in-flight via
-  // the queue (Phase 2c ckpt-B, see note above).
-  const threadsAwaitingArchitect = activeArchitectThreads.filter(
-    (t) => !inFlightThreadIds.has(t.id)
+  const snapshotRevision = callerQueue.pageInfo.snapshotRevision;
+  const pendingProposalResult = await ctx.stores.proposal.getProposalsComplete(
+    "submitted",
+    snapshotRevision,
   );
-
-  // ── Anomalous States Detection ──────────────────────────────────
-  // Dangling proposals: approved but no scaffold result and has execution plan.
-  const danglingProposals = approvedProposals.filter(
-    (p) => p.executionPlan && !p.scaffoldResult
+  const approvedProposalResult = await ctx.stores.proposal.getProposalsComplete(
+    "approved",
+    snapshotRevision,
   );
-
-  const anomalyCount = danglingProposals.length;
-  const sources = {
+  const activeArchitectThreadResult = await ctx.stores.thread.listThreadsComplete(
+    "active",
+    { currentTurn: "architect" },
+    snapshotRevision,
+  );
+  const convergedThreadResult = await ctx.stores.thread.listThreadsComplete(
+    "converged",
+    undefined,
+    snapshotRevision,
+  );
+  const sources: PendingAggregateSources = {
     inFlightPendingActions: callerQueue.pageInfo,
     pendingProposals: pendingProposalResult.pageInfo,
     approvedProposals: approvedProposalResult.pageInfo,
     activeArchitectThreads: activeArchitectThreadResult.pageInfo,
     convergedThreads: convergedThreadResult.pageInfo,
   };
-  const complete = Object.values(sources).every((source) => source.complete);
-  const visiblePending =
-    pendingProposals.length +
-    threadsAwaitingArchitect.length +
-    convergedThreads.length;
+  const complete = Object.values(sources).every(
+    (source) => source.complete && source.snapshotRevision === snapshotRevision,
+  );
+  const hasNonDriftIncomplete = Object.values(sources).some(
+    (source) => !source.complete && source.reason !== "snapshot_changed",
+  );
+  return {
+    callerQueue,
+    pendingProposalResult,
+    approvedProposalResult,
+    activeArchitectThreadResult,
+    convergedThreadResult,
+    sources,
+    snapshotRevision,
+    complete,
+    retryableDrift: !hasNonDriftIncomplete
+      && Object.values(sources).some((source) => source.reason === "snapshot_changed"),
+  };
+}
 
-  const summary = {
-    // A number is emitted only when every source dimension is complete. During
-    // snapshot churn/safety truncation, null + visiblePending + retrieval makes
-    // the uncertainty machine-readable and impossible to mistake for exactness.
-    totalPending: complete ? visiblePending : null,
+function attemptReceipt(
+  attempt: PendingAggregateAttempt,
+  attemptNumber: number,
+): PendingAggregateAttemptReceipt {
+  return {
+    attempt: attemptNumber,
+    anchorRevision: attempt.snapshotRevision,
+    complete: attempt.complete,
+    retryableDrift: attempt.retryableDrift,
+    observedRevisions: Object.fromEntries(
+      Object.entries(attempt.sources).map(([key, source]) => [key, source.observedRevision]),
+    ) as Record<keyof PendingAggregateSources, string>,
+    reasons: Object.fromEntries(
+      Object.entries(attempt.sources).map(([key, source]) => [key, source.reason]),
+    ) as Record<keyof PendingAggregateSources, string | null>,
+  };
+}
+
+function result(content: unknown): PolicyResult {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(content, null, 2) }],
+  };
+}
+
+async function getPendingActions(_args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  // work-162 (A1): Task subsystem retired — the task-derived dimensions
+  // (unreadReports / unreviewedTasks / clarificationsPending / orphanedReviews /
+  // escalatedTasks) are dropped. This aggregator now surfaces proposals + threads.
+  //
+  // bug-343: every reconnect dimension is substrate-filtered, indexed, admitted,
+  // and read sequentially. work-470 made each dimension complete beyond 500;
+  // work-472 makes the OUTWARD aggregate coherent rather than combining five
+  // individually-complete dimensions from sequential database revisions.
+  const callerAgent = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
+  if (!callerAgent) {
+    const unavailable = unavailableCallerResult();
+    return result(failedPendingAggregate(
+      unavailable.pageInfo.snapshotRevision,
+      "caller_agent_unavailable",
+      { inFlightPendingActions: unavailable.pageInfo },
+      [],
+    ));
+  }
+
+  const attempts: PendingAggregateAttemptReceipt[] = [];
+  let lastAttempt: PendingAggregateAttempt | null = null;
+  for (let attemptNumber = 1; attemptNumber <= GET_PENDING_ACTIONS_MAX_SNAPSHOT_ATTEMPTS; attemptNumber++) {
+    const attempt = await readPendingAggregateAttempt(ctx, callerAgent.id);
+    lastAttempt = attempt;
+    attempts.push(attemptReceipt(attempt, attemptNumber));
+    if (attempt.complete) return result(successfulPendingAggregate(attempt, attempts));
+    if (!attempt.retryableDrift) {
+      return result(failedPendingAggregate(
+        attempt.snapshotRevision,
+        "aggregate_source_incomplete",
+        attempt.sources,
+        attempts,
+      ));
+    }
+  }
+
+  // Never return arrays/counts assembled from the final mixed attempt. On
+  // sustained writes the failure is intentionally actionless and machine-loud;
+  // reconnect can retry later without acting on a state that never existed.
+  return result(failedPendingAggregate(
+    lastAttempt?.snapshotRevision ?? "unavailable:no-attempt",
+    "aggregate_snapshot_retry_exhausted",
+    lastAttempt?.sources ?? {},
+    attempts,
+  ));
+}
+
+function successfulPendingAggregate(
+  attempt: PendingAggregateAttempt,
+  attempts: PendingAggregateAttemptReceipt[],
+): Record<string, unknown> {
+  const inFlightThreadIds = new Set<string>();
+  for (const item of attempt.callerQueue.items) {
+    if (item.dispatchType === "thread_message") inFlightThreadIds.add(item.entityRef);
+  }
+  const pendingProposals = attempt.pendingProposalResult.items;
+  const approvedProposals = attempt.approvedProposalResult.items;
+  const activeArchitectThreads = attempt.activeArchitectThreadResult.items;
+  const convergedThreads = attempt.convergedThreadResult.items;
+  const threadsAwaitingArchitect = activeArchitectThreads.filter(
+    (thread) => !inFlightThreadIds.has(thread.id),
+  );
+  const danglingProposals = approvedProposals.filter(
+    (proposal) => proposal.executionPlan && !proposal.scaffoldResult,
+  );
+  const visiblePending = pendingProposals.length + threadsAwaitingArchitect.length + convergedThreads.length;
+
+  return {
+    totalPending: visiblePending,
     visiblePending,
-    truncated: !complete,
+    truncated: false,
+    complete: true,
+    snapshotRevision: attempt.snapshotRevision,
     retrieval: {
-      complete,
-      truncated: !complete,
-      dimensions: sources,
+      complete: true,
+      truncated: false,
+      reason: null,
+      aggregateSnapshot: {
+        snapshotRevision: attempt.snapshotRevision,
+        attemptsUsed: attempts.length,
+        retries: attempts.length - 1,
+        maxAttempts: GET_PENDING_ACTIONS_MAX_SNAPSHOT_ATTEMPTS,
+        attempts,
+      },
+      dimensions: attempt.sources,
       derivedCounts: {
         pendingProposals: pendingProposals.length,
         threadsAwaitingReply: threadsAwaitingArchitect.length,
         convergedThreads: convergedThreads.length,
         danglingProposals: danglingProposals.length,
-        totalPending: complete ? visiblePending : null,
+        totalPending: visiblePending,
       },
     },
-    pendingProposals: pendingProposals.map((p) => ({
-      proposalId: p.id,
-      title: p.title,
-      summary: p.summary,
-      proposalRef: p.proposalRef,
+    pendingProposals: pendingProposals.map((proposal) => ({
+      proposalId: proposal.id,
+      title: proposal.title,
+      summary: proposal.summary,
+      proposalRef: proposal.proposalRef,
     })),
-    threadsAwaitingReply: threadsAwaitingArchitect.map((t) => ({
-      threadId: t.id,
-      title: t.title,
-      roundCount: t.roundCount,
-      outstandingIntent: t.outstandingIntent,
+    threadsAwaitingReply: threadsAwaitingArchitect.map((thread) => ({
+      threadId: thread.id,
+      title: thread.title,
+      roundCount: thread.roundCount,
+      outstandingIntent: thread.outstandingIntent,
     })),
-    convergedThreads: convergedThreads.map((t) => ({
-      threadId: t.id,
-      title: t.title,
-      outstandingIntent: t.outstandingIntent,
+    convergedThreads: convergedThreads.map((thread) => ({
+      threadId: thread.id,
+      title: thread.title,
+      outstandingIntent: thread.outstandingIntent,
     })),
-    // Anomalous States — state inconsistencies requiring intervention
     anomalies: {
-      count: anomalyCount,
-      danglingProposals: danglingProposals.map((p) => ({
-        proposalId: p.id,
-        title: p.title,
+      count: danglingProposals.length,
+      danglingProposals: danglingProposals.map((proposal) => ({
+        proposalId: proposal.id,
+        title: proposal.title,
         message: "Proposal approved with execution plan but scaffolding did not complete.",
       })),
     },
   };
+}
 
+function failedPendingAggregate(
+  snapshotRevision: string,
+  reason: "caller_agent_unavailable" | "aggregate_source_incomplete" | "aggregate_snapshot_retry_exhausted",
+  dimensions: Partial<PendingAggregateSources>,
+  attempts: PendingAggregateAttemptReceipt[],
+): Record<string, unknown> {
   return {
-    content: [
-      {
-        type: "text" as const,
-        text: JSON.stringify(summary, null, 2),
+    totalPending: null,
+    visiblePending: null,
+    truncated: true,
+    complete: false,
+    snapshotRevision: null,
+    retrieval: {
+      complete: false,
+      truncated: true,
+      reason,
+      retryable: reason === "aggregate_snapshot_retry_exhausted",
+      aggregateSnapshot: {
+        snapshotRevision: null,
+        lastAnchorRevision: snapshotRevision,
+        attemptsUsed: attempts.length,
+        retries: Math.max(0, attempts.length - 1),
+        maxAttempts: GET_PENDING_ACTIONS_MAX_SNAPSHOT_ATTEMPTS,
+        attempts,
       },
-    ],
+      dimensions,
+      derivedCounts: {
+        pendingProposals: null,
+        threadsAwaitingReply: null,
+        convergedThreads: null,
+        danglingProposals: null,
+        totalPending: null,
+      },
+    },
+    pendingProposals: [],
+    threadsAwaitingReply: [],
+    convergedThreads: [],
+    anomalies: { count: null, danglingProposals: [] },
   };
 }
 
@@ -157,6 +310,8 @@ function unavailableCallerResult() {
       pagesRead: 0,
       pageSize: 500,
       snapshotRevision: "unavailable:no-caller-agent",
+      expectedRevision: null,
+      observedRevision: "unavailable:no-caller-agent",
       nextOffset: 0,
       reason: "caller_agent_unavailable",
     },
@@ -210,7 +365,7 @@ async function getNow(_args: Record<string, unknown>, ctx: IPolicyContext): Prom
 export function registerSystemPolicy(router: PolicyRouter): void {
   router.register(
     "get_pending_actions",
-    "[Architect] Get a truncation-honest summary of all items requiring Architect attention: pending proposals, active threads awaiting Architect reply, and converged threads awaiting closure (plus dangling-proposal anomalies). Every Proposal/Thread/PendingAction dimension is reconstructed with stable paging beyond 500; retrieval dimensions expose exact counts when complete or loud truncation + nextOffset/reason when snapshot drift or the safety ceiling prevents completeness. totalPending is null rather than falsely exact when any source is incomplete. Designed for autonomous event loop polling. (work-162/A3: the Task-derived dimensions — unread reports, unreviewed/escalated tasks, task clarifications — were retired with the Task subsystem; the inbox is now WorkItem-native, so its terminal-legacy-Task noise is gone by construction.)",
+    "[Architect] Get a truncation-honest, aggregate-snapshot-coherent summary of all items requiring Architect attention: pending proposals, active threads awaiting Architect reply, and converged threads awaiting closure (plus dangling-proposal anomalies). Every Proposal/Thread/PendingAction dimension is reconstructed with stable paging beyond 500 AND fenced to one queue-anchored substrate high-water. Cross-dimension drift retries the whole aggregate up to 3 times; sustained drift fails actionless and loud with reason=aggregate_snapshot_retry_exhausted, exact totals=null, empty action arrays, and per-attempt revisions. Per-dimension safety/incompleteness is likewise loud. Designed for autonomous event loop polling. (work-162/A3: the Task-derived dimensions — unread reports, unreviewed/escalated tasks, task clarifications — were retired with the Task subsystem; the inbox is now WorkItem-native, so its terminal-legacy-Task noise is gone by construction.)",
     {},
     getPendingActions,
   );
