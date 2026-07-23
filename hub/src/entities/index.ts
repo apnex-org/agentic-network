@@ -46,6 +46,7 @@ export { SubstrateCounter } from "./substrate-counter.js";
 // primitives. Persistent revision storage and mutation verbs land in later slices.
 export * from "./work-item-contract-v4.js";
 export * from "./work-revision-storage-v4.js";
+export * from "./workgraph-currentness-fence-v4.js";
 
 export type { Bug, BugStatus, BugSeverity, IBugStore, CascadeBacklink as BugCascadeBacklink } from "./bug.js";
 export { BugRepositorySubstrate } from "./bug-repository-substrate.js";

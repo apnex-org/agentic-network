@@ -381,7 +381,7 @@ export interface DriverLivenessWatchdogSweeperOptions {
 }
 
 export interface DriverLivenessWatchdogSweeperDeps {
-  workItem: Pick<import("../entities/work-item.js").IWorkItemStore, "listWorkItems" | "getWorkItem" | "getNextAction">;
+  workItem: Pick<import("../entities/work-item.js").IWorkItemStore, "listWorkItems" | "getWorkItem" | "getNextAction" | "withTopologyReadPin">;
   message: Pick<import("../entities/message.js").IMessageStore, "createMessage">;
   engineerRegistry: Pick<import("../state.js").IEngineerRegistry, "getAgent">;
   dispatch?: (event: string, data: Record<string, unknown>, selector: Selector) => Promise<void>;
@@ -426,11 +426,12 @@ export class DriverLivenessWatchdogSweeper {
     if (this.running) return { evaluated: 0, warnings: 0, skipped: 0, truncatedCandidateScan: false };
     this.running = true;
     try {
-      const now = this.deps.now?.() ?? new Date().toISOString();
-      const { candidates, truncated } = await this.listCandidateDrivers();
-      let evaluated = 0;
-      let warnings = 0;
-      let skipped = 0;
+      const runPinned = async (): Promise<DriverLivenessWatchdogSweepResult> => {
+        const now = this.deps.now?.() ?? new Date().toISOString();
+        const { candidates, truncated } = await this.listCandidateDrivers();
+        let evaluated = 0;
+        let warnings = 0;
+        let skipped = 0;
 
       for (const driver of candidates) {
         const holder = driver.lease?.holder;
@@ -469,8 +470,12 @@ export class DriverLivenessWatchdogSweeper {
         warnings += 1;
       }
 
-      if (truncated) this.logger.warn("[DriverLivenessWatchdogSweeper] candidate scan hit a listWorkItems cap; warning coverage may be incomplete");
-      return { evaluated, warnings, skipped, truncatedCandidateScan: truncated };
+        if (truncated) this.logger.warn("[DriverLivenessWatchdogSweeper] candidate scan hit a listWorkItems cap; warning coverage may be incomplete");
+        return { evaluated, warnings, skipped, truncatedCandidateScan: truncated };
+      };
+      return this.deps.workItem.withTopologyReadPin
+        ? await this.deps.workItem.withTopologyReadPin(runPinned)
+        : await runPinned();
     } finally {
       this.running = false;
     }

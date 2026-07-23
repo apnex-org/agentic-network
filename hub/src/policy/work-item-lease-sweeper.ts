@@ -143,6 +143,12 @@ export class WorkItemLeaseSweeper {
    * escalated + quarantined out of the cycle.
    */
   async fullSweep(nowISO: string): Promise<WorkItemLeaseSweepResult> {
+    return typeof this.store.withTopologyReadPin === "function"
+      ? this.store.withTopologyReadPin(() => this.fullSweepPinned(nowISO))
+      : this.fullSweepPinned(nowISO); // narrow legacy/test doubles preserve pre-head behavior
+  }
+
+  private async fullSweepPinned(nowISO: string): Promise<WorkItemLeaseSweepResult> {
     const result: WorkItemLeaseSweepResult = { scanned: 0, requeued: 0, abandoned: 0, failedSealed: 0, skipped: 0, errors: 0, quarantined: 0, agentsQuarantined: 0 };
     const ctx = this.contextProvider.forSweeper();
 

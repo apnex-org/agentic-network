@@ -9,6 +9,7 @@ import {
   failedGateStateHash,
 } from "../work-item-repository-substrate.js";
 import { projectPendingFailedSealNotices, type FailedGateProjectorTraceEntry } from "../../policy/failed-gate-notice-projector.js";
+import { WorkRevisionStorageRepositoryV4, buildWorkRevisionStorageV4 } from "../work-revision-storage-v4.js";
 import type { IPolicyContext } from "../../policy/types.js";
 
 const EXEC: EvidenceRequirement = { id: "exec", kind: "freeform" };
@@ -62,6 +63,61 @@ function policyContext(message: MessageRepositorySubstrate): IPolicyContext {
 }
 
 describe("failed-gate-seal-v2", () => {
+  it("keeps a persist-first exact-holder notice projectable after the failed row becomes historical", async () => {
+    const { substrate, repo, workId } = await fixture();
+    await repo.attestEvidence(workId, "seal", VERIFIER, "fail", EVIDENCE_REFS);
+    const failed = (await repo.getWorkItem(workId))!;
+    const storage = new WorkRevisionStorageRepositoryV4(substrate);
+    const first = buildWorkRevisionStorageV4({
+      workItems: [failed],
+      boundReferencesByPhysicalId: { [workId]: [] },
+      familyScopesByPhysicalId: { [workId]: { kind: "mission", id: "mission-failed-seal" } },
+      generation: 1, previousGeneration: 0, operationId: "failed-history-1", createdAt: "2026-07-23T15:00:00.000Z",
+    });
+    await storage.persistPrepared(first);
+    await storage.migrateLegacyProjectedWorkItems(first);
+    await storage.activateGeneration(1, "failed-history-1", "2026-07-23T15:00:00.000Z");
+
+    const existingFamily = (await storage.getFamily(workId))!;
+    const allocation = await storage.allocateNextRevision({
+      logicalId: workId,
+      originPhysicalId: existingFamily.originPhysicalId,
+      originalCreatedBy: existingFamily.originalCreatedBy,
+      familyScope: existingFamily.familyScope,
+      createdAt: existingFamily.createdAt,
+    });
+    const successor = JSON.parse(JSON.stringify(failed)) as WorkItem;
+    for (const field of ["nodeContractHashVersion", "nodeContractHash", "nodeTopologyHashVersion", "nodeTopologyHash", "boundReferences", "localExecutionIdentity", "topologyGeneration"] as const) {
+      delete successor[field];
+    }
+    Object.assign(successor, {
+      id: `${workId}-repair-r2`, logicalId: workId, revision: 2, predecessorPhysicalId: workId,
+      runbook: "distinct repair revision", status: "ready", lease: null, evidence: [], blockedOn: null,
+      effectiveDisposition: null, failedGatePreClearReceipt: null, failedGateSeal: null,
+      failedSealNoticePending: false, pendingFailedSealNotices: [], attestations: {}, attestationHistory: [],
+      updatedAt: "2026-07-23T15:01:00.000Z",
+    });
+    const second = buildWorkRevisionStorageV4({
+      workItems: [successor],
+      boundReferencesByPhysicalId: { [successor.id]: [] },
+      familyScopesByPhysicalId: { [successor.id]: { kind: "mission", id: "mission-failed-seal" } },
+      existingFamiliesByLogicalId: { [workId]: allocation.family },
+      generation: 2, previousGeneration: 1, operationId: "failed-history-2", createdAt: "2026-07-23T15:01:00.000Z",
+    });
+    await storage.persistPrepared(second);
+    await storage.persistProjectedWorkItems(second);
+    await storage.activateGeneration(2, "failed-history-2", "2026-07-23T15:01:00.000Z");
+
+    const pending = await repo.listPendingFailedSealNoticeItems();
+    expect(pending.items.map((item) => item.id)).toContain(workId);
+    const intentId = failed.failedGateSeal!.holderNoticeIntentId;
+    expect(intentId).not.toBeNull();
+    await repo.markFailedSealNoticeProjected(workId, intentId!, "message-historical-fail");
+    const historical = (await repo.getWorkItem(workId))!;
+    expect(historical.failedSealNoticePending).toBe(false);
+    expect(historical.pendingFailedSealNotices?.[0]?.projectedMessageId).toBe("message-historical-fail");
+  });
+
   it("commits FAIL authority, exact pre-clear snapshot, cleanup, and holder intent in one successful CAS", async () => {
     const { substrate, repo, workId, token } = await fixture();
     const before = (await repo.getWorkItem(workId))!;

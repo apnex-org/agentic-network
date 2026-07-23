@@ -81,6 +81,8 @@ export const NODE_CONTRACT_V4_EXCLUDED_FIELDS = Object.freeze([
   "boundReferences",
   "localExecutionIdentity",
   "topologyGeneration",
+  "observedTopologyGeneration",
+  "observedTopologyHash",
   "recallHistory",
   "pendingRecallIntents",
   "createdBy",

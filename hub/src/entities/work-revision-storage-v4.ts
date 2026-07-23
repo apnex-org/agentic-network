@@ -252,6 +252,13 @@ function plainPersisted<T>(value: T): T {
   return JSON.parse(JSON.stringify(value)) as T;
 }
 
+function withoutTopologyObservation(item: WorkItem): WorkItem {
+  const persisted = plainPersisted(item);
+  delete persisted.observedTopologyGeneration;
+  delete persisted.observedTopologyHash;
+  return persisted;
+}
+
 function canonicalEqual(a: unknown, b: unknown): boolean {
   return canonicalJson(plainPersisted(a)) === canonicalJson(plainPersisted(b));
 }
@@ -420,7 +427,7 @@ export function buildWorkRevisionStorageV4(input: BuildWorkRevisionStorageInputV
   const logicalByPhysical = new Map<string, string>();
   const physicalByLogical = new Map<string, string>();
   for (const source of input.workItems) {
-    const item = plainPersisted(source);
+    const item = withoutTopologyObservation(source);
     assertNonEmpty(item.id, "WorkItem.id");
     assertNonEmpty(item.createdAt, `${item.id}.createdAt`);
     if (itemByPhysical.has(item.id)) fail("storage.duplicate", `physical WorkItem '${item.id}'`);
@@ -743,6 +750,9 @@ export function assertRevisionStorageIntegrityV4(snapshot: RevisionStorageSnapsh
       }
       if (item.logicalId && item.logicalId !== logicalId) fail("storage.integrity", `${binding.physicalId} logicalId mismatch`);
       if (item.revision && item.revision !== binding.revision) fail("storage.integrity", `${binding.physicalId} revision mismatch`);
+      if (item.topologyGeneration !== undefined && (!Number.isSafeInteger(item.topologyGeneration) || item.topologyGeneration <= 0 || item.topologyGeneration > generation.generation)) {
+        fail("storage.integrity", `${binding.physicalId} materialization generation mismatch`);
+      }
       if (item.nodeContractHash && item.nodeContractHash !== binding.nodeContractHash) fail("storage.integrity", `${binding.physicalId} contract hash mismatch`);
       if (item.nodeTopologyHash && item.nodeTopologyHash !== binding.nodeTopologyHash) fail("storage.integrity", `${binding.physicalId} topology hash mismatch`);
     }
@@ -997,14 +1007,36 @@ export class WorkRevisionStorageRepositoryV4 {
 
   /** Materialize new exact immutable physical rows that a candidate binding names. */
   async persistProjectedWorkItems(storage: BuiltWorkRevisionStorageV4): Promise<void> {
+    return withAdvisoryLock(this.substrate, LOCK_CLASS.workGraphGlobal, WORK_GRAPH_HEAD_ID, () =>
+      this.persistProjectedWorkItemsUnderLock(storage));
+  }
+
+  private async persistProjectedWorkItemsUnderLock(storage: BuiltWorkRevisionStorageV4): Promise<void> {
     for (const projection of storage.projections) {
       const row: WorkItem = {
         ...plainPersisted(projection.workItem),
         ...plainPersisted(projection.revisionFields),
         boundReferences: plainPersisted(projection.boundReferences),
         localExecutionIdentity: projection.localExecutionIdentity,
-        topologyGeneration: storage.generation.generation,
+        // The immutable physical row records its first materialization. A
+        // disconnected later head may retain this exact binding/local identity.
+        topologyGeneration: projection.workItem.topologyGeneration ?? storage.generation.generation,
       };
+      const existingRaw = await this.substrate.get<WorkItem>("WorkItem", row.id);
+      if (existingRaw) {
+        const existing = decodeRow(existingRaw, "WorkItem");
+        // Retaining an exact physical binding across a disconnected generation
+        // must not overwrite its live lifecycle row. Compare immutable identity;
+        // activation later recomputes the full contract/local identity fresh.
+        if (existing.logicalId !== row.logicalId || existing.revision !== row.revision ||
+            existing.nodeContractHashVersion !== row.nodeContractHashVersion || existing.nodeContractHash !== row.nodeContractHash ||
+            existing.nodeTopologyHashVersion !== row.nodeTopologyHashVersion || existing.nodeTopologyHash !== row.nodeTopologyHash ||
+            existing.localExecutionIdentity !== row.localExecutionIdentity || existing.topologyGeneration !== row.topologyGeneration ||
+            !canonicalEqual(existing.boundReferences ?? [], row.boundReferences ?? [])) {
+          fail("storage.immutable_conflict", `WorkItem/${row.id} retained binding has different immutable identity`);
+        }
+        continue;
+      }
       await this.immutablePut("WorkItem", row);
     }
   }
@@ -1015,13 +1047,18 @@ export class WorkRevisionStorageRepositoryV4 {
    * migration code guesses how to merge a moving row.
    */
   async migrateLegacyProjectedWorkItems(storage: BuiltWorkRevisionStorageV4): Promise<void> {
+    return withAdvisoryLock(this.substrate, LOCK_CLASS.workGraphGlobal, WORK_GRAPH_HEAD_ID, () =>
+      this.migrateLegacyProjectedWorkItemsUnderLock(storage));
+  }
+
+  private async migrateLegacyProjectedWorkItemsUnderLock(storage: BuiltWorkRevisionStorageV4): Promise<void> {
     for (const projection of storage.projections) {
       const target: WorkItem = {
         ...plainPersisted(projection.workItem),
         ...plainPersisted(projection.revisionFields),
         boundReferences: plainPersisted(projection.boundReferences),
         localExecutionIdentity: projection.localExecutionIdentity,
-        topologyGeneration: storage.generation.generation,
+        topologyGeneration: projection.workItem.topologyGeneration ?? storage.generation.generation,
       };
       for (let attempt = 0; attempt < 20; attempt += 1) {
         const row = await this.substrate.getWithRevision<WorkItem>("WorkItem", projection.physicalId);
@@ -1110,7 +1147,8 @@ export class WorkRevisionStorageRepositoryV4 {
       // row remains an exact historical binding but can never be reclassified by
       // a raw phase while activation is checking it.
       const failedSealed = isFailedGateSealed(item);
-      if (item.logicalId !== logicalId || item.revision !== binding.revision || item.topologyGeneration !== generation.generation ||
+      if (item.logicalId !== logicalId || item.revision !== binding.revision || !Number.isSafeInteger(item.topologyGeneration) ||
+          (item.topologyGeneration as number) <= 0 || (item.topologyGeneration as number) > generation.generation ||
           item.nodeContractHashVersion !== binding.nodeContractHashVersion || item.nodeContractHash !== binding.nodeContractHash ||
           item.nodeTopologyHashVersion !== binding.nodeTopologyHashVersion || item.nodeTopologyHash !== binding.nodeTopologyHash) {
         fail("storage.integrity", `bound physical WorkItem ${binding.physicalId} revision identity mismatch`);

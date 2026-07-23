@@ -67,6 +67,9 @@ export interface FrictionRollup {
 
 export interface StintProjection {
   arcId: string;
+  /** Mission-140: the one immutable topology snapshot this projection read. */
+  observedTopologyGeneration?: number;
+  observedTopologyHash?: string;
   arcStatus: WorkItemPhase;
   completion: { done: number; total: number; pending: string[] };
   /** tracks the ARC completion-gate (children>0): `total>0 && done===total` — complete_work would
@@ -104,6 +107,9 @@ export interface StintProjection {
  *  orders by priority + returns the head). Feeds W3's reconciler + cold-start "what next". */
 export interface NextActionProjection {
   arcId: string;
+  /** Mission-140: the one immutable topology snapshot this projection read. */
+  observedTopologyGeneration?: number;
+  observedTopologyHash?: string;
   /** the highest-priority READY child claimable by the (role, agentId); null when none. */
   nextAction: WorkItem | null;
   /** count of READY candidate children (the arc's RAW claimable scope — child-local, never
@@ -134,6 +140,9 @@ export interface LegalMove {
 }
 export interface LegalMoves {
   workId: string;
+  /** Mission-140: absent before topology activation; exact pinned head after activation. */
+  observedTopologyGeneration?: number;
+  observedTopologyHash?: string;
   status: WorkItemPhase;
   /** the caller holds this item's lease (gates the lease-bound verbs). */
   isHolder: boolean;
@@ -484,6 +493,9 @@ export interface WorkItem {
   boundReferences?: BoundWorkItemReferenceV4[];
   localExecutionIdentity?: string;
   topologyGeneration?: number;
+  /** Read-only projection provenance; never persisted as contract/lifecycle state. */
+  observedTopologyGeneration?: number;
+  observedTopologyHash?: string;
   // status (lifecycle)
   status: WorkItemPhase;
   lease: WorkItemLease | null;
@@ -640,6 +652,9 @@ export interface IWorkItemStore {
   deleteWorkItem(workId: string): Promise<void>;
 
   getWorkItem(workId: string): Promise<WorkItem | null>;
+
+  /** Mission-140: compose a multi-read integration under one immutable topology pin. */
+  withTopologyReadPin?<T>(fn: () => Promise<T>): Promise<T>;
 
   /** SEAL (idea-444) — record a verifier's server-stamped, load-bearing attestation against a
    *  `verifier-attestation` requirement. `verifierId` is the Hub-derived caller (the policy layer
