@@ -66,6 +66,10 @@ import { SpecStore, ReconcileLoop } from "@apnex/network-adapter";
 import { PiToolActuator } from "./hcap/tools/pi-tool-actuator.js";
 import { HubSpecSource } from "./hcap/tools/hub-spec-source.js";
 import { PiToolControlPlane } from "./hcap/tools/tool-control-plane.js";
+import {
+  CatalogHydrationController,
+  type CatalogHydrationIdentity,
+} from "./hcap/tools/catalog-hydration.js";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -132,6 +136,9 @@ let livenessWatchdog: LivenessWatchdog | null = null;
 // the declared spec from the live Hub catalog. Both null until connect.
 let controlPlane: PiToolControlPlane | null = null;
 let hubSpecSource: HubSpecSource | null = null;
+let catalogHydration: CatalogHydrationController | null = null;
+// Set only by a successful synchronous claim_session on the exact current wire.
+let claimedCatalogIdentity: CatalogHydrationIdentity | null = null;
 let currentRole = process.env.OIS_HUB_ROLE ?? "architect";
 let started = false;
 
@@ -176,8 +183,30 @@ function buildDispatchContext(d: SharedDispatcher): ToolDispatchContext {
     onCallStart: () => {},
     onCallEnd: () => {},
     onToolCallResult: undefined,
+    // Dynamic: returns false again on every reconnect/identity change. Existing
+    // registered Hub definitions then fail loud instead of dispatching through a
+    // stale or identity-less catalog.
+    getReadiness: () => catalogHydration?.getReadiness() ?? {
+      ready: false,
+      reason: "catalog hydration controller is not initialized",
+    },
     log,
   };
+}
+
+function getCurrentCatalogIdentity(): CatalogHydrationIdentity | null {
+  const adapter = hubAdapter;
+  const claimed = claimedCatalogIdentity;
+  if (!adapter?.isConnected || !claimed) return null;
+  const metrics = adapter.getMetrics();
+  if (
+    metrics.agentId !== claimed.agentId
+    || metrics.wireGeneration !== claimed.wireGeneration
+    || adapter.getSessionId() !== claimed.sessionId
+  ) {
+    return null;
+  }
+  return claimed;
 }
 
 function buildToolSurfaceReconciler(
@@ -277,8 +306,16 @@ async function connectAndSeed(
         // refreshes the declared spec; (2) sync converges the held spec onto pi's
         // running active-set every tick — repairing pi active-set drift even when the
         // Hub is unchanged (mission-106 F1 disk-repair loop, re-pointed at the spec).
-        await reconciler?.reconcile("heartbeat");
-        controlPlane?.sync("heartbeat");
+        const catalogReady = catalogHydration?.getReadiness().ready === true;
+        if (!catalogReady) {
+          // A failed bootstrap/reconnect hydration remains level-triggered even
+          // when the Hub revision did not change: retry against the current
+          // claimed identity+wire generation until a nonempty catalog installs.
+          await catalogHydration?.rehydrateCurrent("heartbeat-retry");
+        } else {
+          await reconciler?.reconcile("heartbeat");
+          controlPlane?.sync("heartbeat");
+        }
         // mission-99 slice (b): Tier-C swarm PULL on the SAME heartbeat tick
         // (spec §6 — no new timer; rides the F2 ±20% jitter for anti-stampede).
         // READ-ONLY (get_agents + role-scoped S4 reads); pushes into the footer
@@ -308,12 +345,11 @@ async function connectAndSeed(
   // forwards to the SAME notification hooks (bug-108 wake parity) in one call.
   const pendingActionItemHandler = d.makePendingActionItemHandler(notificationHooks);
 
-  // ── Eager-vs-lazy session-claim (mirror claude; OIS_EAGER_SESSION_CLAIM=1) ──
-  // Fire-and-log ONLY: pi's native tool path (tool-bridge → runToolDispatch) has no
-  // CallTool gate, so — unlike claude — there is NO sessionReady promise to thread; a
-  // failed eager claim is non-fatal (the Hub auto-claims lazily on first SSE-subscribe
-  // / first tools/call). `eagerWarmup` is captured here so the onHandshakeComplete
-  // closure below sees it.
+  // ── Claimed-session authority (bug-340 P0) ───────────────────────────
+  // Pi's native catalog must never hydrate from an asserted-but-unclaimed identity.
+  // The handshake callback below therefore claims synchronously on every wire
+  // generation. OIS_EAGER_SESSION_CLAIM remains diagnostic; lazy mode is overridden
+  // at this authority boundary rather than permitting identity-less list_tools.
   const eagerWarmup = isEagerWarmupEnabled(process.env);
   log(
     `[Handshake] Eager-warmup: ${eagerWarmup ? "ON (OIS_EAGER_SESSION_CLAIM=1)" : "OFF (lazy mode; Hub auto-claim on first SSE / first tools/call)"}`,
@@ -349,20 +385,54 @@ async function connectAndSeed(
           }
           ctx.shutdown();
         },
-        onHandshakeComplete: (r: HandshakeResponse): void => {
+        onHandshakeComplete: async (r: HandshakeResponse): Promise<void> => {
+          // Every handshake invalidates prior catalog authority immediately. This
+          // callback is awaited by McpAgentClient before state-sync (bug-340 P0).
+          claimedCatalogIdentity = null;
+          catalogHydration?.invalidate("handshake asserted a new identity/wire generation");
           log(`[Handshake] Identity asserted: ${r.agentId}`);
-          if (eagerWarmup) {
-            const a = hubAdapter;
-            if (!a) {
-              log("[Handshake] Eager claim_session aborted — hubAdapter null (should be impossible)");
-              return;
-            }
-            a.call("claim_session", {})
-              .then((wrapper) => log(formatSessionClaimedLogLine(parseClaimSessionResponse(wrapper))))
-              .catch((err) => log(`[Handshake] Eager claim_session failed: ${err}`));
-          } else {
-            log("[Handshake] Session claim deferred (lazy mode; Hub auto-claim on first SSE-subscribe / first tools/call)");
+
+          const a = hubAdapter;
+          if (!a) {
+            throw new Error("claim_session aborted — hubAdapter null");
           }
+          const before = a.getMetrics();
+          const sessionId = a.getSessionId() ?? "";
+          if (!sessionId || before.wireGeneration <= 0 || before.agentId !== r.agentId) {
+            throw new Error(
+              `claim_session refused for identity-less/currentness-mismatched wire (agent=${before.agentId ?? ""}, expected=${r.agentId}, sessionId=${sessionId}, wireGeneration=${before.wireGeneration})`,
+            );
+          }
+          if (!eagerWarmup) {
+            log("[Handshake] Lazy claim mode overridden for pi catalog authority — claiming current identity synchronously");
+          }
+
+          const wrapper = await a.call("claim_session", {}, { internal: true });
+          const parsed = parseClaimSessionResponse(wrapper);
+          log(formatSessionClaimedLogLine(parsed));
+          const after = a.getMetrics();
+          if (
+            parsed.sessionClaimed !== true
+            || parsed.agentId !== r.agentId
+            || !Number.isInteger(parsed.sessionEpoch)
+            || (parsed.sessionEpoch ?? 0) <= 0
+            || after.wireGeneration !== before.wireGeneration
+            || a.getSessionId() !== sessionId
+            || after.agentId !== r.agentId
+          ) {
+            throw new Error(
+              `claim_session did not establish current authority (claimed=${String(parsed.sessionClaimed)}, parsedAgent=${parsed.agentId ?? ""}, expectedAgent=${r.agentId}, epoch=${parsed.sessionEpoch ?? ""}, wireBefore=${before.wireGeneration}, wireAfter=${after.wireGeneration}, sessionCurrent=${a.getSessionId() ?? ""})`,
+            );
+          }
+          claimedCatalogIdentity = {
+            agentId: r.agentId,
+            sessionId,
+            sessionEpoch: parsed.sessionEpoch!,
+            wireGeneration: before.wireGeneration,
+          };
+          log(
+            `[Handshake] Catalog authority bound: agent=${r.agentId} epoch=${parsed.sessionEpoch} wireGeneration=${before.wireGeneration} sessionId=${sessionId}`,
+          );
         },
         onPendingTask: (task) => {
           appendNotification(buildPendingTaskNotification(task), {
@@ -390,7 +460,6 @@ async function connectAndSeed(
       }),
     },
   );
-  hubAdapter.setCallbacks(d.callbacks);
 
   // ── HCAP tool-control-plane (mission-107) ────────────────────────────
   // The 6-unit converge stack. U5 (the port) is the SOLE ExtensionAPI crossing;
@@ -419,22 +488,55 @@ async function connectAndSeed(
     controlPlane: plane,
     log,
   });
+  const hydration = new CatalogHydrationController({
+    getCurrentIdentity: getCurrentCatalogIdentity,
+    source,
+    controlPlane: plane,
+    log,
+  });
   controlPlane = plane;
   hubSpecSource = source;
+  catalogHydration = hydration;
 
-  // Reconciler drift (L3) → refresh the declared spec from the Hub, then converge.
-  // The reconciler's LEVEL is the consumer's last-applied revision (idea-465): a
-  // failed refresh leaves it behind → the next heartbeat re-drifts + retries.
+  // Preserve all shared dispatcher callbacks, adding the catalog authority
+  // lifecycle. Any non-streaming transition makes readiness false immediately;
+  // streaming triggers an exact current-identity/current-wire rehydrate.
+  const baseCallbacks = d.callbacks;
+  hubAdapter.setCallbacks({
+    ...baseCallbacks,
+    onStateChange: (state, previous, reason) => {
+      baseCallbacks.onStateChange?.(state, previous, reason);
+      if (state === "streaming") {
+        void hydration.rehydrateCurrent(previous === "connecting" ? "initial-streaming" : "reconnect-streaming")
+          .then((ready) => {
+            if (!ready) {
+              try {
+                ctx.ui.notify("Hub connected, but native tool catalog is NOT READY — automatic retry active", "error");
+              } catch {
+                /* UI not ready */
+              }
+            }
+          })
+          .catch((err) => log(`[catalog-hydration] streaming refresh failed: ${err}`));
+      } else {
+        claimedCatalogIdentity = null;
+        hydration.invalidate(`session ${previous} → ${state}${reason ? ` (${reason})` : ""}`);
+      }
+    },
+  });
+
+  // Reconciler drift (L3) uses the SAME identity-keyed single-flight as reconnect.
+  // A failed refresh leaves source.lastAppliedRevision behind and readiness false,
+  // so the heartbeat retries even if the live revision later remains constant.
   reconciler = buildToolSurfaceReconciler(
     fetchLiveRevision,
     () => source.getLastAppliedRevision(),
     () => {
-      void source
-        .refreshFromHub()
-        .then(() => plane.sync("drift"))
-        .catch((err) => log(`[hcap] drift refresh failed (non-fatal): ${err}`));
+      void hydration
+        .rehydrateCurrent("revision-drift")
+        .catch((err) => log(`[hcap] drift hydration failed (non-fatal, retry armed): ${err}`));
       try {
-        ctx.ui.notify("Hub tools updated — reconciling", "info");
+        ctx.ui.notify("Hub tools updated — authoritative rehydrate in progress", "info");
       } catch {
         /* UI not ready */
       }
@@ -496,12 +598,15 @@ async function connectAndSeed(
     log("[LivenessWatchdog] disabled (default; set OIS_LIVENESS_WATCHDOG_ENABLED=1 once a supervisor is in place)");
   }
 
-  // L1 bootstrap: refresh the declared spec from the live catalog, then converge
-  // (registration + activation) in one authoritative pass.
-  await source.refreshFromHub();
-  plane.sync("bootstrap");
-  // Baseline the reconciler's applied revision (seed pass: no emit).
-  await reconciler.reconcile("identityReady");
+  // Initial state transition may already have started hydration. Join that exact
+  // identity+wire single-flight; never perform a free-floating list_tools call.
+  const catalogReady = await hydration.rehydrateCurrent("bootstrap-join");
+  if (!catalogReady) {
+    log("[pi-plugin] Hub session streaming but native catalog NOT READY — no empty/identity-less catalog published; heartbeat retry armed");
+  } else {
+    // Baseline the revision detector only after a nonempty authoritative install.
+    await reconciler.reconcile("identityReady");
+  }
 }
 
 // ── Lifecycle entrypoints (called from index.ts factory) ─────────────
@@ -568,6 +673,8 @@ export async function startSession(
 
 export async function shutdownSession(): Promise<void> {
   log("[pi-plugin] session_shutdown — tearing down");
+  claimedCatalogIdentity = null;
+  catalogHydration?.invalidate("session shutdown");
   try {
     footer?.dispose();
   } catch {
@@ -591,6 +698,9 @@ export async function shutdownSession(): Promise<void> {
   }
   hubAdapter = null;
   reconciler = null;
+  controlPlane = null;
+  hubSpecSource = null;
+  catalogHydration = null;
   dispatcher = null;
   livenessWatchdog = null;
   started = false;
@@ -601,6 +711,8 @@ export const _testOnly = {
   isLlmErrorMessageEnd,
   getHubAdapter: () => hubAdapter,
   getDispatcher: () => dispatcher,
+  getCatalogReadiness: () => catalogHydration?.getReadiness() ?? null,
+  getClaimedCatalogIdentity: () => claimedCatalogIdentity,
   buildDispatchContext,
   buildToolSurfaceReconciler,
   setHubAdapter: (a: McpAgentClient | null) => {

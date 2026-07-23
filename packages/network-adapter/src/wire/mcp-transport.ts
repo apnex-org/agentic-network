@@ -359,6 +359,11 @@ export class McpTransport implements ITransport {
           return;
         }
 
+        if (params.logger === "session-control") {
+          this.emit({ type: "displaced", payload: params.data });
+          return;
+        }
+
         if (params.logger === "hub-event" && params.data) {
           this.emit({
             type: "push",
