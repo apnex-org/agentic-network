@@ -62,7 +62,7 @@ describe("paused-state — FSM + authority", () => {
     const { repo } = await setup();
     const id = await readyItem(repo);
     await pause(repo, id);
-    await expect(unpause(repo, id, STRANGER)).rejects.toThrow(TransitionRejected);
+    await expect(unpause(repo, id, STRANGER)).rejects.toMatchObject({ code: "revision.actor_forbidden" });
     expect((await unpause(repo, id))!.status).toBe("ready");
     await expect(unpause(repo, id)).rejects.toThrow(TransitionRejected);
   });

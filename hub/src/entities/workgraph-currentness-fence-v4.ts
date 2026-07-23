@@ -43,7 +43,18 @@ export class WorkGraphCurrentnessRejected extends Error {
       | "workgraph.currentness.identity_mismatch"
       | "workgraph.currentness.head_changed"
       | "workgraph.currentness.revision_required"
-      | "workgraph.currentness.integrity",
+      | "workgraph.currentness.integrity"
+      | "revision.actor_forbidden"
+      | "revision.architect_required"
+      | "revision.director_or_architect_required"
+      | "revision.cross_scope_forbidden"
+      | "revision.family_owner_mismatch"
+      | "revision.holder_has_no_authority"
+      | "revision.authority_expansion_forbidden"
+      | "revision.failed_gate_sealed"
+      | "revision.affected_state_forbidden"
+      | "revision.affected_set_mismatch"
+      | "revision.currentness_mismatch",
     message: string,
     public readonly current?: { logicalId: string; physicalId: string; revision: number; generation: number },
   ) {

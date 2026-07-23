@@ -1190,7 +1190,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
 
     const head = await this.revisionStorage.getHead();
     if (!head || head.head.generation !== request.expectedGeneration) {
-      throw new WorkGraphCurrentnessRejected("workgraph.currentness.head_changed", `expected generation ${request.expectedGeneration}; current is ${head?.head.generation ?? "absent"}`);
+      throw new WorkGraphCurrentnessRejected("revision.currentness_mismatch", `expected generation ${request.expectedGeneration}; current is ${head?.head.generation ?? "absent"}`);
     }
     const activeHead = head.head;
     const generation = await this.revisionStorage.getGeneration(activeHead.generation);
@@ -1198,7 +1198,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const rootBinding = hasLogicalId
       ? generation.bindings[request.logicalId!]
       : Object.values(generation.bindings).find((binding) => binding.physicalId === request.workId);
-    if (!rootBinding) throw new WorkGraphCurrentnessRejected("workgraph.currentness.old_or_draft", "revision root is not current");
+    if (!rootBinding) throw new WorkGraphCurrentnessRejected("revision.currentness_mismatch", "revision root is not current");
     const rootLogicalId = hasLogicalId
       ? request.logicalId!
       : Object.entries(generation.bindings).find(([, binding]) => binding.physicalId === request.workId)![0];
@@ -1218,7 +1218,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const affectedSet = [...affected].sort();
     const expectedAffected = request.expectedAffectedSet ? [...request.expectedAffectedSet].sort() : undefined;
     if (expectedAffected && canonicalJson(expectedAffected) !== canonicalJson(affectedSet)) {
-      throw new WorkGraphCurrentnessRejected("workgraph.currentness.head_changed", `affected closure changed; expected ${expectedAffected.join(",")}, got ${affectedSet.join(",")}`);
+      throw new WorkGraphCurrentnessRejected("revision.affected_set_mismatch", `affected closure changed; expected ${expectedAffected.join(",")}, got ${affectedSet.join(",")}`);
     }
 
     const itemsByLogical = new Map<string, WorkItem>();
@@ -1235,22 +1235,51 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     }
     for (const logicalId of affectedSet) {
       const item = itemsByLogical.get(logicalId)!;
-      if (!(["ready", "paused"] as string[]).includes(item.status) || item.lease || item.evidence.length > 0 || item.failedGateSeal || item.attestationHistory?.length) {
-        throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", `affected ${logicalId} is not quiescent and evidence-free`);
+      if (item.failedGateSeal) {
+        throw new WorkGraphCurrentnessRejected("revision.failed_gate_sealed", `affected ${logicalId} has an immutable failed-gate seal`);
+      }
+      if (!(["ready", "paused"] as string[]).includes(item.status) || item.lease || item.evidence.length > 0 || item.attestationHistory?.length) {
+        throw new WorkGraphCurrentnessRejected("revision.affected_state_forbidden", `affected ${logicalId} is not quiescent and evidence-free`);
       }
     }
     const root = itemsByLogical.get(rootLogicalId)!;
     const family = familiesByLogical.get(rootLogicalId)!;
-    if (actor.role !== "architect" && actor.role !== "director" && actor.agentId !== family.originalCreatedBy.agentId) {
-      throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", `actor lacks authority for family ${family.id}`);
+    const isArchitect = actor.role === "architect";
+    const isDirector = actor.role === "director";
+    const isOriginalCreator = actor.agentId === family.originalCreatedBy.agentId
+      && actor.role === family.originalCreatedBy.role;
+    if (!isArchitect && !isDirector && !isOriginalCreator) {
+      const holderOnly = affectedSet.some((logicalId) => {
+        const item = itemsByLogical.get(logicalId)!;
+        return item.lease?.holder === actor.agentId || item.executorHistory.includes(actor.agentId);
+      });
+      const creatorIdentityMismatch = actor.agentId === family.originalCreatedBy.agentId
+        || actor.role === family.originalCreatedBy.role;
+      const denialCode = holderOnly
+        ? "revision.holder_has_no_authority"
+        : creatorIdentityMismatch
+          ? "revision.family_owner_mismatch"
+          : "revision.actor_forbidden";
+      throw new WorkGraphCurrentnessRejected(
+        denialCode,
+        holderOnly
+          ? `lease-holder history grants no revision authority for family ${family.id}`
+          : creatorIdentityMismatch
+            ? `actor does not match the immutable creator stamp for family ${family.id}`
+            : `actor lacks server-derived authority for family ${family.id}`,
+      );
     }
-    if (actor.role !== "architect" && actor.role !== "director") {
-      if (affectedSet.length !== 1) throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", "original creator cannot revise a dependent closure");
-      const nextRoles = request.set && Object.prototype.hasOwnProperty.call(request.set, "roleEligibility") ? request.set.roleEligibility ?? [] : root.roleEligibility;
-      if (nextRoles.some((role) => !root.roleEligibility.includes(role))) throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", "original creator cannot expand role authority");
+    if (isOriginalCreator && !isArchitect && !isDirector && family.familyScope.kind !== "standalone") {
+      throw new WorkGraphCurrentnessRejected("revision.architect_required", `creator revision is limited to standalone families; ${family.id} is ${family.familyScope.kind}/${family.familyScope.id}`);
     }
-    if (request.set?.targetRef?.kind === "mission" && family.familyScope.kind === "mission" && request.set.targetRef.id !== family.familyScope.id) {
-      throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", "targetRef would expand family mission scope");
+    if (isArchitect || isDirector) {
+      const scopes = affectedSet.map((logicalId) => familiesByLogical.get(logicalId)!.familyScope);
+      if (scopes.length > 1) {
+        const missionId = scopes[0]?.kind === "mission" ? scopes[0].id : null;
+        if (!missionId || scopes.some((scope) => scope.kind !== "mission" || scope.id !== missionId)) {
+          throw new WorkGraphCurrentnessRejected("revision.cross_scope_forbidden", "cross-family revision requires every affected family to share one mission scope");
+        }
+      }
     }
 
     const normalizeEdges = (values: string[] | undefined, fallback: string[]): string[] => {
@@ -1279,6 +1308,58 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (Object.prototype.hasOwnProperty.call(request.set, "nodeConfig")) preview.nodeConfig = request.set.nodeConfig ?? undefined;
     }
     preview.references = [...(nextReferences ?? [])];
+
+    // D3 authority is checked over the server-derived actor, the complete affected
+    // closure, and the fully normalized proposed contract before allocating even
+    // one successor revision. Creator compatibility is deliberately narrow: one
+    // standalone family, no topology or target change, and no authority weakening
+    // or lease/pulse escalation.
+    if (isOriginalCreator && !isArchitect && !isDirector) {
+      if (affectedSet.length !== 1) {
+        throw new WorkGraphCurrentnessRejected("revision.architect_required", "original creator cannot revise a reverse-dependent closure");
+      }
+      if (canonicalJson(nextDependsOn) !== canonicalJson(root.dependsOn)
+          || canonicalJson(nextCompletionDependsOn) !== canonicalJson(root.completionDependsOn)) {
+        throw new WorkGraphCurrentnessRejected("revision.architect_required", "original creator cannot replace topology edges");
+      }
+      const nextRoles = preview.roleEligibility;
+      const allowedRoles = new Set([...root.roleEligibility, actor.role]);
+      if (nextRoles.some((role) => !allowedRoles.has(role))) {
+        throw new WorkGraphCurrentnessRejected("revision.authority_expansion_forbidden", "original creator cannot expand role eligibility");
+      }
+      if (canonicalJson(preview.targetRef) !== canonicalJson(root.targetRef)) {
+        throw new WorkGraphCurrentnessRejected("revision.authority_expansion_forbidden", "original creator cannot change target scope");
+      }
+      const requiredReferenceKeys = new Set((root.references ?? [])
+        .filter((reference) => reference.required)
+        .map((reference) => canonicalJson({ kind: reference.kind, ref: reference.ref, storage: reference.storage, mode: reference.mode })));
+      const retainedRequiredKeys = new Set((preview.references ?? [])
+        .filter((reference) => reference.required)
+        .map((reference) => canonicalJson({ kind: reference.kind, ref: reference.ref, storage: reference.storage, mode: reference.mode })));
+      if ([...requiredReferenceKeys].some((key) => !retainedRequiredKeys.has(key))) {
+        throw new WorkGraphCurrentnessRejected("revision.authority_expansion_forbidden", "original creator cannot remove or weaken a required reference");
+      }
+      const oldLeaseWindow = root.leaseWindowMs;
+      const nextLeaseWindow = preview.leaseWindowMs;
+      if ((oldLeaseWindow === undefined && nextLeaseWindow !== undefined)
+          || (oldLeaseWindow !== undefined && nextLeaseWindow !== undefined && nextLeaseWindow > oldLeaseWindow)) {
+        throw new WorkGraphCurrentnessRejected("revision.authority_expansion_forbidden", "original creator cannot escalate the lease window");
+      }
+      if (canonicalJson(preview.nodeConfig ?? null) !== canonicalJson(root.nodeConfig ?? null)) {
+        throw new WorkGraphCurrentnessRejected("revision.authority_expansion_forbidden", "original creator cannot change pulse authority");
+      }
+    }
+
+    const proposedTarget = preview.targetRef;
+    if (family.familyScope.kind === "mission"
+        && proposedTarget?.kind === "mission"
+        && proposedTarget.id !== family.familyScope.id) {
+      throw new WorkGraphCurrentnessRejected("revision.cross_scope_forbidden", "targetRef would cross the family's mission scope");
+    }
+    if (family.familyScope.kind === "standalone" && proposedTarget?.kind === "mission") {
+      throw new WorkGraphCurrentnessRejected("revision.cross_scope_forbidden", "standalone family cannot expand into mission scope");
+    }
+
     const contractView = (item: WorkItem) => ({
       type: item.type,
       roleEligibility: item.roleEligibility,
@@ -1295,7 +1376,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     if (beforeContract === afterContract
         && canonicalJson(root.dependsOn) === canonicalJson(nextDependsOn)
         && canonicalJson(root.completionDependsOn) === canonicalJson(nextCompletionDependsOn)) {
-      throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", "revise_work semantic bytes are unchanged");
+      throw new WorkGraphCurrentnessRejected("revision.currentness_mismatch", "revise_work semantic bytes are unchanged");
     }
 
     const revisions = new Map<string, number>();
@@ -2316,7 +2397,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     request: UnpauseWorkRequestV4,
     actor: { agentId: string; role: string },
   ): Promise<{ workItems: WorkItem[]; operationReplay: boolean }> {
-    if (actor.role !== "architect" && actor.role !== "director") throw new TransitionRejected("revision-set recommit requires architect or Director");
+    if (actor.role !== "architect" && actor.role !== "director") {
+      throw new WorkGraphCurrentnessRejected("revision.director_or_architect_required", "revision-set recommit requires architect or Director");
+    }
     const logicalIds = [...(request.logicalIds ?? [])].sort();
     if (logicalIds.length === 0 || new Set(logicalIds).size !== logicalIds.length || !request.operationId?.trim() || !request.reason?.trim()) {
       throw new TransitionRejected("revision-set recommit requires unique logicalIds, operationId, and reason");
@@ -2330,7 +2413,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     })));
 
     return this.currentness.withWriterFence(async (pin) => {
-      if (pin.mode !== "generation" || pin.head.generation !== request.expectedGeneration) throw new WorkGraphCurrentnessRejected("workgraph.currentness.head_changed", "recommit generation changed");
+      if (pin.mode !== "generation" || pin.head.generation !== request.expectedGeneration) throw new WorkGraphCurrentnessRejected("revision.currentness_mismatch", "recommit generation changed");
       const operationRow = await this.substrate.getWithRevision<WorkGraphRevisionOperationV4>(WORK_REVISION_KINDS.operation, pin.generation.operationId);
       if (!operationRow) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "active revision operation is missing");
       const operation = decodeEnvelopeToFlat(operationRow.entity);
@@ -2349,7 +2432,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       const rows: Array<{ item: WorkItem; resourceVersion: string }> = [];
       for (const logicalId of logicalIds) {
         const binding = pin.generation.bindings[logicalId];
-        if (!binding || binding.revision !== expectedRevisions[logicalId]) throw new WorkGraphCurrentnessRejected("workgraph.currentness.head_changed", `recommit revision mismatch for ${logicalId}`);
+        if (!binding || binding.revision !== expectedRevisions[logicalId]) throw new WorkGraphCurrentnessRejected("revision.currentness_mismatch", `recommit revision mismatch for ${logicalId}`);
         const row = await this.substrate.getWithRevision<WorkItem>(KIND, binding.physicalId);
         if (!row) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `recommit row ${binding.physicalId} missing`);
         const item = cloneWorkItem(row.entity);
@@ -2386,7 +2469,14 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         && lastRecall?.actor.agentId === actor.agentId;
       const isSteward = actor.role === "architect" || actor.role === "director";
       if (!creatorCompatibility && !isSteward) {
-        throw new TransitionRejected(`unpause requires the original creator who paused this unchanged row, architect, or Director; holder/reviser status grants no authority`);
+        const originalCreator = await this.originalCreatorAgentId(w);
+        const holderOnly = w.lease?.holder === actor.agentId || w.executorHistory.includes(actor.agentId);
+        const code = holderOnly
+          ? "revision.holder_has_no_authority"
+          : originalCreator === actor.agentId
+            ? "revision.architect_required"
+            : "revision.actor_forbidden";
+        throw new WorkGraphCurrentnessRejected(code, "unpause requires the original creator who paused this unchanged row, architect, or Director; holder/reviser status grants no authority");
       }
       const nowISO = this.clock.now().toISOString();
       return { ...w, status: "ready" as const, ...accrueExitingState(w, nowISO), updatedAt: nowISO };

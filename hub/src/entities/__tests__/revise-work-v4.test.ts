@@ -123,7 +123,7 @@ describe("Mission-140 public semantic revision + atomic recommit v4", () => {
   it("rejects non-exhaustive closure and cycles before head publication", async () => {
     const { repo, storage } = await setup();
     await expect(repo.reviseWork({ ...reviseRequest, operationId: "bad-closure", expectedAffectedSet: ["b"] }, ARCHITECT))
-      .rejects.toMatchObject({ code: "workgraph.currentness.head_changed" });
+      .rejects.toMatchObject({ code: "revision.affected_set_mismatch" });
     await expect(repo.reviseWork({ ...reviseRequest, operationId: "cycle", expectedAffectedSet: undefined, dependsOn: ["p"] }, ARCHITECT))
       .rejects.toMatchObject({ code: "storage.cycle" });
     expect((await storage.getHead())?.head.generation).toBe(1);
