@@ -76,7 +76,7 @@ export async function driveToPhase(phase: Phase): Promise<Scenario> {
   if (phase === "ready") return { h, arch, holder, workId: await mk() };
   if (phase === "paused") {
     const workId = await mk();
-    must(await arch.call("pause_work", { workId }), "pause_work");
+    must(await arch.call("pause_work", { workId, operationId: `sim-pause-setup-${workId}`, reason: "sim phase setup" }), "pause_work");
     return { h, arch, holder, workId };
   }
   if (phase === "abandoned") {
@@ -122,8 +122,9 @@ async function attempt(s: Scenario, verb: SpecVerb): Promise<{ ok: boolean; data
     case "claim_work":
       return s.holder.claim(s.workId);
     case "pause_work":
+      return s.arch.call(verb, { workId: s.workId, operationId: `sim-pause-attempt-${s.workId}`, reason: "sim conformance attempt" });
     case "unpause_work":
-      // creator/Director-gated — drive through the architect (the item's creator).
+      // Scalar recommit remains architect-authorized; dependency state is claim_work's concern.
       return s.arch.call(verb, { workId: s.workId });
     case "abandon_work":
       // the holder abandons a lease it holds; the creator abandons a ready item.

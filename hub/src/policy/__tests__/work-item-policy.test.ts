@@ -103,23 +103,26 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     expect(work).toMatch(/list_ready_work is the claimability surface/);
   });
 
-  // ── S3 (idea-454) — pause_work / unpause_work + the paused query surface ──
-  // The repo owns the creator/Director authz + FSM gate (proven in entities/__tests__/paused-state.test.ts);
+  // ── Mission-140 pause/recall + scalar recommit policy surface ─────────────
+  // The repo owns creator/architect/Director authz + the active recall CAS.
   // these prove the POLICY SURFACE the operational verb rides on: registered + reachable, server-stamped
   // identity (not caller-claimed), and repo denials/transitions surface through the dispatch path.
   it("pause_work: passes the SERVER-STAMPED caller identity (agentId+role from session, not args) to store.pauseWork + surfaces the item", async () => {
     const stub = makeStub({ pauseWork: () => sampleItem({ status: "paused", lease: null }) });
-    const r = await router.handle("pause_work", { workId: "work-1", agentId: "HACKER", role: "director", reason: "deferring" }, ctxFor(stub, "engineer"));
+    const r = await router.handle("pause_work", { workId: "work-1", agentId: "HACKER", role: "director", operationId: "pause-policy-1", reason: "deferring", expectedRevision: 1 }, ctxFor(stub, "engineer"));
     expect(r.isError).toBeFalsy();
     expect((body(r).workItem as WorkItem).status).toBe("paused");
     // creator authz is derived from the SESSION, never the spoofed args — the actor object carries the session identity.
     expect(stub.calls[0].method).toBe("pauseWork");
-    expect(stub.calls[0].args).toEqual(["work-1", { agentId: "anonymous-engineer", role: "engineer" }, "deferring"]);
+    expect(stub.calls[0].args).toEqual([{
+      workId: "work-1", logicalId: undefined, operationId: "pause-policy-1", reason: "deferring",
+      expectedRevision: 1, expectedGeneration: undefined,
+    }, { agentId: "anonymous-engineer", role: "engineer" }]);
   });
 
   it("pause_work: a repo authz/phase denial (non-creator, or not-ready) surfaces as transition_rejected", async () => {
     const stub = makeStub({ pauseWork: () => { throw new TransitionRejected("only the creator or Director may pause"); } });
-    const r = await router.handle("pause_work", { workId: "work-1" }, ctxFor(stub, "engineer"));
+    const r = await router.handle("pause_work", { workId: "work-1", operationId: "pause-policy-denied", reason: "test denial" }, ctxFor(stub, "engineer"));
     expect(r.isError).toBe(true);
     expect(body(r).errorKind).toBe("transition_rejected");
   });
@@ -130,7 +133,9 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     expect(r.isError).toBeFalsy();
     expect((body(r).workItem as WorkItem).status).toBe("ready");
     expect(stub.calls[0].method).toBe("unpauseWork");
-    expect(stub.calls[0].args).toEqual(["work-1", { agentId: "anonymous-engineer", role: "engineer" }]);
+    expect(stub.calls[0].args).toEqual([{
+      workId: "work-1", logicalId: undefined, expectedRevision: undefined, expectedGeneration: undefined,
+    }, { agentId: "anonymous-engineer", role: "engineer" }]);
   });
 
   it("unpause_work: a repo denial (non-creator, or not-paused) surfaces as transition_rejected", async () => {

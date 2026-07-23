@@ -39,6 +39,24 @@ export type WorkItemPriority = "critical" | "high" | "normal" | "low";
 export type WorkItemPhase =
   | "ready" | "claimed" | "in_progress" | "blocked" | "paused" | "review" | "done" | "abandoned";
 
+export interface PauseWorkRequestV4 {
+  /** Exactly one locator is required. Physical ids never silently follow successors. */
+  workId?: string;
+  logicalId?: string;
+  operationId: string;
+  reason: string;
+  expectedRevision?: number;
+  expectedGeneration?: number;
+}
+
+export interface UnpauseWorkRequestV4 {
+  /** Scalar compatibility path; atomic revision-set recommit lands with the revision slice. */
+  workId?: string;
+  logicalId?: string;
+  expectedRevision?: number;
+  expectedGeneration?: number;
+}
+
 /** work-94 (cold-start spine, non-dark digest): WHY a caller-scoped claimable digest is
  *  empty — never a DARK (silent) zero. `wip_capped` + `no_claimable_ready` are repo-set
  *  (listReadyForRole knows which); `quarantined` is policy-set (its own claim gate). */
@@ -533,6 +551,8 @@ export interface WorkItem {
    *  owner writes preserve rather than reconstruct/inject them. */
   recallHistory?: RecallHistoryEntryV4[];
   pendingRecallIntents?: PendingRecallIntentV4[];
+  /** True iff at least one persist-first recall notice is not Message-projected. */
+  recallNoticePending?: boolean;
   /** failed-gate-seal-v2: immutable FAIL authority and restart-safe notice outbox. */
   failedGateSeal?: FailedGateSealV2 | null;
   pendingFailedSealNotices?: PendingFailedSealNotice[];
@@ -785,18 +805,19 @@ export interface IWorkItemStore {
    *  roleEligibility has no registered seat). */
   abandonWork(workId: string, agentId: string, opts?: { reason?: string; leaseToken?: string }): Promise<WorkItem | null>;
 
-  /** S3 (idea-454): `ready` → `paused` — a dormancy state (unclaimable, NO lease, resumable). READY-ONLY
-   *  (a claimed item has a holder+lease; pausing would zombie the claimant — use abandon/release for
-   *  leased work). AUTHZ: CREATOR-only (server-stamped createdBy) OR Director override. `paused` is a
-   *  non-terminal dwell state excluded from listReadyForRole + the claimable digest. NOTE: the
-   *  paused→ready reverse is `unpauseWork` — NOT `resumeWork` (which is the distinct blocked→in_progress
-   *  lease-holder verb; the council's 'resume_work' name collides with it, so this pair is pause/unpause). */
-  pauseWork(workId: string, actor: { agentId: string; role: string }, reason?: string): Promise<WorkItem | null>;
+  /** Mission-140 pause/recall: ready may be paused by original creator/architect/Director;
+   *  claimed|in_progress|blocked may be force-paused only by architect/Director. The one row CAS
+   *  records the exact pre-state, invalidates/clears the lease token and blocker, and persists an
+   *  exact-holder notice intent before projection. Review/terminal/failed/noncurrent rows reject. */
+  pauseWork(request: PauseWorkRequestV4, actor: { agentId: string; role: string }): Promise<WorkItem | null>;
 
-  /** S3 (idea-454): `paused` → `ready` — reactivate a paused item back into the normal claim gate.
-   *  Start-gates are NOT bypassed: deps + roleEligibility are re-validated at the subsequent claim
-   *  (claimWorkItem's fail-closed authority). AUTHZ: CREATOR-only OR Director override. */
-  unpauseWork(workId: string, actor: { agentId: string; role: string }): Promise<WorkItem | null>;
+  /** Scalar paused→ready compatibility. Current revision/generation and authority are revalidated;
+   *  dependency state remains claim_work's concern. Batch revision recommit is a later slice. */
+  unpauseWork(request: UnpauseWorkRequestV4, actor: { agentId: string; role: string }): Promise<WorkItem | null>;
+
+  /** Mission-140 persist-first exact-holder recall outbox projection support. */
+  listPendingRecallNoticeItems(limit?: number): Promise<{ items: WorkItem[]; truncated: boolean }>;
+  markRecallNoticeProjected(workId: string, intentId: string, messageId: string): Promise<WorkItem | null>;
 
   /** {in_progress|review} → review|done. Appends + dedups the supplied evidence, then
    *  validates the anti-gameability predicate (coverage-by-binding + kind-match +

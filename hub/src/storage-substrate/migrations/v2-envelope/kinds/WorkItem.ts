@@ -51,7 +51,7 @@ export function createWorkItemMigrationModule(schema: SchemaDef): KindMigrationM
       // projection — partitioned into status so EVERY write round-trips them by
       // construction (the structural preserve-not-inject; closes the un-partitioned→
       // spec resurrection trap in envelope.ts pickPartition).
-      status: ["lease", "evidence", "frictionReflections", "blockedOn", "leaseExpiryCount", "enteredCurrentStateAt", "stateDurations", "attestationHistory", "attestations", "executorHistory", "recallHistory", "pendingRecallIntents", "failedGateSeal", "pendingFailedSealNotices", "failedSealNoticePending", "effectiveDisposition", "nodeConfig"],
+      status: ["lease", "evidence", "frictionReflections", "blockedOn", "leaseExpiryCount", "enteredCurrentStateAt", "stateDurations", "attestationHistory", "attestations", "executorHistory", "recallHistory", "pendingRecallIntents", "recallNoticePending", "failedGateSeal", "pendingFailedSealNotices", "failedSealNoticePending", "effectiveDisposition", "nodeConfig"],
     },
   };
 

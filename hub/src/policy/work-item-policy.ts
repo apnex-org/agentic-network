@@ -30,6 +30,7 @@ import type { PrWorkGraphBindingProof } from "./pr-review-workitem-event-contrac
 // enhancement (the mission-policy runTriggers posture).
 import { emitWorkTransition, emitDependencyUnblocks, emitWorkUpdated } from "./work-item-events.js";
 import { projectPendingFailedSealNotices } from "./failed-gate-notice-projector.js";
+import { projectPendingRecallNotices } from "./recall-notice-projector.js";
 import { DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 import {
   TransitionRejected,
@@ -38,6 +39,7 @@ import {
   EvidencePredicateFailed,
   CompletionGateRejected,
   AttestationRejected,
+  isPauseOperationReplay,
 } from "../entities/work-item-repository-substrate.js";
 import { LockAcquisitionTimeoutError } from "../storage-substrate/advisory-lock.js";
 import type {
@@ -301,16 +303,34 @@ async function abandonWork(args: Record<string, unknown>, ctx: IPolicyContext): 
   } catch (e) { return mapVerbError(e); }
 }
 
-// ── S3 (idea-454) — pause_work / unpause_work ───────────────────────────────
+// ── Mission-140 pause/recall + scalar recommit ─────────────────────────────
 async function pauseWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
-  const caller = await resolveCreatedBy(ctx); // server-stamped {role, agentId} — the authz basis
+  const caller = await resolveCreatedBy(ctx);
   try {
-    const w = await store.pauseWork(args.workId as string, { agentId: caller.agentId, role: caller.role }, args.reason as string | undefined);
-    if (!w) return notFound(args.workId as string);
-    await emitWorkTransition(ctx, { item: w, verb: "pause_work", fromStatus: "ready", actor: caller });
-    return workItemResult(w);
+    const w = await store.pauseWork({
+      workId: args.workId as string | undefined,
+      logicalId: args.logicalId as string | undefined,
+      operationId: args.operationId as string,
+      reason: args.reason as string,
+      expectedRevision: args.expectedRevision as number | undefined,
+      expectedGeneration: args.expectedGeneration as number | undefined,
+    }, { agentId: caller.agentId, role: caller.role });
+    const locator = (args.workId ?? args.logicalId) as string;
+    if (!w) return notFound(locator);
+    const recall = (w.recallHistory ?? []).find((entry) => entry.operationId === args.operationId);
+    const operationReplay = isPauseOperationReplay(w);
+    if (!operationReplay) {
+      await emitWorkTransition(ctx, { item: w, verb: "pause_work", fromStatus: recall?.before.phase ?? null, actor: caller });
+    }
+    let recallNoticeProjection: unknown;
+    try {
+      recallNoticeProjection = await projectPendingRecallNotices(ctx, store, { workId: w.id });
+    } catch (projectionError) {
+      recallNoticeProjection = { deferred: true, error: (projectionError as Error)?.message ?? String(projectionError) };
+    }
+    return ok({ workItem: w, leaseToken: null, operationReplay, recallNoticeProjection });
   } catch (e) { return mapVerbError(e); }
 }
 
@@ -319,8 +339,14 @@ async function unpauseWork(args: Record<string, unknown>, ctx: IPolicyContext): 
   if (!store) return err("not_wired", "WorkItem store is not available");
   const caller = await resolveCreatedBy(ctx);
   try {
-    const w = await store.unpauseWork(args.workId as string, { agentId: caller.agentId, role: caller.role });
-    if (!w) return notFound(args.workId as string);
+    const w = await store.unpauseWork({
+      workId: args.workId as string | undefined,
+      logicalId: args.logicalId as string | undefined,
+      expectedRevision: args.expectedRevision as number | undefined,
+      expectedGeneration: args.expectedGeneration as number | undefined,
+    }, { agentId: caller.agentId, role: caller.role });
+    const locator = (args.workId ?? args.logicalId) as string;
+    if (!w) return notFound(locator);
     await emitWorkTransition(ctx, { item: w, verb: "unpause_work", fromStatus: "paused", actor: caller });
     return workItemResult(w);
   } catch (e) { return mapVerbError(e); }
@@ -1660,19 +1686,26 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "pause_work",
-    "[Any] S3 (idea-454): ready → PAUSED — a dormancy state (unclaimable, no lease, resumable). READY-ONLY (a leased item cannot be paused — its holder would be zombied; use release_work/abandon_work for leased work). AUTHZ: the item's CREATOR (Hub-derived from the session) or the Director. Paused items are EXCLUDED from list_ready_work + the claimable digest (dormant, not dark — get_current_stint surfaces them). NOTE: the reverse is `unpause_work` (paused→ready); `resume_work` is the DISTINCT blocked→in_progress lease-holder verb.",
+    "[Any] Mission-140 pause/recall. Exactly one of workId|logicalId. Ready work: original creator, architect, or Director. Claimed/in_progress/blocked: architect or Director only. One CAS records the full pre-state, invalidates the token, clears lease/blocker, and persists an exact-holder notice before restart-safe projection. Review/terminal/failed/noncurrent rows reject.",
     {
-      workId: z.string(),
-      reason: z.string().optional().describe("Why the item is being paused (advisory)"),
+      workId: z.string().optional().describe("Exact physical WorkItem id; never follows a successor"),
+      logicalId: z.string().optional().describe("Logical WorkItem id resolved at the pinned current generation"),
+      operationId: z.string().min(1).describe("Idempotency key; same key with changed bytes rejects"),
+      reason: z.string().min(1).describe("Required recall reason"),
+      expectedRevision: z.number().int().positive().optional(),
+      expectedGeneration: z.number().int().nonnegative().optional(),
     },
     pauseWork,
   );
 
   router.register(
     "unpause_work",
-    "[Any] S3 (idea-454): PAUSED → ready — reactivate a paused item back into the normal claim gate. Start-gates are NOT bypassed: dependencies + roleEligibility are re-validated fail-closed at the subsequent claim_work. AUTHZ: the item's CREATOR or the Director.",
+    "[Any] Scalar paused→ready recommit. Exactly one of workId|logicalId. Validates current revision/generation and failed-seal fence but deliberately leaves dependency-state checks to claim_work. Original creator may unpause only an unchanged row they lawfully paused; architect/Director may recommit within their authority.",
     {
-      workId: z.string(),
+      workId: z.string().optional().describe("Exact physical WorkItem id"),
+      logicalId: z.string().optional().describe("Logical WorkItem id resolved at the pinned current generation"),
+      expectedRevision: z.number().int().positive().optional(),
+      expectedGeneration: z.number().int().nonnegative().optional(),
     },
     unpauseWork,
   );

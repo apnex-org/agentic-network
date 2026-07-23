@@ -108,6 +108,19 @@ describe("SEAL B — writer inventory: EVERY writer preserves the attestation su
     await expectSubtreeIntact(repo, id);
   });
 
+  it("pauseWork + recall projection mark + unpauseWork preserve the subtree", async () => {
+    const { repo } = await setup();
+    const id = await attestedReadyItem(repo);
+    await repo.claimWorkItem(id, "agent-eng", "engineer");
+    const paused = await repo.pauseWork({ workId: id, operationId: "seal-b-pause", reason: "inventory" }, { agentId: "arch-1", role: "architect" });
+    await expectSubtreeIntact(repo, id);
+    const intentId = paused!.pendingRecallIntents![0].intentId;
+    await repo.markRecallNoticeProjected(id, intentId, "message-seal-b");
+    await expectSubtreeIntact(repo, id);
+    await repo.unpauseWork({ workId: id }, { agentId: "arch-1", role: "architect" });
+    await expectSubtreeIntact(repo, id);
+  });
+
   it("abandonWork (→abandoned, terminal)", async () => {
     const { repo } = await setup();
     const id = await attestedReadyItem(repo);

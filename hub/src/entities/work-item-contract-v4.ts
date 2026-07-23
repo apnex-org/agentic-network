@@ -85,6 +85,7 @@ export const NODE_CONTRACT_V4_EXCLUDED_FIELDS = Object.freeze([
   "observedTopologyHash",
   "recallHistory",
   "pendingRecallIntents",
+  "recallNoticePending",
   "createdBy",
   "createdAt",
   "updatedAt",
@@ -787,19 +788,43 @@ export interface WorkRevisionFamilyV4 {
   familyScope: { kind: "mission" | "standalone"; id: string };
   createdAt: string;
 }
+export interface RecallLeaseSnapshotV4 {
+  holder: string;
+  claimedAt: string;
+  expiresAt: string;
+  heartbeatAt: string;
+  /** Domain-separated fingerprint only — the bearer token is never persisted in history/notices. */
+  tokenFingerprint: Sha256Hex;
+}
+export interface RecallBeforeStateV4 {
+  physicalId: string;
+  logicalId: string;
+  revision: number;
+  topologyGeneration: number | null;
+  phase: "ready" | "claimed" | "in_progress" | "blocked";
+  resourceVersion: string;
+  stateHash: Sha256Hex;
+  blockedOn: null | { blockerKind: string; blockerIds: string[]; reason: string };
+  lease: RecallLeaseSnapshotV4 | null;
+}
 export interface RecallHistoryEntryV4 {
   operationId: string;
+  requestHash: Sha256Hex;
   actor: ActorStampV4;
   reason: string;
   recalledAt: string;
   beforeStateHash: Sha256Hex;
+  before: RecallBeforeStateV4;
+  holderNoticeIntentId: string | null;
 }
 export interface PendingRecallIntentV4 {
   intentId: string;
+  operationId: string;
   exactHolderAgentId: string;
+  beforeStateHash: Sha256Hex;
   createdAt: string;
-  projectedMessageId?: string;
-  projectedAt?: string;
+  projectedMessageId: string | null;
+  projectedAt: string | null;
 }
 export interface RevisionFieldsV4 {
   logicalId: string;

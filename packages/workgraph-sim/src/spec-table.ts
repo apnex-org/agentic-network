@@ -82,12 +82,14 @@ export const SPEC: Record<Phase, Record<SpecVerb, Move>> = {
   }),
   claimed: row({
     start_work: { legal: true, to: "in_progress" },
+    pause_work: { legal: true, to: "paused", note: "architect/Director active recall; holder alone denied" },
     release_work: { legal: true, to: "ready" },
     abandon_work: { legal: true, to: "abandoned" },
     renew_lease: { legal: true, to: "same" },
   }),
   in_progress: row({
     block_work: { legal: true, to: "blocked" },
+    pause_work: { legal: true, to: "paused", note: "architect/Director active recall; token invalidated" },
     complete_work: { legal: true, to: "gate", note: "review|done per completion-gate + evidence + explicit frictionReflection; missing friction persists valid evidence but stays same" },
     release_work: { legal: true, to: "ready" },
     abandon_work: { legal: true, to: "abandoned" },
@@ -95,6 +97,7 @@ export const SPEC: Record<Phase, Record<SpecVerb, Move>> = {
   }),
   blocked: row({
     resume_work: { legal: true, to: "in_progress" },
+    pause_work: { legal: true, to: "paused", note: "architect/Director active recall; blocker preserved in recall history" },
     release_work: { legal: true, to: "ready" },
     abandon_work: { legal: true, to: "abandoned" },
     renew_lease: { legal: true, to: "same" },

@@ -573,6 +573,7 @@ const WorkItem: SchemaDef = {
     { name: "topologyGeneration", type: "number", required: false },
     { name: "recallHistory", type: "array", required: false },
     { name: "pendingRecallIntents", type: "array", required: false },
+    { name: "recallNoticePending", type: "boolean", required: false },
   ],
   indexes: [
     { name: "workitem_status_phase_idx", fields: ["status.phase"] },
@@ -583,6 +584,7 @@ const WorkItem: SchemaDef = {
     { name: "workitem_spec_topologygeneration_idx", fields: ["spec.topologyGeneration"] },
     { name: "workitem_status_recallhistory_gin_idx", fields: ["status.recallHistory"], type: "gin" },
     { name: "workitem_status_pendingrecallintents_gin_idx", fields: ["status.pendingRecallIntents"], type: "gin" },
+    { name: "workitem_status_recallnoticepending_idx", fields: ["status.recallNoticePending"] },
     // C1-R2: GIN index backing the $contains (@>) array-membership on roleEligibility.
     { name: "workitem_spec_roleeligibility_gin_idx", fields: ["spec.roleEligibility"], type: "gin" },
     // work-88 (arc-node): GIN index backing the reverse-ancestor lookup over the
@@ -642,6 +644,7 @@ const WorkItem: SchemaDef = {
     topologyGeneration: "spec.topologyGeneration",
     recallHistory: "status.recallHistory",
     pendingRecallIntents: "status.pendingRecallIntents",
+    recallNoticePending: "status.recallNoticePending",
     // W1 (idea-446 / work-181): the node-native pulse subtree — status (lifecycle),
     // non-filterable (surfaced on get_work, swept by role, not queried). Sweeper-written
     // bookkeeping → status so every owner-path write round-trips it (preserve-not-inject);

@@ -48,13 +48,20 @@ import type {
   FailedGatePreClearReceiptV2,
   FailedGateSealV2,
   PendingFailedSealNotice,
+  PauseWorkRequestV4,
+  UnpauseWorkRequestV4,
 } from "./work-item.js";
 import { DEFAULT_STATE_DURATIONS, evaluateCompletionGate } from "./work-item.js";
 import { SubstrateCounter } from "./substrate-counter.js";
 import { withAdvisoryLock, LOCK_CLASS } from "../storage-substrate/advisory-lock.js";
 import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 import { type Clock, systemClock } from "./clock.js";
-import { hashCanonicalDomain } from "./work-item-contract-v4.js";
+import {
+  hashCanonicalDomain,
+  type PendingRecallIntentV4,
+  type RecallBeforeStateV4,
+  type RecallHistoryEntryV4,
+} from "./work-item-contract-v4.js";
 import {
   WorkGraphCurrentnessFenceV4,
   WorkGraphCurrentnessRejected,
@@ -422,6 +429,7 @@ function cloneWorkItem(w: WorkItem): WorkItem {
   // write-on-read; later semantic writers alone append.
   flat.recallHistory = (flat.recallHistory as unknown[] | undefined) ?? [];
   flat.pendingRecallIntents = (flat.pendingRecallIntents as unknown[] | undefined) ?? [];
+  flat.recallNoticePending = flat.recallNoticePending ?? (flat.pendingRecallIntents as Array<{ projectedMessageId?: string | null }>).some((intent) => !intent.projectedMessageId);
   // failed-gate-seal-v2: legacy rows default without a write-on-read. Effective
   // terminality is DERIVED before every claim/sweep projection so a pre-v2 active
   // verifier FAIL can never re-enter the ready queue while awaiting reconciliation.
@@ -506,6 +514,15 @@ export function failedGateStateHash(item: WorkItem): string {
   // domain before invoking foundation-v4's strict canonical hasher.
   const persistedDomain = JSON.parse(JSON.stringify(item)) as unknown;
   return hashCanonicalDomain("failed-gate-preclear-state-v2", persistedDomain);
+}
+
+/** Exact persisted pre-recall domain hash. The raw token affects the hash but is never exposed. */
+export function recallStateHash(item: WorkItem): string {
+  return hashCanonicalDomain("workitem-recall-before-state-v4", JSON.parse(JSON.stringify(item)) as unknown);
+}
+
+function recallTokenFingerprint(token: string): string {
+  return hashCanonicalDomain("workitem-recall-token-v4", { token });
 }
 
 function failedGateOperationId(
@@ -616,6 +633,17 @@ class IdempotentFailedSeal extends Error {
   constructor(public readonly item: WorkItem) {
     super("idempotent failed-gate seal replay");
   }
+}
+
+class IdempotentRecall extends Error {
+  constructor(public readonly item: WorkItem) {
+    super("idempotent pause/recall replay");
+  }
+}
+
+const PAUSE_OPERATION_REPLAY = Symbol("workitem.pause-operation-replay");
+export function isPauseOperationReplay(item: WorkItem): boolean {
+  return (item as WorkItem & { [PAUSE_OPERATION_REPLAY]?: boolean })[PAUSE_OPERATION_REPLAY] === true;
 }
 
 export class WorkItemRepositorySubstrate implements IWorkItemStore {
@@ -1221,12 +1249,19 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // complete: holder + COMPLETABLE + the completion-gate met.
     add("complete", isHolder && COMPLETABLE_PHASES.includes(status) && gateMet,
       !isHolder ? notHolder : !COMPLETABLE_PHASES.includes(status) ? `complete requires in_progress or review, was ${status}` : "completion-gate unmet — downstream completionDependsOn children are not all done");
-    // S3 (idea-454): pause (ready → paused) / unpause (paused → ready) — CREATOR-only or Director.
-    const canSuspend = isCreator || caller.role === "director";
-    add("pause", canSuspend && status === "ready",
-      !canSuspend ? "pause requires the item's creator or Director" : `pause requires ready, was ${status}`);
-    add("unpause", canSuspend && status === "paused",
-      !canSuspend ? "unpause requires the item's creator or Director" : `unpause requires paused, was ${status}`);
+    // Mission-140 pause/recall authority. Resolve immutable family creator rather than
+    // trusting successor createdBy/revisedBy; holder status alone grants neither verb.
+    const isOriginalCreator = await this.originalCreatorAgentId(w) === caller.agentId;
+    const isSteward = caller.role === "architect" || caller.role === "director";
+    const pausePhase = ["ready", "claimed", "in_progress", "blocked"].includes(status);
+    const canPause = status === "ready" ? (isOriginalCreator || isSteward) : isSteward;
+    add("pause", canPause && pausePhase,
+      !canPause ? "pause requires original creator/architect/Director at ready or architect/Director for active recall" : `pause requires ready|claimed|in_progress|blocked, was ${status}`);
+    const lastRecall = (w.recallHistory ?? []).at(-1);
+    const canCreatorUnpause = isOriginalCreator && !w.predecessorPhysicalId && lastRecall?.actor.agentId === caller.agentId;
+    const canUnpause = isSteward || canCreatorUnpause;
+    add("unpause", canUnpause && status === "paused",
+      !canUnpause ? "unpause requires the original creator who paused this unchanged row, architect, or Director" : `unpause requires paused, was ${status}`);
 
     return { workId: w.id, ...observation, status, isHolder, gateMet, moves };
   }
@@ -1472,37 +1507,212 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     });
   }
 
-  // ── S3 (idea-454) — paused/disabled dormancy state ────────────────────────
-  async pauseWork(workId: string, actor: { agentId: string; role: string }, _reason?: string): Promise<WorkItem | null> {
-    return this.tryCasUpdate(workId, (w) => {
-      this.assertNotFailedSealed(w);
-      // AUTHZ (high-stakes lifecycle-suspension): CREATOR-only (server-stamped createdBy) OR Director.
-      const isCreator = w.createdBy?.agentId === actor.agentId;
-      if (!isCreator && actor.role !== "director") {
-        throw new TransitionRejected(`pause requires the item's creator (${w.createdBy?.agentId ?? "unknown"}) or Director, not ${actor.role}/${actor.agentId}`);
+  // ── Mission-140 pause/recall + scalar recommit ────────────────────────────
+  private async resolvePauseLocator(request: { workId?: string; logicalId?: string }): Promise<string> {
+    const hasPhysical = typeof request.workId === "string" && request.workId.length > 0;
+    const hasLogical = typeof request.logicalId === "string" && request.logicalId.length > 0;
+    if (hasPhysical === hasLogical) throw new TransitionRejected("exactly one of workId or logicalId is required");
+    if (hasPhysical) return request.workId!; // exact historical IDs never follow successors
+    const logicalId = request.logicalId!;
+    const pin = this.currentness.currentPin();
+    if (pin?.mode === "generation") {
+      const binding = pin.generation.bindings[logicalId];
+      if (!binding) throw new TransitionRejected(`logical WorkItem ${logicalId} has no current binding in generation ${pin.head.generation}`);
+      return binding.physicalId;
+    }
+    return logicalId; // deterministic legacy projection
+  }
+
+  private async originalCreatorAgentId(item: WorkItem): Promise<string | undefined> {
+    const pin = this.currentness.currentPin();
+    if (pin?.mode !== "generation") return item.createdBy?.agentId;
+    const logicalId = item.logicalId ?? item.id;
+    const raw = await this.substrate.get<Record<string, unknown>>("WorkRevisionFamily", logicalId);
+    if (!raw) throw new TransitionRejected(`revision family ${logicalId} is missing; original-creator authority cannot be resolved`);
+    const family = decodeEnvelopeToFlat(raw, "WorkRevisionFamily") as unknown as { originalCreatedBy?: { agentId?: string } };
+    const creator = family.originalCreatedBy?.agentId;
+    if (!creator) throw new TransitionRejected(`revision family ${logicalId} has no server-derived original creator`);
+    return creator;
+  }
+
+  private assertPauseExpectations(item: WorkItem, request: { expectedRevision?: number; expectedGeneration?: number }): void {
+    const pin = this.currentness.currentPin();
+    const revision = item.revision ?? 1;
+    const generation = pin?.mode === "generation" ? pin.head.generation : 0;
+    if (request.expectedRevision !== undefined && request.expectedRevision !== revision) {
+      throw new TransitionRejected(`pause currentness mismatch: expected revision ${request.expectedRevision}, current ${revision}`);
+    }
+    if (request.expectedGeneration !== undefined && request.expectedGeneration !== generation) {
+      throw new TransitionRejected(`pause currentness mismatch: expected generation ${request.expectedGeneration}, current ${generation}`);
+    }
+  }
+
+  async pauseWork(request: PauseWorkRequestV4, actor: { agentId: string; role: string }): Promise<WorkItem | null> {
+    if (!this.currentness.currentPin()) return this.withWriterFence(() => this.pauseWork(request, actor));
+    if (!request.operationId?.trim()) throw new TransitionRejected("pause operationId is required");
+    if (!request.reason?.trim()) throw new TransitionRejected("pause reason is required");
+    const workId = await this.resolvePauseLocator(request);
+    const requestHash = hashCanonicalDomain("workitem-pause-request-v4", {
+      workId, operationId: request.operationId, reason: request.reason,
+      expectedRevision: request.expectedRevision ?? null,
+      expectedGeneration: request.expectedGeneration ?? null,
+      actor,
+    });
+    try {
+      return await this.tryCasUpdate(workId, async (w, resourceVersion) => {
+        const replay = (w.recallHistory ?? []).find((entry) => entry.operationId === request.operationId);
+        if (replay) {
+          if (replay.requestHash !== requestHash) throw new TransitionRejected(`pause operation ${request.operationId} was already used with different bytes`);
+          throw new IdempotentRecall(w);
+        }
+        this.assertNotFailedSealed(w);
+        this.assertPauseExpectations(w, request);
+        if (!["ready", "claimed", "in_progress", "blocked"].includes(w.status)) {
+          throw new TransitionRejected(`pause requires ready|claimed|in_progress|blocked, was ${w.status}`);
+        }
+        if (w.status === "ready" && w.lease) throw new TransitionRejected(`pause rejected corrupt ready row ${w.id}: unexpected live lease`);
+        if (w.status !== "ready" && !w.lease) throw new TransitionRejected(`pause rejected corrupt active row ${w.id}: exact holder lease is missing`);
+        if (w.status === "blocked" && !w.blockedOn) throw new TransitionRejected(`pause rejected corrupt blocked row ${w.id}: blocker projection is missing`);
+        const isCreator = await this.originalCreatorAgentId(w) === actor.agentId;
+        const isSteward = actor.role === "architect" || actor.role === "director";
+        if (w.status === "ready" ? (!isCreator && !isSteward) : !isSteward) {
+          const requirement = w.status === "ready" ? "original creator, architect, or Director" : "architect or Director for active recall";
+          throw new TransitionRejected(`pause requires ${requirement}, not ${actor.role}/${actor.agentId}`);
+        }
+
+        const nowISO = this.clock.now().toISOString();
+        const identity = legacyRevisionIdentity(w);
+        const stateHash = recallStateHash(w);
+        const before: RecallBeforeStateV4 = {
+          physicalId: w.id,
+          logicalId: identity.logicalId,
+          revision: identity.revision,
+          topologyGeneration: w.topologyGeneration ?? null,
+          phase: w.status as RecallBeforeStateV4["phase"],
+          resourceVersion,
+          stateHash,
+          blockedOn: w.blockedOn ? {
+            blockerKind: w.blockedOn.blockerKind,
+            blockerIds: [...(w.blockedOn.blockerIds ?? [])],
+            reason: w.blockedOn.reason,
+          } : null,
+          lease: w.lease ? {
+            holder: w.lease.holder,
+            claimedAt: w.lease.claimedAt,
+            expiresAt: w.lease.expiresAt,
+            heartbeatAt: w.lease.heartbeatAt,
+            tokenFingerprint: recallTokenFingerprint(w.lease.token),
+          } : null,
+        };
+        const holderNoticeIntentId = w.lease
+          ? hashCanonicalDomain("workitem-recall-notice-v4", {
+              physicalId: w.id, operationId: request.operationId,
+              exactHolder: w.lease.holder, beforeStateHash: stateHash,
+            })
+          : null;
+        const history: RecallHistoryEntryV4 = {
+          operationId: request.operationId,
+          requestHash,
+          actor: { role: actor.role, agentId: actor.agentId },
+          reason: request.reason,
+          recalledAt: nowISO,
+          beforeStateHash: stateHash,
+          before,
+          holderNoticeIntentId,
+        };
+        const notice: PendingRecallIntentV4 | null = w.lease ? {
+          intentId: holderNoticeIntentId!,
+          operationId: request.operationId,
+          exactHolderAgentId: w.lease.holder,
+          beforeStateHash: stateHash,
+          createdAt: nowISO,
+          projectedMessageId: null,
+          projectedAt: null,
+        } : null;
+        return {
+          ...w,
+          status: "paused" as const,
+          lease: null,
+          blockedOn: null,
+          recallHistory: [...(w.recallHistory ?? []), history],
+          pendingRecallIntents: notice ? [...(w.pendingRecallIntents ?? []), notice] : (w.pendingRecallIntents ?? []),
+          recallNoticePending: notice ? true : (w.recallNoticePending ?? false),
+          ...accrueExitingState(w, nowISO),
+          updatedAt: nowISO,
+        };
+      });
+    } catch (error) {
+      if (error instanceof IdempotentRecall) {
+        Object.defineProperty(error.item, PAUSE_OPERATION_REPLAY, { value: true, enumerable: false });
+        return error.item;
       }
-      // READY-ONLY: a claimed/in_progress/blocked item holds a lease — pausing would zombie the
-      // claimant. Use release/abandon for leased work (v1: no force-release).
-      if (w.status !== "ready") {
-        throw new TransitionRejected(`pause requires ready (no lease to zombie), was ${w.status} — use release/abandon for leased work`);
+      throw error;
+    }
+  }
+
+  async unpauseWork(request: UnpauseWorkRequestV4, actor: { agentId: string; role: string }): Promise<WorkItem | null> {
+    if (!this.currentness.currentPin()) return this.withWriterFence(() => this.unpauseWork(request, actor));
+    const workId = await this.resolvePauseLocator(request);
+    return this.tryCasUpdate(workId, async (w) => {
+      this.assertNotFailedSealed(w);
+      this.assertPauseExpectations(w, request);
+      if (w.status !== "paused") throw new TransitionRejected(`unpause requires paused, was ${w.status}`);
+      const isCreator = await this.originalCreatorAgentId(w) === actor.agentId;
+      const lastRecall = (w.recallHistory ?? []).at(-1);
+      const creatorCompatibility = isCreator
+        && !w.predecessorPhysicalId
+        && lastRecall?.actor.agentId === actor.agentId;
+      const isSteward = actor.role === "architect" || actor.role === "director";
+      if (!creatorCompatibility && !isSteward) {
+        throw new TransitionRejected(`unpause requires the original creator who paused this unchanged row, architect, or Director; holder/reviser status grants no authority`);
       }
       const nowISO = this.clock.now().toISOString();
-      return { ...w, status: "paused" as const, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
+      return { ...w, status: "ready" as const, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
 
-  async unpauseWork(workId: string, actor: { agentId: string; role: string }): Promise<WorkItem | null> {
-    return this.tryCasUpdate(workId, (w) => {
-      this.assertNotFailedSealed(w);
-      const isCreator = w.createdBy?.agentId === actor.agentId;
-      if (!isCreator && actor.role !== "director") {
-        throw new TransitionRejected(`unpause requires the item's creator (${w.createdBy?.agentId ?? "unknown"}) or Director, not ${actor.role}/${actor.agentId}`);
+  async listPendingRecallNoticeItems(limit = LIST_CAP): Promise<{ items: WorkItem[]; truncated: boolean }> {
+    if (!this.currentness.currentPin()) return this.withReadPin(() => this.listPendingRecallNoticeItems(limit));
+    const cap = Math.min(Math.max(1, limit), LIST_CAP);
+    const { items } = await this.substrate.list<WorkItem>(KIND, {
+      filter: { "status.recallNoticePending": true },
+      limit: cap,
+    });
+    const pending = items.map(cloneWorkItem).filter((item) =>
+      (item.pendingRecallIntents ?? []).some((intent) => !intent.projectedMessageId));
+    return { items: pending, truncated: items.length >= cap };
+  }
+
+  async markRecallNoticeProjected(workId: string, intentId: string, messageId: string): Promise<WorkItem | null> {
+    return this.withWriterFence(async () => {
+      for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
+        const env = await this.substrate.getWithRevision<WorkItem>(KIND, workId);
+        if (!env) return null;
+        const item = cloneWorkItem(env.entity);
+        const intents = item.pendingRecallIntents ?? [];
+        const index = intents.findIndex((intent) => intent.intentId === intentId);
+        if (index < 0) throw new TransitionRejected(`recall notice intent ${intentId} not found on ${workId}`);
+        const existing = intents[index];
+        if (existing.projectedMessageId) {
+          if (existing.projectedMessageId !== messageId) {
+            throw new TransitionRejected(`recall notice intent ${intentId} already projected as ${existing.projectedMessageId}`);
+          }
+          return item;
+        }
+        const nowISO = this.clock.now().toISOString();
+        const updatedIntents = intents.map((intent, i) => i === index
+          ? { ...intent, projectedMessageId: messageId, projectedAt: nowISO }
+          : intent);
+        const updated: WorkItem = {
+          ...item,
+          pendingRecallIntents: updatedIntents,
+          recallNoticePending: updatedIntents.some((intent) => !intent.projectedMessageId),
+          updatedAt: nowISO,
+        };
+        const saved = await this.substrate.putIfMatch(KIND, updated, env.resourceVersion);
+        if (saved.ok) return cloneWorkItem(updated);
       }
-      if (w.status !== "paused") throw new TransitionRejected(`unpause requires paused, was ${w.status}`);
-      // → ready: re-enters the NORMAL claim gate — deps + roleEligibility are re-validated fail-closed
-      // at the subsequent claim (claimWorkItem's authority). Start-gates are NOT bypassed.
-      const nowISO = this.clock.now().toISOString();
-      return { ...w, status: "ready" as const, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
+      throw new Error(`CAS retry limit exceeded marking recall notice ${intentId}`);
     });
   }
 

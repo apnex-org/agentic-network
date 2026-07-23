@@ -148,6 +148,10 @@ describe("Mission-140 universal WorkGraph currentness fence v4", () => {
     const successor = work("a-r2", {
       logicalId: "a", revision: 2, predecessorPhysicalId: "a-r1",
       runbook: "semantic successor",
+      // Deliberate laundering probe: pause authority must resolve immutable family
+      // originalCreatedBy, never this successor-local stamp or revisedBy.
+      createdBy: { role: "engineer", agentId: "successor-author" },
+      revisedBy: { role: "engineer", agentId: "successor-author" },
     });
     const second = build([successor], 2, 1, "activate-2", { a: family });
     await stage(storage, second);
@@ -157,6 +161,18 @@ describe("Mission-140 universal WorkGraph currentness fence v4", () => {
         code: "workgraph.currentness.old_or_draft",
         current: { logicalId: "a", physicalId: "a-r2", revision: 2, generation: 2 },
       });
+    await expect(repo.pauseWork({ workId: "a-r1", operationId: "old-pause", reason: "must reject" }, { role: "architect", agentId: "architect-1" }))
+      .rejects.toMatchObject({ code: "workgraph.currentness.old_or_draft" });
+    const launderedMoves = await repo.getLegalMoves("a-r2", { role: "engineer", agentId: "successor-author" });
+    expect(launderedMoves!.moves.find((move) => move.verb === "pause")!.legal).toBe(false);
+    await expect(repo.pauseWork({ logicalId: "a", operationId: "laundered-pause", reason: "must reject" }, { role: "engineer", agentId: "successor-author" }))
+      .rejects.toThrow("original creator");
+    const paused = await repo.pauseWork({
+      logicalId: "a", operationId: "logical-pause", reason: "current logical target",
+      expectedRevision: 2, expectedGeneration: 2,
+    }, { role: "architect", agentId: "architect-1" });
+    expect(paused).toMatchObject({ id: "a-r2", status: "paused", revision: 2 });
+    await repo.unpauseWork({ logicalId: "a", expectedRevision: 2, expectedGeneration: 2 }, { role: "architect", agentId: "architect-1" });
     const current = await repo.claimWorkItem("a-r2", "engineer-1", "engineer");
     expect(current?.status).toBe("claimed");
   });

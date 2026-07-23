@@ -104,10 +104,19 @@ describe("Mission-140 revision storage real PostgreSQL", () => {
       localExecutionIdentity: "3".repeat(64),
       topologyGeneration: 7,
       recallHistory: [{
-        operationId: "pause-1", actor: { role: "architect", agentId: "architect-1" },
-        reason: "revision", recalledAt: NOW, beforeStateHash: "4".repeat(64),
+        operationId: "pause-1", requestHash: "5".repeat(64), actor: { role: "architect", agentId: "architect-1" },
+        reason: "revision", recalledAt: NOW, beforeStateHash: "4".repeat(64), holderNoticeIntentId: "intent-1",
+        before: {
+          physicalId: "physical-1", logicalId: "logical-1", revision: 2, topologyGeneration: 7,
+          phase: "claimed", resourceVersion: "rv-before", stateHash: "4".repeat(64), blockedOn: null,
+          lease: { holder: "agent-1", claimedAt: NOW, expiresAt: NOW, heartbeatAt: NOW, tokenFingerprint: "6".repeat(64) },
+        },
       }],
-      pendingRecallIntents: [{ intentId: "intent-1", exactHolderAgentId: "agent-1", createdAt: NOW }],
+      pendingRecallIntents: [{
+        intentId: "intent-1", operationId: "pause-1", exactHolderAgentId: "agent-1",
+        beforeStateHash: "4".repeat(64), createdAt: NOW, projectedMessageId: null, projectedAt: null,
+      }],
+      recallNoticePending: true,
     });
     await substrate.put("WorkItem", item);
     const raw = await substrate.get<Record<string, unknown>>("WorkItem", item.id);
@@ -190,6 +199,7 @@ describe("Mission-140 revision storage real PostgreSQL", () => {
       ["workrevnotice_status_projected_idx", `SELECT id FROM entities WHERE kind='WorkGraphRevisionNotice' AND data#>>'{status,projected}'='false'`],
       ["workitem_status_recallhistory_gin_idx", `SELECT id FROM entities WHERE kind='WorkItem' AND data#>'{status,recallHistory}' @> '[{"operationId":"pause-1"}]'::jsonb`],
       ["workitem_status_pendingrecallintents_gin_idx", `SELECT id FROM entities WHERE kind='WorkItem' AND data#>'{status,pendingRecallIntents}' @> '[{"intentId":"intent-1"}]'::jsonb`],
+      ["workitem_status_recallnoticepending_idx", `SELECT id FROM entities WHERE kind='WorkItem' AND data#>>'{status,recallNoticePending}'='true'`],
     ];
     for (const [indexName, sql] of plans) {
       const result = await pool.query<{ "QUERY PLAN": string }>(`EXPLAIN (COSTS OFF) ${sql}`);

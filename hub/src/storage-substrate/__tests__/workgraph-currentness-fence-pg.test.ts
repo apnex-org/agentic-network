@@ -140,5 +140,28 @@ describe("Mission-140 WorkGraph writer/read fence real PostgreSQL", () => {
       await storage.activateGeneration(3, "pg-fence-3", NOW);
       return "mixed-read-must-not-escape";
     })).rejects.toMatchObject({ code: "workgraph.currentness.head_changed" });
+
+    // Active recall and a holder heartbeat serialize through the SAME PostgreSQL
+    // advisory-lock session. Either the heartbeat linearizes first and is captured,
+    // or pause linearizes first and rejects the obsolete token; no zombie survives.
+    const token = (await workItems.getWorkItem("a"))!.lease!.token;
+    const [pauseRace, renewRace] = await Promise.allSettled([
+      workItems.pauseWork({
+        logicalId: "a", operationId: "pg-pause-renew-race", reason: "real-PG race proof",
+        expectedRevision: 1, expectedGeneration: 3,
+      }, { role: "architect", agentId: "architect-1" }),
+      workItems.renewLease("a", "engineer-1", token),
+    ]);
+    expect(pauseRace.status).toBe("fulfilled");
+    expect(["fulfilled", "rejected"]).toContain(renewRace.status);
+    const recalled = (await workItems.getWorkItem("a"))!;
+    expect(recalled).toMatchObject({ status: "paused", lease: null, recallNoticePending: true });
+    expect(recalled.recallHistory).toHaveLength(1);
+    expect(recalled.recallHistory![0].before.phase).toBe("claimed");
+    expect(recalled.pendingRecallIntents![0].exactHolderAgentId).toBe("engineer-1");
+    expect(JSON.stringify(recalled)).not.toContain(token);
+    await expect(workItems.renewLease("a", "engineer-1", token)).rejects.toThrow();
+    const raw = await substrate.get<Record<string, unknown>>("WorkItem", "a");
+    expect((raw!.status as Record<string, unknown>).recallNoticePending).toBe(true);
   }, OP_TIMEOUT);
 });

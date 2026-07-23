@@ -23,6 +23,7 @@ import { escalateBareEnvelope } from "./bare-envelope-escalation.js";
 // emit them push-native (requeue = "claimable again"; poison-abandon = terminal).
 import { emitWorkTransition } from "./work-item-events.js";
 import { projectPendingFailedSealNotices } from "./failed-gate-notice-projector.js";
+import { projectPendingRecallNotices } from "./recall-notice-projector.js";
 
 /** Default per-ITEM poison cap (architect-confirmed N=3; configurable). After this many
  *  lease-expiry re-queue cycles the item is terminally abandoned. */
@@ -152,8 +153,22 @@ export class WorkItemLeaseSweeper {
     const result: WorkItemLeaseSweepResult = { scanned: 0, requeued: 0, abandoned: 0, failedSealed: 0, skipped: 0, errors: 0, quarantined: 0, agentsQuarantined: 0 };
     const ctx = this.contextProvider.forSweeper();
 
-    // Restart path for born-native persist-first intents. Projection failure never
-    // weakens FAIL authority or prevents the lease safety pass; retry next tick.
+    // Restart paths for persist-first exact-holder intents. Projection failure never
+    // weakens recall/FAIL authority or prevents the lease safety pass; retry next tick.
+    try {
+      if (typeof this.store.listPendingRecallNoticeItems === "function") {
+        const projection = await projectPendingRecallNotices(ctx, this.store);
+        if (projection.errors.length > 0) {
+          result.errors += projection.errors.length;
+          this.metrics?.increment("workitem_recall.notice_projection_error", { errors: projection.errors.length });
+          this.logger.warn("recall notice outbox projection deferred for one or more intents:", projection.errors);
+        }
+      }
+    } catch (projectionError) {
+      result.errors += 1;
+      this.metrics?.increment("workitem_recall.notice_projection_error", { error: (projectionError as Error)?.message ?? String(projectionError) });
+      this.logger.warn("recall notice outbox projection deferred:", projectionError);
+    }
     try {
       await projectPendingFailedSealNotices(ctx, this.store);
     } catch (projectionError) {
