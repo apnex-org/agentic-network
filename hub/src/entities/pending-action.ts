@@ -120,7 +120,7 @@ export interface IPendingActionStore {
   findOpenByNaturalKey(opts: { targetAgentId: string; entityRef: string; dispatchType: PendingActionDispatchType }): Promise<PendingActionItem | null>;
   listForAgent(
     targetAgentId: string,
-    filter?: { state?: PendingActionState },
+    filter?: { state?: PendingActionState; states?: PendingActionState[] },
   ): Promise<PendingActionItem[]>;
   receiptAck(id: string): Promise<PendingActionItem | null>;
   completionAck(id: string): Promise<PendingActionItem | null>;

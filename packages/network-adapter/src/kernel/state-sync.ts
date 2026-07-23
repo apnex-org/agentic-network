@@ -1,7 +1,7 @@
 /**
  * State sync — called on entry to the `synchronizing` phase.
  *
- * Runs `get_task` + `get_pending_actions` in parallel, then calls
+ * Runs a bounded, role-aware reconnect reconciliation, then calls
  * `completeSync()` to transition to `streaming` and flush buffered events.
  *
  * The enriched handshake is NOT called here — `McpAgentClient.runHandshake`
@@ -25,7 +25,16 @@ export interface StateSyncContext {
   completeSync: () => void;
   /** Structured logger. A legacy `(msg: string) => void` is auto-bridged. */
   log: ILogger | LegacyStringLogger;
-  /** Optional hook for per-engineer logging of pending directives. */
+  /** Caller role; architect-only aggregate reads are skipped for other seats. */
+  role?: string;
+  /**
+   * bug-343: bounded deterministic reconnect jitter computed by McpAgentClient.
+   * Zero on first boot; reconnects spread across [0,max] instead of synchronizing.
+   */
+  admissionDelayMs?: number;
+  /** Test seam for the admission delay (default: setTimeout). */
+  sleep?: (ms: number) => Promise<void>;
+  /** Optional hook for legacy per-engineer pending directives (retained API; no longer populated). */
   onPendingTask?: (task: Record<string, unknown>) => void;
   /**
    * ADR-017 drain-on-wake. Called once per item returned from
@@ -39,65 +48,66 @@ export interface StateSyncContext {
   onPendingActionItem?: (item: DrainedPendingAction) => void;
 }
 
+/**
+ * Stable per-agent jitter. FNV-1a keeps the value deterministic across process
+ * restarts (no flaky timing) while distinct fleet names spread across the full
+ * admission window. The result is always within [0, maxMs].
+ */
+export function computeReconnectSyncJitter(seed: string, maxMs: number): number {
+  const bound = Math.max(0, Math.floor(maxMs));
+  if (bound === 0) return 0;
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < seed.length; i++) {
+    hash ^= seed.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0) % (bound + 1);
+}
+
 export async function performStateSync(ctx: StateSyncContext): Promise<void> {
   const log = normalizeToILogger(ctx.log, "StateSync");
   log.log("agent.sync.start", undefined, "[StateSync] Starting state sync...");
 
   try {
-    // ADR-017 additive: drain_pending_actions runs alongside the legacy
-    // surface. Hubs that don't expose the tool yet (pre-ADR-017) return
-    // an error here which we swallow — the other two calls still land.
-    // work-162 (A1): the legacy `get_task` directive-fetch is retired with the
-    // Task subsystem. `list_missions` ([Any]) replaces it as the sync-phase
-    // liveness read-probe — a benign read every role can issue, so the
-    // dispatcher records a read-success and the agent transitions to online.
-    // bug-206: this probe is ALREADY structurally cache-exempt — `executeTool`
-    // routes it through `transport.request` DIRECTLY (mcp-agent-client.ts),
-    // bypassing the cognitive pipeline (and hence ToolResultCache) entirely, so
-    // it always round-trips. It needs no PROBE_CALL_TAG; routing it through
-    // `call({probe:true})` would instead newly subject it to the cognitive
-    // middlewares (e.g. ResponseSummarizer) — a regression. The tag guards the
-    // OTHER probes that DO go through `call()` (the liveness-watchdog probe and
-    // the poll-backstop heartbeat).
-    const [directive, pendingActions, drainedRaw] = await Promise.all([
-      ctx.executeTool("list_missions", {}).catch((err: unknown) => {
-        log.log(
-          "agent.sync.list_missions.failed",
-          { error: String(err) },
-          `[StateSync] list_missions: ${err}`
-        );
-        return null;
-      }),
-      ctx.executeTool("get_pending_actions", {}).catch((err: unknown) => {
-        log.log(
-          "agent.sync.get_pending_actions.failed",
-          { error: String(err) },
-          `[StateSync] get_pending_actions: ${err}`
-        );
-        return null;
-      }),
-      ctx.executeTool("drain_pending_actions", {}).catch((err: unknown) => {
-        log.log(
-          "agent.sync.drain_pending_actions.failed",
-          { error: String(err) },
-          `[StateSync] drain_pending_actions: ${err}`
-        );
-        return null;
-      }),
-    ]);
-
-    if (directive && typeof directive === "object") {
-      const d = directive as Record<string, unknown>;
-      if (d.task && typeof d.task === "object") {
-        const task = d.task as Record<string, unknown>;
-        log.log(
-          "agent.sync.pending_task",
-          { taskId: String(task.taskId ?? "unknown") },
-          `[StateSync] Pending task: ${task.taskId ?? "unknown"}`
-        );
-        if (ctx.onPendingTask) ctx.onPendingTask(task);
-      }
+    // bug-343 reconnect admission: stagger only when McpAgentClient supplies a
+    // positive reconnect delay. The delay is bounded and deterministic per
+    // agent, so tests and operators can reason about it while fleet members do
+    // not align on the same PostgreSQL query instant.
+    const admissionDelayMs = Math.max(0, Math.floor(ctx.admissionDelayMs ?? 0));
+    if (admissionDelayMs > 0) {
+      log.log(
+        "agent.sync.admission_jitter",
+        { delayMs: admissionDelayMs },
+        `[StateSync] reconnect admission jitter ${admissionDelayMs}ms`,
+      );
+      await (ctx.sleep ?? ((ms) => new Promise<void>((resolve) => setTimeout(resolve, ms))))(admissionDelayMs);
     }
+
+    const callOrNull = async (name: string): Promise<unknown> => {
+      try {
+        return await ctx.executeTool(name, {});
+      } catch (err) {
+        log.log(
+          `agent.sync.${name}.failed`,
+          { error: String(err) },
+          `[StateSync] ${name}: ${err}`,
+        );
+        return null;
+      }
+    };
+
+    // bug-343: one admitted request at a time per reconnect. The former
+    // Promise.all issued three scans per client simultaneously. get_now is the
+    // liveness probe now: unlike list_missions it is store-free and cannot scan
+    // Mission/Idea history. get_pending_actions is architect-only, so engineer
+    // and verifier reconnects no longer issue a guaranteed RBAC rejection.
+    await callOrNull("get_now");
+    const pendingActions = ctx.role === "architect"
+      ? await callOrNull("get_pending_actions")
+      : null;
+    // ADR-017 drain remains the authoritative per-agent recovery read/mutation;
+    // its repository path is target+state filtered and index-backed.
+    const drainedRaw = await callOrNull("drain_pending_actions");
 
     if (pendingActions && typeof pendingActions === "object") {
       const pa = pendingActions as Record<string, unknown>;

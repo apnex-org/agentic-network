@@ -22,7 +22,7 @@
  * it. A new filter adds its key here; if untranslatable it fails W1.1c.
  */
 export const SUBSTRATE_FILTERABLE_KEYS: Record<string, string[]> = {
-  Agent: ["fingerprint"],
+  Agent: ["fingerprint", "currentSessionId", "registeredSessions"],
   Audit: ["actor"],
   Bug: ["status", "severity", "class", "sourceThreadId", "sourceActionId", "sourceIdeaId"],
   Idea: ["status", "missionId", "sourceThreadId", "sourceActionId"],
@@ -30,7 +30,7 @@ export const SUBSTRATE_FILTERABLE_KEYS: Record<string, string[]> = {
   Mission: ["status", "sourceThreadId", "sourceActionId"],
   PendingAction: ["state", "naturalKey", "targetAgentId", "dispatchType", "entityRef"],
   Proposal: ["status", "sourceThreadId", "sourceActionId"],
-  Thread: ["status", "cascadePending", "currentTurnAgentId", "recipientAgentId"],
+  Thread: ["status", "cascadePending", "currentTurn", "currentTurnAgentId", "recipientAgentId"],
   Document: ["category"],
   ReviewHistoryEntry: ["taskId"],
   ThreadHistoryEntry: ["threadId"],
@@ -86,6 +86,7 @@ export const EXCLUDED_FILTERABLE_KEYS: Record<string, Record<string, string>> = 
  * SUBSTRATE_FILTERABLE_KEYS.
  */
 export const ARRAY_FILTERABLE_KEYS: Record<string, string[]> = {
+  Agent: ["registeredSessions"],
   WorkItem: ["roleEligibility", "completionDependsOn"],
 };
 
@@ -154,8 +155,8 @@ export const ANNOTATED_FILTER_SITES: AnnotatedFilterSite[] = [
     file: "agent-repository-substrate.ts",
     kind: "Agent",
     reason: "spread",
-    keys: ["fingerprint"],
-    note: "listAgentsRaw spreads `...(envelopeFilter ? {filter} : {})`; envelopeFilter = agentFilterToEnvelope(opts.filter), which pre-translates the flat `fingerprint` → metadata.fingerprint. Keys are caller-determined.",
+    keys: ["fingerprint", "currentSessionId", "registeredSessions"],
+    note: "listAgentsRaw spreads `...(envelopeFilter ? {filter} : {})`; envelopeFilter = agentFilterToEnvelope(opts.filter), which pre-translates identity + persisted-session keys to their envelope paths. Keys are caller-determined.",
   },
   {
     file: "message-repository-substrate.ts",
@@ -168,8 +169,8 @@ export const ANNOTATED_FILTER_SITES: AnnotatedFilterSite[] = [
     file: "thread-repository-substrate.ts",
     kind: "Thread",
     reason: "spread",
-    keys: ["recipientAgentId", "currentTurnAgentId"],
-    note: "listThreads spreads `...(equalityFilter ?? {})`; the directed-discovery keys (recipientAgentId / currentTurnAgentId) are pushed in by thread-policy (bug-170). status/cascadePending are inline-derived.",
+    keys: ["recipientAgentId", "currentTurnAgentId", "currentTurn"],
+    note: "listThreads spreads `...(equalityFilter ?? {})`; directed discovery supplies recipient/currentTurnAgentId and bug-343 get_pending_actions supplies currentTurn. status/cascadePending are inline-derived.",
   },
   {
     file: "migration-runner.ts",

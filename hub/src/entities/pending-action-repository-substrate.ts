@@ -17,7 +17,7 @@
  * W4.x.6 — seventh-slice of W4.x sweep after W4.x.5 MissionRepositorySubstrate.
  */
 
-import type { HubStorageSubstrate } from "../storage-substrate/index.js";
+import type { Filter, HubStorageSubstrate } from "../storage-substrate/index.js";
 import type {
   IPendingActionStore,
   PendingActionItem,
@@ -129,11 +129,18 @@ export class PendingActionRepositorySubstrate implements IPendingActionStore {
 
   async listForAgent(
     targetAgentId: string,
-    filter?: { state?: PendingActionState },
+    filter?: { state?: PendingActionState; states?: PendingActionState[] },
   ): Promise<PendingActionItem[]> {
-    // Substrate-side filter on pa_target_idx hot-path + optional state filter
-    const substrateFilter: Record<string, string> = { targetAgentId };
-    if (filter?.state) substrateFilter.state = filter.state;
+    // Substrate-side target + state filtering. bug-343 adds a composite index
+    // for the reconnect paths and an explicit multi-state shape so callers do
+    // not fetch every historical queue item for the agent just to discard the
+    // terminal rows in memory.
+    const substrateFilter: Filter = { targetAgentId };
+    if (filter?.state) {
+      substrateFilter.state = filter.state;
+    } else if (filter?.states && filter.states.length > 0) {
+      substrateFilter.state = { $in: filter.states };
+    }
     const { items } = await this.substrate.list<PendingActionItem>(KIND, {
       filter: substrateFilter,
       limit: LIST_PREFETCH_CAP,

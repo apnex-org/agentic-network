@@ -10,8 +10,8 @@
  *   - Role registration. Plain `register_role` when `handshake` is omitted;
  *     the full enriched handshake via `performHandshake` when `handshake`
  *     is supplied.
- *   - State sync on entry to `synchronizing` (`get_task` +
- *     `get_pending_actions` via `performStateSync`).
+ *   - Bounded role-aware state sync on entry to `synchronizing`
+ *     (`get_now`, architect aggregate, and per-agent queue drain).
  *   - `session_invalid` retry-once on `call()`: close the wire, reopen,
  *     re-handshake, retry the failed call exactly once on the fresh
  *     session.
@@ -68,7 +68,7 @@ import type {
   Tool as CognitiveTool,
 } from "@apnex/cognitive-layer";
 import { INTERNAL_CALL_TAG, PROBE_CALL_TAG } from "@apnex/cognitive-layer";
-import { performStateSync } from "./state-sync.js";
+import { computeReconnectSyncJitter, performStateSync } from "./state-sync.js";
 
 // Same list as McpConnectionManager. Matched case-insensitively.
 const SESSION_INVALID_PATTERNS = [
@@ -134,6 +134,12 @@ export interface McpAgentClientOptions {
    * Default false: full auto-sync (handshake → state sync → streaming).
    */
   manualSync?: boolean;
+  /**
+   * bug-343: maximum deterministic delay before RECONNECT state-sync (first
+   * boot remains immediate). Defaults to OIS_RECONNECT_SYNC_JITTER_MS or 1000.
+   * Set 0 for a deliberately unjittered test/client.
+   */
+  reconnectSyncJitterMs?: number;
 }
 
 export class McpAgentClient implements IAgentClient {
@@ -142,6 +148,7 @@ export class McpAgentClient implements IAgentClient {
   private readonly transport: ITransport;
   private readonly ownsTransport: boolean;
   private readonly manualSync: boolean;
+  private readonly reconnectSyncJitterMs: number;
   private readonly dedup: ReturnType<typeof createDedupFilter>;
   private readonly cognitive?: CognitivePipeline;
 
@@ -200,6 +207,14 @@ export class McpAgentClient implements IAgentClient {
     this.cfg = config;
     this.log = normalizeToILogger(config.logger, "McpAgentClient");
     this.manualSync = options.manualSync ?? false;
+    const envJitter = Number(process.env.OIS_RECONNECT_SYNC_JITTER_MS ?? "");
+    const chosenJitter = options.reconnectSyncJitterMs
+      ?? (Number.isFinite(envJitter) && process.env.OIS_RECONNECT_SYNC_JITTER_MS !== undefined
+        ? envJitter
+        : 1000);
+    this.reconnectSyncJitterMs = Number.isFinite(chosenJitter)
+      ? Math.max(0, Math.floor(chosenJitter))
+      : 1000;
     this.dedup = createDedupFilter(options.dedupCacheSize ?? 100);
     this.cognitive = options.cognitive;
 
@@ -489,8 +504,10 @@ export class McpAgentClient implements IAgentClient {
         // Transport brought up a fresh wire. Give it a new generation BEFORE
         // session bring-up so obsolete work is fenced and a new per-generation
         // single-flight can run even while the old one is still unwinding.
+        // Reconnect generations also enter through the bounded per-agent
+        // jitter window so a fleet recovery cannot stampede Hub state sync.
         this.activateWireGeneration();
-        void this.runSynchronizingPhase();
+        void this.runSynchronizingPhase({ isReconnect: true });
         return;
       case "displaced": {
         // The Hub has already committed a newer currentSessionId. This is a
@@ -596,7 +613,7 @@ export class McpAgentClient implements IAgentClient {
   // ── Internal: session bring-up (handshake + sync) ───────────────────
 
   private runSynchronizingPhase(
-    opts: { rethrowOnFailure?: boolean } = {},
+    opts: { rethrowOnFailure?: boolean; isReconnect?: boolean } = {},
   ): Promise<void> {
     const generation = this._wireGeneration;
     const existing = this.synchronizingInFlight.get(generation);
@@ -620,7 +637,7 @@ export class McpAgentClient implements IAgentClient {
 
   private async executeSynchronizingPhase(
     generation: number,
-    opts: { rethrowOnFailure?: boolean },
+    opts: { rethrowOnFailure?: boolean; isReconnect?: boolean },
   ): Promise<void> {
     if (!this.isCurrentWireGeneration(generation)) return;
     try {
@@ -643,10 +660,16 @@ export class McpAgentClient implements IAgentClient {
 
       // Every request and the terminal complete are generation-fenced. A stale
       // state-sync may unwind after reconnect, but it cannot publish streaming.
+      // Reconnect generations additionally apply deterministic per-agent jitter.
+      const jitterSeed = this.cfg.handshake?.name ?? `${this.cfg.role}:anonymous`;
       await performStateSync({
         executeTool: (n, a) => this.requestOnWireGeneration(generation, n, a),
         completeSync: () => this.completeSyncInternal(generation),
         log: this.log,
+        role: this.cfg.role,
+        admissionDelayMs: opts.isReconnect
+          ? computeReconnectSyncJitter(jitterSeed, this.reconnectSyncJitterMs)
+          : 0,
         onPendingTask: this.cfg.handshake?.onPendingTask,
         onPendingActionItem: this.cfg.handshake?.onPendingActionItem,
       });
@@ -809,7 +832,7 @@ export class McpAgentClient implements IAgentClient {
     }
     // Synchronously (well, awaited) run the bring-up before returning
     // so the retry-in-call() sees a bound session.
-    await this.runSynchronizingPhase();
+    await this.runSynchronizingPhase({ isReconnect: true });
   }
 
   // ── Internal: hub-event intake ──────────────────────────────────────

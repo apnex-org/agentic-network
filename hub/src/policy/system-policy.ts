@@ -10,9 +10,7 @@ import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import { RECENT_DETAILS_CAP } from "../observability/metrics.js";
-import { phaseFromEntity } from "../entities/shape-helpers.js";
 import { systemClock } from "../entities/clock.js";
-import type { Proposal, Thread } from "../state.js";
 
 // ── Handlers ────────────────────────────────────────────────────────
 
@@ -20,54 +18,48 @@ async function getPendingActions(_args: Record<string, unknown>, ctx: IPolicyCon
   // work-162 (A1): Task subsystem retired — the task-derived dimensions
   // (unreadReports / unreviewedTasks / clarificationsPending / orphanedReviews /
   // escalatedTasks) are dropped. This aggregator now surfaces proposals + threads.
-  const proposals = await ctx.stores.proposal.getProposals();
-  const threads = await ctx.stores.thread.listThreads();
+  //
+  // bug-343: every reconnect dimension is pushed to the substrate. The old
+  // implementation fetched the first 500 proposals, first 500 threads, and every
+  // queue item for the caller, then filtered in memory. Combined with list()'s
+  // former substrate-wide MAX(resource_version), concurrent reconnects became a
+  // whole-entity scan stampede. Keep these reads sequential (one admitted list
+  // per reconnect) and index-addressable by kind/status/turn/target.
 
   // idea-117 Phase 2c ckpt-B — suppress legacy-path re-triggers when a
   // thread already has a non-terminal queue item for the caller. The
   // architect's EventLoop consumes `threadsAwaitingReply` as a legacy
-  // backup path, independent of the ADR-017 queue. Before this fix, a
-  // sandwich that hit MAX_TOOL_ROUNDS left its queue item in
-  // receipt_acked forever AND the thread in currentTurn=architect —
-  // so every 300s poll re-fired the sandwich indefinitely, burning
-  // millions of Gemini tokens on failed retries. Excluding threads with
-  // enqueued/receipt_acked queue items here makes the legacy path purely
-  // a recovery fallback — it fires only when the queue has nothing
-  // actionable for that thread.
+  // backup path, independent of the ADR-017 queue.
   const callerAgent = await ctx.stores.engineerRegistry.getAgentForSession(ctx.sessionId);
   const inFlightThreadIds = new Set<string>();
   if (callerAgent) {
-    const callerQueue = await ctx.stores.pendingAction.listForAgent(callerAgent.id);
+    const callerQueue = await ctx.stores.pendingAction.listForAgent(callerAgent.id, {
+      states: ["enqueued", "receipt_acked"],
+    });
     for (const item of callerQueue) {
-      if (item.dispatchType !== "thread_message") continue;
-      if (item.state === "enqueued" || item.state === "receipt_acked") {
-        inFlightThreadIds.add(item.entityRef);
-      }
+      if (item.dispatchType === "thread_message") inFlightThreadIds.add(item.entityRef);
     }
   }
 
-  // mission-89 Phase 4 (bug-137 closure): envelope-aware phase reads.
-  const proposalPhase = (p: Proposal) => phaseFromEntity(p);
-  const threadPhase = (t: Thread) => phaseFromEntity(t);
+  // Exact status queries preserve the prior projection semantics while avoiding
+  // historical/terminal rows entirely.
+  const pendingProposals = await ctx.stores.proposal.getProposals("submitted");
+  const approvedProposals = await ctx.stores.proposal.getProposals("approved");
+  const activeArchitectThreads = await ctx.stores.thread.listThreads("active", {
+    currentTurn: "architect",
+  });
+  const convergedThreads = await ctx.stores.thread.listThreads("converged");
 
-  // Proposals needing review
-  const pendingProposals = proposals.filter((p) => proposalPhase(p) === "submitted");
-
-  // Threads awaiting Architect reply — excluding threads already
-  // in-flight via the queue (Phase 2c ckpt-B, see note above).
-  const threadsAwaitingArchitect = threads.filter(
-    (t) => threadPhase(t) === "active" && t.currentTurn === "architect" && !inFlightThreadIds.has(t.id)
-  );
-
-  // Converged threads awaiting closure
-  const convergedThreads = threads.filter(
-    (t) => threadPhase(t) === "converged"
+  // Threads awaiting Architect reply — excluding threads already in-flight via
+  // the queue (Phase 2c ckpt-B, see note above).
+  const threadsAwaitingArchitect = activeArchitectThreads.filter(
+    (t) => !inFlightThreadIds.has(t.id)
   );
 
   // ── Anomalous States Detection ──────────────────────────────────
-  // Dangling proposals: approved but no scaffold result and has execution plan
-  const danglingProposals = proposals.filter(
-    (p) => proposalPhase(p) === "approved" && p.executionPlan && !p.scaffoldResult
+  // Dangling proposals: approved but no scaffold result and has execution plan.
+  const danglingProposals = approvedProposals.filter(
+    (p) => p.executionPlan && !p.scaffoldResult
   );
 
   const anomalyCount = danglingProposals.length;

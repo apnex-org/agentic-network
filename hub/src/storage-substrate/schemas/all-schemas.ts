@@ -23,7 +23,7 @@ import type { SchemaDef } from "../types.js";
 
 const Agent: SchemaDef = {
   kind: "Agent",
-  version: 2,
+  version: 3,
   fields: [
     { name: "id", type: "string", required: true },
     { name: "fingerprint", type: "string", required: true },
@@ -32,6 +32,8 @@ const Agent: SchemaDef = {
     { name: "lastSeenAt", type: "string", required: false },
     { name: "lastHeartbeatAt", type: "string", required: false },
     { name: "sessionEpoch", type: "number", required: false },
+    { name: "currentSessionId", type: "string", required: false },
+    { name: "registeredSessions", type: "array", required: false },
   ],
   indexes: [
     // mission-88 W7 (bug-123): envelope-path indexes; renamed for clarity per
@@ -39,6 +41,10 @@ const Agent: SchemaDef = {
     // reconciler via indexOwnershipPattern.
     { name: "agent_spec_role_idx", fields: ["spec.role"] },
     { name: "agent_metadata_fingerprint_idx", fields: ["metadata.fingerprint"] },
+    // bug-343: Hub-restart session rehydration must pinpoint the persisted
+    // binding instead of listAgents() over the whole Agent kind.
+    { name: "agent_status_current_session_idx", fields: ["status.currentSessionId"] },
+    { name: "agent_status_registered_sessions_gin_idx", fields: ["status.registeredSessions"], type: "gin" },
   ],
   watchable: true,
   indexOwnershipPattern: "^agent_",
@@ -54,7 +60,17 @@ const Agent: SchemaDef = {
   // quarantine). NOT list-filtered, but declared here per the dual-source discipline
   // (idea-346) so the W1 sentinel-probe verifies their encoder placement (the
   // WorkItem-seeding-bug class) — mirrored in migrations/v2-envelope/kinds/Agent.ts.
-  renameMap: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt", fingerprint: "metadata.fingerprint", thrashCount: "status.thrashCount", quarantined: "status.quarantined" },
+  // bug-343 adds the two persisted session bindings used by restart rehydration.
+  renameMap: {
+    status: "status.phase",
+    firstSeenAt: "metadata.createdAt",
+    lastSeenAt: "metadata.updatedAt",
+    fingerprint: "metadata.fingerprint",
+    currentSessionId: "status.currentSessionId",
+    registeredSessions: "status.registeredSessions",
+    thrashCount: "status.thrashCount",
+    quarantined: "status.quarantined",
+  },
 };
 
 const Audit: SchemaDef = {
@@ -223,7 +239,7 @@ const Mission: SchemaDef = {
 
 const PendingAction: SchemaDef = {
   kind: "PendingAction",
-  version: 2,
+  version: 3,
   // W4.x.6 architect-blind-correction (minor gaps per architect proactive audit
   // thread-569 round 5): v1 missing 'naturalKey' field which is INV-PA2
   // idempotency-key hot-path (every enqueue call scans for naturalKey collision);
@@ -242,6 +258,9 @@ const PendingAction: SchemaDef = {
     // metadata; state renamed to status.phase per cluster-2 PendingAction.ts.
     { name: "pa_spec_target_idx", fields: ["spec.targetAgentId"] },
     { name: "pa_status_phase_idx", fields: ["status.phase"] },
+    // bug-343: drain_pending_actions and reconnect summary both constrain the
+    // target + state; one composite plan avoids scanning every item for an agent.
+    { name: "pa_spec_target_state_idx", fields: ["spec.targetAgentId", "status.phase"] },
     { name: "pa_metadata_natural_key_idx", fields: ["metadata.naturalKey"] },
   ],
   watchable: true,
@@ -289,7 +308,7 @@ const Proposal: SchemaDef = {
 
 const Thread: SchemaDef = {
   kind: "Thread",
-  version: 2,
+  version: 3,
   // W4.x.10 architect-blind-correction: v1 status enum [active/converged/
   // closed/force_closed] vs actual ThreadStatus [active/converged/round_limit/
   // closed/abandoned/cascade_failed] (6 values; 1 of 4 in v1 invalid 'force_closed';
@@ -301,6 +320,7 @@ const Thread: SchemaDef = {
     { name: "status", type: "string", required: true, enum: ["active", "converged", "round_limit", "closed", "abandoned", "cascade_failed"] },
     { name: "routingMode", type: "string", required: false, enum: ["unicast", "multicast", "broadcast"] },
     { name: "currentTurnAgentId", type: "string", required: false },
+    { name: "currentTurn", type: "string", required: false },
     { name: "correlationId", type: "string", required: false },
   ],
   indexes: [
@@ -312,6 +332,9 @@ const Thread: SchemaDef = {
     { name: "thread_status_phase_idx", fields: ["status.phase"] },
     // currentTurnAgentId moved to status partition per cluster-1 Thread.ts.
     { name: "thread_status_turn_agent_idx", fields: ["status.currentTurnAgentId"] },
+    // bug-343: get_pending_actions asks specifically for active architect-turn
+    // threads. Keep the reconnect read on one partial kind-local index plan.
+    { name: "thread_status_phase_currentturn_idx", fields: ["status.phase", "status.currentTurn"] },
     // mission-90 W2 (bug-149 hot-path W6-deploy-gate): cascade-sweeper queries
     // cascadePending at Hub-startup; post-W2 it resolves to status.cascadePending,
     // so it must be indexed before W2 reaches prod (else startup JSONB full-scan).
@@ -328,7 +351,13 @@ const Thread: SchemaDef = {
   // missed the renameMap entry, so substrate-side filter-translate mis-pathed it
   // to top-level → directed-thread discovery by recipientAgentId returned zero
   // (read still worked via normalizeThreadShape's flat-spread, masking the gap).
-  renameMap: { status: "status.phase", cascadePending: "status.cascadePending", currentTurnAgentId: "status.currentTurnAgentId", recipientAgentId: "spec.recipientAgentId" },
+  renameMap: {
+    status: "status.phase",
+    cascadePending: "status.cascadePending",
+    currentTurn: "status.currentTurn",
+    currentTurnAgentId: "status.currentTurnAgentId",
+    recipientAgentId: "spec.recipientAgentId",
+  },
 };
 
 // work-162 (A1): Turn SchemaDef DELETED with the Turn subsystem. Historical

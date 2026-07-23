@@ -1,0 +1,178 @@
+{
+  "bug": "bug-343",
+  "workItem": "work-468",
+  "profile": "e2-standard-compatible-4vcpu-8GiB",
+  "measuredAt": "2026-07-23T16:32:17.202Z",
+  "clients": 12,
+  "corpus": {
+    "workloadEntities": 210781,
+    "totalEntities": 210787,
+    "logicalJsonBytes": 416065441,
+    "physicalJsonbBytes": 420852194
+  },
+  "preFixReconnect": {
+    "count": 12,
+    "errors": 0,
+    "p50Ms": 53.49,
+    "p95Ms": 100.18,
+    "maxMs": 100.24,
+    "errorMessages": []
+  },
+  "postFixReconnect": {
+    "count": 12,
+    "errors": 0,
+    "p50Ms": 45.72,
+    "p95Ms": 47.53,
+    "maxMs": 47.6,
+    "errorMessages": []
+  },
+  "semanticParity": {
+    "checks": {
+      "submittedProposals": true,
+      "approvedProposals": true,
+      "activeArchitectThreads": true,
+      "convergedThreads": true,
+      "inFlightQueue": true,
+      "drainQueue": true
+    },
+    "all": true
+  },
+  "preservation": {
+    "beforeHistory": {
+      "count": 209981,
+      "digest": "c64dba5f61b806b1f0ef637dc8985903"
+    },
+    "afterHistory": {
+      "count": 209981,
+      "digest": "c64dba5f61b806b1f0ef637dc8985903"
+    },
+    "historyPreserved": true,
+    "beforeTotal": 210787,
+    "afterTotal": 210787,
+    "noRowsDeleted": true
+  },
+  "plans": {
+    "preFix": [
+      {
+        "nodeType": "Result",
+        "relation": null,
+        "index": null,
+        "actualRows": 1,
+        "sharedReadBlocks": 7,
+        "sharedHitBlocks": 49
+      },
+      {
+        "nodeType": "Result",
+        "relation": null,
+        "index": null,
+        "actualRows": 1,
+        "sharedReadBlocks": 3,
+        "sharedHitBlocks": 1
+      },
+      {
+        "nodeType": "Limit",
+        "relation": null,
+        "index": null,
+        "actualRows": 1,
+        "sharedReadBlocks": 3,
+        "sharedHitBlocks": 1
+      },
+      {
+        "nodeType": "Index Only Scan",
+        "relation": "entities",
+        "index": "entities_rv_idx",
+        "actualRows": 1,
+        "sharedReadBlocks": 3,
+        "sharedHitBlocks": 1
+      },
+      {
+        "nodeType": "Aggregate",
+        "relation": null,
+        "index": null,
+        "actualRows": 1,
+        "sharedReadBlocks": 4,
+        "sharedHitBlocks": 48
+      },
+      {
+        "nodeType": "Limit",
+        "relation": null,
+        "index": null,
+        "actualRows": 200,
+        "sharedReadBlocks": 4,
+        "sharedHitBlocks": 48
+      },
+      {
+        "nodeType": "Index Scan",
+        "relation": "entities",
+        "index": "entities_pkey",
+        "actualRows": 200,
+        "sharedReadBlocks": 4,
+        "sharedHitBlocks": 48
+      }
+    ],
+    "postFix": [
+      {
+        "nodeType": "Result",
+        "relation": null,
+        "index": null,
+        "actualRows": 1,
+        "sharedReadBlocks": 1,
+        "sharedHitBlocks": 6
+      },
+      {
+        "nodeType": "Result",
+        "relation": null,
+        "index": null,
+        "actualRows": 1,
+        "sharedReadBlocks": 0,
+        "sharedHitBlocks": 4
+      },
+      {
+        "nodeType": "Limit",
+        "relation": null,
+        "index": null,
+        "actualRows": 1,
+        "sharedReadBlocks": 0,
+        "sharedHitBlocks": 4
+      },
+      {
+        "nodeType": "Index Only Scan",
+        "relation": "entities",
+        "index": "entities_rv_idx",
+        "actualRows": 1,
+        "sharedReadBlocks": 0,
+        "sharedHitBlocks": 4
+      },
+      {
+        "nodeType": "Aggregate",
+        "relation": null,
+        "index": null,
+        "actualRows": 1,
+        "sharedReadBlocks": 1,
+        "sharedHitBlocks": 2
+      },
+      {
+        "nodeType": "Limit",
+        "relation": null,
+        "index": null,
+        "actualRows": 10,
+        "sharedReadBlocks": 1,
+        "sharedHitBlocks": 2
+      },
+      {
+        "nodeType": "Index Scan",
+        "relation": "entities",
+        "index": "pa_spec_target_state_idx",
+        "actualRows": 10,
+        "sharedReadBlocks": 1,
+        "sharedHitBlocks": 2
+      }
+    ]
+  },
+  "notes": [
+    "pre-fix launches six scan-shaped calls concurrently per reconnect",
+    "post-fix is sequential, list-admission capped at 4, get_now is store-free",
+    "history digest covers every Audit id/resourceVersion/data byte before and after",
+    "setup TRUNCATE is confined to the explicitly ephemeral scale database"
+  ]
+}

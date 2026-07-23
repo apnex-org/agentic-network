@@ -240,8 +240,8 @@ export class SchemaReconciler {
     // bug-100 — seed the watch cursor from the substrate high-water mark BEFORE
     // the first watch session, so even a reconnect that happens before this
     // session delivers its first event replays from the boot baseline (gap-free)
-    // rather than live-tailing from "now". list()'s snapshotRevision is
-    // COALESCE(MAX(resource_version),0) substrate-wide — a correct lower bound for
+    // rather than live-tailing from "now". list()'s snapshotRevision is the
+    // substrate-wide committed high-water read via entities_rv_idx — a correct lower bound for
     // any future SchemaDef write. Best-effort: a substrate without list (mock/
     // dev) or a transient read error simply leaves the cursor undefined → the
     // prior live-tail-from-now behavior, never a boot failure.

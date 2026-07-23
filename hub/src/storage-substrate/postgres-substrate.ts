@@ -30,6 +30,7 @@ import type {
 } from "./types.js";
 import { translateKeyOrThrow } from "./filter-translation-error.js";
 import { assertKnownFilterOps, hasImplementedFilterOp } from "./types.js";
+import { AdmissionGate } from "./admission-gate.js";
 
 const { Pool, Client } = pg;
 
@@ -61,6 +62,12 @@ export interface PostgresSubstrateOptions {
   /** ms a query waits for a free connection before erroring (default env
    *  POSTGRES_CONNECTION_TIMEOUT_MS, else undefined = wait indefinitely — prod unchanged). */
   connectionTimeoutMillis?: number;
+  /** Maximum concurrent substrate.list queries (default env POSTGRES_LIST_MAX_CONCURRENCY ?? 8). */
+  listMaxConcurrency?: number;
+  /** Maximum list callers queued behind the admission gate (default env POSTGRES_LIST_MAX_QUEUED ?? 128). */
+  listMaxQueued?: number;
+  /** Maximum queue wait before loud backpressure (default env POSTGRES_LIST_ADMISSION_TIMEOUT_MS ?? 30s). */
+  listAdmissionTimeoutMs?: number;
 }
 
 /**
@@ -80,6 +87,14 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
   private readonly pool: pg.Pool;
   /** Every bounded CRUD/CAS/list query inside withAdvisoryLock uses the lock-owning session. */
   private readonly lockClientContext = new AsyncLocalStorage<LockedPgSession>();
+  /**
+   * bug-343: server-wide (per Hub process) admission boundary in front of list
+   * work. pg.Pool bounds connections but not its waiter queue; reconnect storms
+   * could therefore enqueue an unbounded number of scan-shaped requests. The
+   * gate is deliberately below repositories so list_missions, pending-action,
+   * agent/session rehydration, and every future reconnect read share one bound.
+   */
+  private readonly listAdmission: AdmissionGate;
 
   private query<T extends pg.QueryResultRow = pg.QueryResultRow>(text: string, values?: unknown[]): Promise<pg.QueryResult<T>> {
     const session = this.lockClientContext.getStore();
@@ -132,6 +147,26 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
     const connectionTimeoutMillis = opts?.connectionTimeoutMillis
       ?? (process.env.POSTGRES_CONNECTION_TIMEOUT_MS ? Number(process.env.POSTGRES_CONNECTION_TIMEOUT_MS) : undefined);
     this.pool = new Pool({ connectionString, max, ...(connectionTimeoutMillis ? { connectionTimeoutMillis } : {}) });
+    const boundedInteger = (candidate: number | undefined, fallback: number, minimum: number): number => {
+      const value = candidate ?? fallback;
+      return Number.isFinite(value) ? Math.max(minimum, Math.floor(value)) : fallback;
+    };
+    const listMaxConcurrency = boundedInteger(
+      opts?.listMaxConcurrency ?? Number(process.env.POSTGRES_LIST_MAX_CONCURRENCY),
+      8,
+      1,
+    );
+    const listMaxQueued = boundedInteger(
+      opts?.listMaxQueued ?? Number(process.env.POSTGRES_LIST_MAX_QUEUED),
+      128,
+      0,
+    );
+    const listAdmissionTimeoutMs = boundedInteger(
+      opts?.listAdmissionTimeoutMs ?? Number(process.env.POSTGRES_LIST_ADMISSION_TIMEOUT_MS),
+      30_000,
+      1,
+    );
+    this.listAdmission = new AdmissionGate(listMaxConcurrency, listMaxQueued, listAdmissionTimeoutMs);
     // bug-110 — without an 'error' listener an idle-connection backend error
     // is an uncaught exception that crashes the process (pg contract).
     attachPgErrorHandler(this.pool, "PostgresStorageSubstrate pool");
@@ -283,11 +318,21 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
     const limitSql = ` LIMIT ${limitClamped}`;
     const offsetSql = offset !== undefined ? ` OFFSET ${Number(offset)}` : "";
 
-    // CTE: capture snapshot resource_version then SELECT items
-    // (Single round-trip; snapshotRevision = max(resource_version) over selected set
-    //  OR substrate-wide-max for empty results — gives gap-free watch resume)
+    // bug-343: capture the substrate high-water mark through the existing
+    // entities_rv_idx, never retain the planner-dependent MAX(resource_version)
+    // aggregate shape seen scanning the heap in the production incident.
+    // Concurrent reconnect state-sync multiplied that shape across
+    // list_missions, get_pending_actions, drain_pending_actions, and session
+    // rehydration. A backward LIMIT 1 on the monotonic rv index preserves the
+    // same committed high-water semantics in one round-trip while making the
+    // indexed O(log N) plan explicit.
     const sql = `
-      WITH snapshot AS (SELECT COALESCE(MAX(resource_version), 0) AS rv FROM entities),
+      WITH snapshot AS (
+             SELECT COALESCE((
+               SELECT resource_version FROM entities
+               ORDER BY resource_version DESC LIMIT 1
+             ), 0) AS rv
+           ),
            items AS (
              SELECT data, resource_version FROM entities
              WHERE ${where.join(" AND ")}
@@ -295,7 +340,14 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
            )
       SELECT (SELECT rv FROM snapshot) AS snapshot_rv,
              (SELECT json_agg(items.data) FROM items) AS items_json`;
-    const r = await this.query<{ snapshot_rv: string; items_json: T[] | null }>(sql, params);
+    // bug-343: explicit bounded admission before pg.Pool's unbounded waiter
+    // queue. Excess reconnect reads wait FIFO up to the configured bound, then
+    // fail loud with StorageAdmissionError rather than stampeding PostgreSQL.
+    // Route the admitted query through query() so a WorkGraph advisory-lock
+    // transaction continues using the lock-owning PostgreSQL session.
+    const r = await this.listAdmission.run(() =>
+      this.query<{ snapshot_rv: string; items_json: T[] | null }>(sql, params),
+    );
     const row = r.rows[0]!;
     return {
       items: row.items_json ?? [],

@@ -86,7 +86,7 @@ const EXPECTED_RENAME_INVENTORY: Record<string, RenameMap> = {
   // they are now INCLUDED (→ metadata.*), no longer the W1 dual-path null-pin.
   // Every entry below is validated against the encoder's ACTUAL placement by the
   // sentinel-probe (W1.1b).
-  Agent: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt", fingerprint: "metadata.fingerprint", thrashCount: "status.thrashCount", quarantined: "status.quarantined" },
+  Agent: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt", fingerprint: "metadata.fingerprint", currentSessionId: "status.currentSessionId", registeredSessions: "status.registeredSessions", thrashCount: "status.thrashCount", quarantined: "status.quarantined" },
   Audit: { timestamp: "metadata.createdAt", actor: "metadata.actor" },
   Bug: { status: "status.phase", severity: "spec.severity", class: "spec.class", repo: "spec.repo", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId", sourceIdeaId: "metadata.sourceIdeaId" },
   Idea: { status: "status.phase", missionId: "status.missionId", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
@@ -129,7 +129,7 @@ const EXPECTED_RENAME_INVENTORY: Record<string, RenameMap> = {
     entityRef: "spec.entityRef",
   },
   Proposal: { status: "status.phase", sourceThreadId: "metadata.sourceThreadId", sourceActionId: "metadata.sourceActionId" },
-  Thread: { status: "status.phase", cascadePending: "status.cascadePending", currentTurnAgentId: "status.currentTurnAgentId", recipientAgentId: "spec.recipientAgentId" },
+  Thread: { status: "status.phase", cascadePending: "status.cascadePending", currentTurn: "status.currentTurn", currentTurnAgentId: "status.currentTurnAgentId", recipientAgentId: "spec.recipientAgentId" },
   SchemaDef: { kind: "metadata.name" },
   Notification: { event: "spec.eventType", timestamp: "metadata.createdAt" },
   ArchitectDecision: { timestamp: "metadata.createdAt" },

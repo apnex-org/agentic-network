@@ -199,6 +199,10 @@ const AGENT_FILTER_PATH_RENAMES: Record<string, string> = {
   archived: "metadata.archived",
   role: "spec.role",
   status: "status.phase",
+  // bug-343: persisted session binding rehydration after Hub restart is an
+  // indexed pinpoint lookup, never a whole-Agent-kind scan.
+  currentSessionId: "status.currentSessionId",
+  registeredSessions: "status.registeredSessions",
 };
 
 export function agentFilterKeyToEnvelopePath(legacyKey: string): string {

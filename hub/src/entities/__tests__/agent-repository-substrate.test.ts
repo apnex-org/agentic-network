@@ -87,6 +87,64 @@ beforeEach(async () => {
 });
 
 describe("AgentRepositorySubstrate (W4.x.1 Option Y sibling-pattern)", () => {
+  it("bug-343 rehydrates persisted sessions through indexed pinpoint filters beyond the old 500-row window", async () => {
+    const pool = createTestPool(connStr, "agent-session-rehydrate-scale");
+    try {
+      await pool.query(`
+        INSERT INTO entities(kind, id, data)
+        SELECT 'Agent',
+               'agent-decoy-' || lpad(g::text, 4, '0'),
+               jsonb_build_object(
+                 'apiVersion', 'ois.apnex/v2',
+                 'kind', 'Agent',
+                 'id', 'agent-decoy-' || lpad(g::text, 4, '0'),
+                 'name', 'decoy-' || g,
+                 'metadata', jsonb_build_object(
+                   'fingerprint', 'fp-decoy-' || g,
+                   'archived', false,
+                   'createdAt', '2026-01-01T00:00:00.000Z',
+                   'updatedAt', '2026-01-01T00:00:00.000Z'
+                 ),
+                 'spec', jsonb_build_object('role', 'engineer', 'labels', '{}'::jsonb),
+                 'status', jsonb_build_object(
+                   'phase', 'online',
+                   'currentSessionId', 'decoy-session-' || g,
+                   'registeredSessions', jsonb_build_array('decoy-session-' || g),
+                   'sessionEpoch', 1,
+                   'livenessState', 'online',
+                   'lastHeartbeatAt', '2099-01-01T00:00:00.000Z'
+                 )
+               )
+        FROM generate_series(1, 520) AS g
+      `);
+      await pool.query(`
+        INSERT INTO entities(kind, id, data) VALUES
+        ('Agent', 'agent-scale-current', $1::jsonb),
+        ('Agent', 'agent-scale-registered', $2::jsonb)
+      `, [
+        JSON.stringify({
+          apiVersion: "ois.apnex/v2", kind: "Agent", id: "agent-scale-current", name: "scale-current",
+          metadata: { fingerprint: "fp-scale-current", archived: false, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+          spec: { role: "engineer", labels: {} },
+          status: { phase: "online", currentSessionId: "session-scale-current", registeredSessions: ["session-scale-current"], sessionEpoch: 1, livenessState: "online", lastHeartbeatAt: "2099-01-01T00:00:00.000Z" },
+        }),
+        JSON.stringify({
+          apiVersion: "ois.apnex/v2", kind: "Agent", id: "agent-scale-registered", name: "scale-registered",
+          metadata: { fingerprint: "fp-scale-registered", archived: false, createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z" },
+          spec: { role: "engineer", labels: {} },
+          status: { phase: "online", currentSessionId: null, registeredSessions: ["session-scale-registered"], sessionEpoch: 1, livenessState: "online", lastHeartbeatAt: "2099-01-01T00:00:00.000Z" },
+        }),
+      ]);
+    } finally {
+      await pool.end();
+    }
+
+    // Fresh repository = post-Hub-restart empty in-memory session map.
+    const restarted = new AgentRepositorySubstrate(substrate);
+    expect((await restarted.getAgentForSession("session-scale-current"))?.id).toBe("agent-scale-current");
+    expect((await restarted.getAgentForSession("session-scale-registered"))?.id).toBe("agent-scale-registered");
+  });
+
   it("assertIdentity + claimSession + listAgents round-trip via substrate-API + fingerprint-indexed lookup", async () => {
     const repo = new AgentRepositorySubstrate(substrate);
 
