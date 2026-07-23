@@ -50,6 +50,9 @@ import type {
   PendingFailedSealNotice,
   PauseWorkRequestV4,
   UnpauseWorkRequestV4,
+  ReviseWorkRequestV4,
+  ReviseWorkResultV4,
+  CurrentWorkProjectionV4,
 } from "./work-item.js";
 import { DEFAULT_STATE_DURATIONS, evaluateCompletionGate } from "./work-item.js";
 import { SubstrateCounter } from "./substrate-counter.js";
@@ -59,6 +62,9 @@ import { type Clock, systemClock } from "./clock.js";
 import {
   NODE_CONTRACT_HASH_VERSION,
   NODE_TOPOLOGY_HASH_VERSION,
+  ENTITY_STATE_HASH_VERSION,
+  bindWorkItemReferencesV4,
+  canonicalJson,
   deriveLocalExecutionIdentityV4,
   deriveNodeContractV4,
   deriveNodeTopologyV4,
@@ -67,6 +73,8 @@ import {
   type PendingRecallIntentV4,
   type RecallBeforeStateV4,
   type RecallHistoryEntryV4,
+  type AuthoritativeReferenceResolutionV4,
+  type BoundWorkItemReferenceV4,
   type TargetBindingV4,
 } from "./work-item-contract-v4.js";
 import {
@@ -74,8 +82,22 @@ import {
   WorkGraphCurrentnessRejected,
   type WorkGraphPinV4,
 } from "./workgraph-currentness-fence-v4.js";
+import {
+  WORK_GRAPH_HEAD_ID,
+  WORK_REVISION_KINDS,
+  WorkRevisionStorageRepositoryV4,
+  WorkRevisionStorageError,
+  buildWorkRevisionStorageV4,
+  type WorkGraphRevisionOperationV4,
+  type WorkRevisionFamilyRowV4,
+} from "./work-revision-storage-v4.js";
 
 const KIND = "WorkItem";
+const ENTITY_REFERENCE_SCHEMA: Readonly<Record<string, string>> = Object.freeze({
+  workitem: "WorkItem", work: "WorkItem", bug: "Bug", idea: "Idea", mission: "Mission",
+  decision: "Decision", review: "WorkItem", incident: "Bug", calibration: "Document", skill: "Document",
+});
+const entityReferenceSchemaKind = (semanticKind: string): string => ENTITY_REFERENCE_SCHEMA[semanticKind.toLowerCase()] ?? semanticKind;
 const LIST_CAP = 500;
 /** The substrate hard-clamps list() to 500 rows; the ready-scan uses it as the cap and
  *  flags truncation when hit (list_ready_work is truncation-HONEST, audit-4070 #3). */
@@ -655,6 +677,7 @@ export function isPauseOperationReplay(item: WorkItem): boolean {
 
 export class WorkItemRepositorySubstrate implements IWorkItemStore {
   private readonly currentness: WorkGraphCurrentnessFenceV4;
+  private readonly revisionStorage: WorkRevisionStorageRepositoryV4;
 
   constructor(
     private readonly substrate: HubStorageSubstrate,
@@ -664,6 +687,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     private readonly clock: Clock = systemClock,
   ) {
     this.currentness = new WorkGraphCurrentnessFenceV4(substrate);
+    this.revisionStorage = new WorkRevisionStorageRepositoryV4(substrate);
   }
 
   private async withWriterFence<T>(fn: (pin: WorkGraphPinV4) => Promise<T>): Promise<T> {
@@ -680,11 +704,20 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       : item;
   }
 
-  private async getCurrentProjectionItem(workId: string): Promise<WorkItem | null> {
-    const item = await this.getWorkItem(workId);
-    if (!item) return null;
+  private async getCurrentProjectionItem(locator: string): Promise<WorkItem | null> {
     const pin = this.currentness.currentPin();
-    if (!pin || pin.mode === "legacy") return item;
+    if (!pin || pin.mode === "legacy") return this.getWorkItem(locator);
+    // Graph projections consume stable logical IDs. A legacy physical ID that
+    // is also the family's logical ID follows the current binding here; exact
+    // historical getWorkItem(physicalId) remains non-redirecting.
+    const binding = pin.generation.bindings[locator]
+      ?? Object.values(pin.generation.bindings).find((candidate) => candidate.physicalId === locator);
+    if (!binding) return null;
+    const item = await this.getWorkItem(binding.physicalId);
+    if (!item) throw new WorkGraphCurrentnessRejected(
+      "workgraph.currentness.integrity",
+      `current physical WorkItem ${binding.physicalId} is missing for locator ${locator}`,
+    );
     try { this.currentness.assertCurrent(item, pin); return this.observe(item, pin); } catch (error) {
       if (error instanceof WorkGraphCurrentnessRejected) return null;
       throw error;
@@ -968,6 +1001,424 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   async getWorkItem(workId: string): Promise<WorkItem | null> {
     const w = await this.substrate.get<WorkItem>(KIND, workId);
     return w ? cloneWorkItem(w) : null;
+  }
+
+  async getCurrentWork(logicalId: string): Promise<CurrentWorkProjectionV4 | null> {
+    if (!this.currentness.currentPin()) return this.withReadPin(() => this.getCurrentWork(logicalId));
+    const pin = this.currentness.currentPin()!;
+    if (pin.mode === "legacy") {
+      const item = await this.getWorkItem(logicalId);
+      if (!item) return null;
+      return {
+        logicalId,
+        physicalId: item.id,
+        revision: item.revision ?? 1,
+        generation: 0,
+        topologyHash: "legacy",
+        predecessorPhysicalId: item.predecessorPhysicalId ?? null,
+        localExecutionIdentity: item.localExecutionIdentity ?? "legacy",
+        workItem: item,
+      };
+    }
+    const binding = pin.generation.bindings[logicalId];
+    if (!binding) return null;
+    const item = await this.getWorkItem(binding.physicalId);
+    if (!item) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `current binding ${logicalId} points at missing ${binding.physicalId}`);
+    const current = this.currentness.assertCurrent(item, pin)!;
+    return {
+      logicalId,
+      physicalId: binding.physicalId,
+      revision: binding.revision,
+      generation: pin.head.generation,
+      topologyHash: pin.head.topologyHash,
+      predecessorPhysicalId: item.predecessorPhysicalId ?? null,
+      localExecutionIdentity: current.localExecutionIdentity,
+      workItem: this.observe(item, pin),
+    };
+  }
+
+  private async resolveReferenceBindings(references: Readonly<NonNullable<WorkItem["references"]>>, snapshotToken: string): Promise<BoundWorkItemReferenceV4[]> {
+    const resolutions: AuthoritativeReferenceResolutionV4[] = [];
+    for (const reference of references) {
+      if (reference.storage === "inline") {
+        resolutions.push({ storage: "inline" });
+      } else if (reference.storage === "hub-doc") {
+        const row = await this.substrate.getWithRevision<Record<string, unknown>>("Document", reference.ref);
+        if (!row) throw new WorkGraphCurrentnessRejected("workgraph.currentness.identity_mismatch", `document ${reference.ref} does not resolve`);
+        const document = decodeEnvelopeToFlat(row.entity);
+        if (typeof document.content !== "string") throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `document ${reference.ref} has no string content`);
+        resolutions.push({ storage: "hub-doc", path: reference.ref, resourceVersion: row.resourceVersion, content: document.content, snapshotToken });
+      } else if (reference.storage === "entity") {
+        const row = await this.substrate.getWithRevision<Record<string, unknown>>(entityReferenceSchemaKind(reference.kind), reference.ref);
+        if (!row) throw new WorkGraphCurrentnessRejected("workgraph.currentness.identity_mismatch", `entity ${reference.kind}/${reference.ref} does not resolve`);
+        resolutions.push({ storage: "entity", kind: reference.kind, id: reference.ref, resourceVersion: row.resourceVersion, state: decodeEnvelopeToFlat(row.entity), snapshotToken });
+      } else {
+        // Git locators are immutable only when pinned, but deriving blobSha256
+        // requires authoritative repository bytes. The Hub repository layer is
+        // intentionally git-less; never accept a caller-asserted blob digest.
+        throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", `changed git reference ${reference.ref} requires authoritative blob resolution before revise_work`);
+      }
+    }
+    return bindWorkItemReferencesV4(references, resolutions, snapshotToken);
+  }
+
+  private async assertBoundReferencesFresh(item: WorkItem): Promise<void> {
+    const references = item.references ?? [];
+    const bound = item.boundReferences ?? [];
+    if (references.length !== bound.length) {
+      throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `${item.id} reference binding coverage changed`);
+    }
+    for (let index = 0; index < references.length; index += 1) {
+      const reference = references[index]!;
+      const identity = bound[index]!;
+      const descriptor = { kind: reference.kind, storage: reference.storage, mode: reference.mode, required: reference.required, locator: reference.ref };
+      const boundDescriptor = { kind: identity.kind, storage: identity.storage, mode: identity.mode, required: identity.required, locator: identity.locator };
+      if (canonicalJson(boundDescriptor) !== canonicalJson(descriptor)) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `${item.id} reference ${index} locator changed`);
+      if (reference.storage === "inline") {
+        const candidate = bindWorkItemReferencesV4([reference], [{ storage: "inline" }], "inline-currentness")[0]!;
+        if (canonicalJson(candidate.contentIdentity) !== canonicalJson(identity.contentIdentity)) {
+          throw new WorkGraphCurrentnessRejected("workgraph.currentness.identity_mismatch", `${item.id} inline reference ${index} changed`);
+        }
+      } else if (reference.storage === "hub-doc") {
+        const row = await this.substrate.getWithRevision<Record<string, unknown>>("Document", reference.ref);
+        if (!row) throw new WorkGraphCurrentnessRejected("workgraph.currentness.identity_mismatch", `${item.id} document ${reference.ref} vanished`);
+        const document = decodeEnvelopeToFlat(row.entity);
+        const content = typeof document.content === "string" ? document.content : "";
+        const actual = {
+          path: reference.ref,
+          resourceVersion: row.resourceVersion,
+          utf8Bytes: Buffer.byteLength(content, "utf8"),
+          sha256: createHash("sha256").update(content, "utf8").digest("hex"),
+        };
+        if (canonicalJson(actual) !== canonicalJson(identity.contentIdentity)) {
+          throw new WorkGraphCurrentnessRejected("workgraph.currentness.identity_mismatch", `${item.id} document ${reference.ref} moved`);
+        }
+      } else if (reference.storage === "entity") {
+        const boundEntity = identity.contentIdentity as { kind?: string; id?: string };
+        const kind = reference.kind;
+        const id = reference.ref;
+        if (boundEntity.kind !== kind || boundEntity.id !== id) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `${item.id} malformed entity binding ${kind}/${id}`);
+        const row = await this.substrate.getWithRevision<Record<string, unknown>>(entityReferenceSchemaKind(kind), id);
+        if (!row) throw new WorkGraphCurrentnessRejected("workgraph.currentness.identity_mismatch", `${item.id} entity ${kind}/${id} vanished`);
+        const state = decodeEnvelopeToFlat(row.entity);
+        const actual = { kind, id, resourceVersion: row.resourceVersion, stateHash: hashCanonicalDomain(ENTITY_STATE_HASH_VERSION, state) };
+        if (canonicalJson(actual) !== canonicalJson(identity.contentIdentity)) {
+          throw new WorkGraphCurrentnessRejected("workgraph.currentness.identity_mismatch", `${item.id} entity ${reference.ref} moved`);
+        }
+      } else if (reference.storage === "git") {
+        const gitIdentity = identity.contentIdentity as { full40CommitSha?: string };
+        if (!/^[0-9a-f]{40}$/i.test(gitIdentity.full40CommitSha ?? "")) {
+          throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `${item.id} git reference ${reference.ref} is not pinned`);
+        }
+      }
+    }
+  }
+
+  private async revisionResult(
+    operation: WorkGraphRevisionOperationV4,
+    rootLogicalId: string,
+    replay: boolean,
+  ): Promise<ReviseWorkResultV4> {
+    const generation = await this.revisionStorage.getGeneration(operation.generation);
+    if (!generation) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `operation ${operation.id} generation is missing`);
+    const affectedSet = [...(operation.recommitSet.length > 0 ? operation.recommitSet : operation.recommittedSet ?? [])].sort();
+    const current = await Promise.all(affectedSet.map(async (logicalId) => {
+      const binding = generation.bindings[logicalId]!;
+      const item = await this.getWorkItem(binding.physicalId);
+      if (!item?.localExecutionIdentity) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `successor ${binding.physicalId} has no local identity`);
+      return { logicalId, physicalId: binding.physicalId, revision: binding.revision, localExecutionIdentity: item.localExecutionIdentity };
+    }));
+    return {
+      operationId: operation.operationId,
+      requestHash: operation.requestHash,
+      generation: operation.generation,
+      previousGeneration: operation.previousGeneration,
+      topologyHash: operation.topologyHash,
+      rootLogicalId,
+      affectedSet,
+      recommitSet: [...operation.recommitSet],
+      current,
+      operationReplay: replay,
+    };
+  }
+
+  async reviseWork(request: ReviseWorkRequestV4, actor: { agentId: string; role: string }): Promise<ReviseWorkResultV4> {
+    // The same global writer fence used by lifecycle CAS and head publication:
+    // claim-vs-revise, pause-vs-revise, and two revise operations serialize from
+    // first current read through the one topology-head visibility CAS.
+    return withAdvisoryLock(this.substrate, LOCK_CLASS.workGraphGlobal, WORK_GRAPH_HEAD_ID, () =>
+      this.reviseWorkUnderFence(request, actor));
+  }
+
+  private async reviseWorkUnderFence(request: ReviseWorkRequestV4, actor: { agentId: string; role: string }): Promise<ReviseWorkResultV4> {
+    const hasWorkId = typeof request.workId === "string" && request.workId.length > 0;
+    const hasLogicalId = typeof request.logicalId === "string" && request.logicalId.length > 0;
+    if (hasWorkId === hasLogicalId) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "revise_work requires exactly one workId or logicalId");
+    if (!request.operationId?.trim() || !request.reason?.trim()) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "revise_work requires operationId and reason");
+    const hasSemanticPatch = (request.set && Object.keys(request.set).length > 0)
+      || request.dependsOn !== undefined || request.completionDependsOn !== undefined || request.references !== undefined;
+    if (!hasSemanticPatch) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "revise_work rejects an empty semantic mutation");
+
+    const normalizedRequest = JSON.parse(JSON.stringify({ ...request, actor })) as Record<string, unknown>;
+    const requestHash = hashCanonicalDomain("workgraph-revise-request-v4", normalizedRequest);
+    const existingOperation = await this.revisionStorage.getOperation(request.operationId);
+    if (existingOperation) {
+      if (existingOperation.requestHash !== requestHash) throw new WorkRevisionStorageError("storage.operation_conflict", `operation ${request.operationId} was reused with different bytes`);
+      let rootLogicalId = request.logicalId;
+      if (!rootLogicalId) {
+        const previous = existingOperation.previousGeneration > 0
+          ? await this.revisionStorage.getGeneration(existingOperation.previousGeneration)
+          : null;
+        rootLogicalId = previous
+          ? Object.entries(previous.bindings).find(([, binding]) => binding.physicalId === request.workId)?.[0]
+          : request.workId;
+      }
+      if (!rootLogicalId) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "replayed operation root cannot be resolved");
+      if (existingOperation.state === "prepared") {
+        const candidate = await this.revisionStorage.getGeneration(existingOperation.generation);
+        if (!candidate) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `prepared operation ${existingOperation.operationId} lost its generation`);
+        for (const binding of Object.values(candidate.bindings)) {
+          const item = await this.getWorkItem(binding.physicalId);
+          if (!item) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `prepared successor ${binding.physicalId} vanished`);
+          await this.assertBoundReferencesFresh(item);
+        }
+        await this.revisionStorage.activateGeneration(existingOperation.generation, existingOperation.operationId, this.clock.now().toISOString());
+      }
+      const refreshed = (await this.revisionStorage.getOperation(request.operationId))!;
+      return this.revisionResult(refreshed, rootLogicalId, true);
+    }
+
+    const head = await this.revisionStorage.getHead();
+    if (!head || head.head.generation !== request.expectedGeneration) {
+      throw new WorkGraphCurrentnessRejected("workgraph.currentness.head_changed", `expected generation ${request.expectedGeneration}; current is ${head?.head.generation ?? "absent"}`);
+    }
+    const activeHead = head.head;
+    const generation = await this.revisionStorage.getGeneration(activeHead.generation);
+    if (!generation || generation.topologyHash !== activeHead.topologyHash) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "active generation is missing or mismatched");
+    const rootBinding = hasLogicalId
+      ? generation.bindings[request.logicalId!]
+      : Object.values(generation.bindings).find((binding) => binding.physicalId === request.workId);
+    if (!rootBinding) throw new WorkGraphCurrentnessRejected("workgraph.currentness.old_or_draft", "revision root is not current");
+    const rootLogicalId = hasLogicalId
+      ? request.logicalId!
+      : Object.entries(generation.bindings).find(([, binding]) => binding.physicalId === request.workId)![0];
+
+    const edges = await this.revisionStorage.loadEdgesComplete(generation.generation);
+    const reverse = new Map<string, string[]>();
+    for (const edge of edges) {
+      const list = reverse.get(edge.targetLogicalId) ?? [];
+      list.push(edge.sourceLogicalId);
+      reverse.set(edge.targetLogicalId, list);
+    }
+    const affected = new Set<string>([rootLogicalId]);
+    const queue = [rootLogicalId];
+    while (queue.length > 0) {
+      for (const source of reverse.get(queue.shift()!) ?? []) if (!affected.has(source)) { affected.add(source); queue.push(source); }
+    }
+    const affectedSet = [...affected].sort();
+    const expectedAffected = request.expectedAffectedSet ? [...request.expectedAffectedSet].sort() : undefined;
+    if (expectedAffected && canonicalJson(expectedAffected) !== canonicalJson(affectedSet)) {
+      throw new WorkGraphCurrentnessRejected("workgraph.currentness.head_changed", `affected closure changed; expected ${expectedAffected.join(",")}, got ${affectedSet.join(",")}`);
+    }
+
+    const itemsByLogical = new Map<string, WorkItem>();
+    const familiesByLogical = new Map<string, WorkRevisionFamilyRowV4>();
+    for (const binding of Object.values(generation.bindings)) {
+      const item = await this.getWorkItem(binding.physicalId);
+      const [logicalId] = Object.entries(generation.bindings).find(([, candidate]) => candidate === binding)!;
+      const family = await this.revisionStorage.getFamily(logicalId);
+      if (!item || !family) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `binding ${logicalId} has missing row/family`);
+      this.currentness.assertCurrent(item, { mode: "generation", head: activeHead, generation, headResourceVersion: head.resourceVersion });
+      await this.assertBoundReferencesFresh(item);
+      itemsByLogical.set(logicalId, item);
+      familiesByLogical.set(logicalId, family);
+    }
+    for (const logicalId of affectedSet) {
+      const item = itemsByLogical.get(logicalId)!;
+      if (!(["ready", "paused"] as string[]).includes(item.status) || item.lease || item.evidence.length > 0 || item.failedGateSeal || item.attestationHistory?.length) {
+        throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", `affected ${logicalId} is not quiescent and evidence-free`);
+      }
+    }
+    const root = itemsByLogical.get(rootLogicalId)!;
+    const family = familiesByLogical.get(rootLogicalId)!;
+    if (actor.role !== "architect" && actor.role !== "director" && actor.agentId !== family.originalCreatedBy.agentId) {
+      throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", `actor lacks authority for family ${family.id}`);
+    }
+    if (actor.role !== "architect" && actor.role !== "director") {
+      if (affectedSet.length !== 1) throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", "original creator cannot revise a dependent closure");
+      const nextRoles = request.set && Object.prototype.hasOwnProperty.call(request.set, "roleEligibility") ? request.set.roleEligibility ?? [] : root.roleEligibility;
+      if (nextRoles.some((role) => !root.roleEligibility.includes(role))) throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", "original creator cannot expand role authority");
+    }
+    if (request.set?.targetRef?.kind === "mission" && family.familyScope.kind === "mission" && request.set.targetRef.id !== family.familyScope.id) {
+      throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", "targetRef would expand family mission scope");
+    }
+
+    const normalizeEdges = (values: string[] | undefined, fallback: string[]): string[] => {
+      if (values === undefined) return [...fallback];
+      if (new Set(values).size !== values.length) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "revision edge list contains duplicates");
+      for (const value of values) if (!generation.bindings[value]) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `revision edge target ${value} is not in the current generation`);
+      return [...values].sort();
+    };
+    const nextDependsOn = normalizeEdges(request.dependsOn, root.dependsOn);
+    const nextCompletionDependsOn = normalizeEdges(request.completionDependsOn, root.completionDependsOn);
+    let nextReferences = root.references;
+    let nextBoundReferences = root.boundReferences;
+    if (request.references !== undefined) {
+      nextReferences = request.references;
+      if (canonicalJson(nextReferences) !== canonicalJson(root.references)) {
+        nextBoundReferences = await this.resolveReferenceBindings(nextReferences, `revision:${request.operationId}`);
+      }
+    }
+    const preview = cloneWorkItem(root);
+    if (request.set) {
+      if (Object.prototype.hasOwnProperty.call(request.set, "runbook")) preview.runbook = request.set.runbook;
+      if (Object.prototype.hasOwnProperty.call(request.set, "payload")) preview.payload = request.set.payload;
+      if (Object.prototype.hasOwnProperty.call(request.set, "targetRef")) preview.targetRef = request.set.targetRef ?? null;
+      if (Object.prototype.hasOwnProperty.call(request.set, "roleEligibility")) preview.roleEligibility = [...(request.set.roleEligibility ?? [])];
+      if (Object.prototype.hasOwnProperty.call(request.set, "leaseWindowMs")) preview.leaseWindowMs = request.set.leaseWindowMs ?? undefined;
+      if (Object.prototype.hasOwnProperty.call(request.set, "nodeConfig")) preview.nodeConfig = request.set.nodeConfig ?? undefined;
+    }
+    preview.references = [...(nextReferences ?? [])];
+    const contractView = (item: WorkItem) => ({
+      type: item.type,
+      roleEligibility: item.roleEligibility,
+      ...(item.runbook !== undefined ? { runbook: item.runbook } : {}),
+      ...(Object.prototype.hasOwnProperty.call(item, "payload") ? { payload: item.payload } : {}),
+      targetRef: item.targetRef,
+      evidenceRequirements: item.evidenceRequirements,
+      references: item.references,
+      ...(item.leaseWindowMs !== undefined ? { leaseWindowMs: item.leaseWindowMs } : {}),
+      ...(item.nodeConfig !== undefined ? { nodeConfig: item.nodeConfig } : {}),
+    });
+    const beforeContract = deriveNodeContractV4(contractView(root), root.boundReferences ?? []).hash;
+    const afterContract = deriveNodeContractV4(contractView(preview), nextBoundReferences ?? []).hash;
+    if (beforeContract === afterContract
+        && canonicalJson(root.dependsOn) === canonicalJson(nextDependsOn)
+        && canonicalJson(root.completionDependsOn) === canonicalJson(nextCompletionDependsOn)) {
+      throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", "revise_work semantic bytes are unchanged");
+    }
+
+    const revisions = new Map<string, number>();
+    for (const logicalId of affectedSet) {
+      const currentFamily = familiesByLogical.get(logicalId)!;
+      const allocation = await this.revisionStorage.allocateNextRevision({
+        logicalId,
+        originPhysicalId: currentFamily.originPhysicalId,
+        originalCreatedBy: currentFamily.originalCreatedBy,
+        familyScope: currentFamily.familyScope,
+        createdAt: currentFamily.createdAt,
+      });
+      familiesByLogical.set(logicalId, allocation.family);
+      revisions.set(logicalId, allocation.revision);
+    }
+    const now = this.clock.now().toISOString();
+    const successorByLogical = new Map<string, WorkItem>();
+    for (const logicalId of affectedSet) {
+      const old = itemsByLogical.get(logicalId)!;
+      const revision = revisions.get(logicalId)!;
+      const successor = cloneWorkItem(old);
+      successor.id = `work-rev-${createHash("sha256").update(`${logicalId}\0${revision}`).digest("hex").slice(0, 32)}`;
+      successor.revision = revision;
+      successor.predecessorPhysicalId = old.id;
+      successor.revisedBy = { role: actor.role, agentId: actor.agentId };
+      successor.revisionReason = request.reason;
+      successor.revisionGeneration = activeHead.generation + 1;
+      successor.status = "paused";
+      successor.lease = null;
+      successor.blockedOn = null;
+      successor.evidence = [];
+      successor.attestations = {};
+      successor.attestationHistory = [];
+      successor.executorHistory = [];
+      successor.frictionReflections = [];
+      successor.recallHistory = [];
+      successor.pendingRecallIntents = [];
+      successor.recallNoticePending = false;
+      successor.failedGateSeal = null;
+      successor.pendingFailedSealNotices = [];
+      successor.failedSealNoticePending = false;
+      successor.effectiveDisposition = null;
+      if (successor.nodeConfig?.pulse) {
+        const pulse = successor.nodeConfig.pulse;
+        successor.nodeConfig = { pulse: {
+          intervalSeconds: pulse.intervalSeconds,
+          message: pulse.message,
+          responseShape: pulse.responseShape,
+          missedThreshold: pulse.missedThreshold,
+          ...(pulse.firstFireDelaySeconds !== undefined ? { firstFireDelaySeconds: pulse.firstFireDelaySeconds } : {}),
+        } };
+      }
+      successor.enteredCurrentStateAt = now;
+      successor.stateDurations = { ready: 0, claimed: 0, in_progress: 0, blocked: 0, review: 0, paused: 0 };
+      successor.leaseExpiryCount = 0;
+      successor.createdAt = now;
+      successor.updatedAt = now;
+      successor.createdBy = { role: actor.role, agentId: actor.agentId };
+      successor.dependsOn = logicalId === rootLogicalId ? nextDependsOn : [...old.dependsOn];
+      successor.completionDependsOn = logicalId === rootLogicalId ? nextCompletionDependsOn : [...old.completionDependsOn];
+      if (logicalId === rootLogicalId) {
+        if (request.set) {
+          if (Object.prototype.hasOwnProperty.call(request.set, "runbook")) successor.runbook = request.set.runbook;
+          if (Object.prototype.hasOwnProperty.call(request.set, "payload")) successor.payload = request.set.payload;
+          if (Object.prototype.hasOwnProperty.call(request.set, "targetRef")) successor.targetRef = request.set.targetRef ?? null;
+          if (Object.prototype.hasOwnProperty.call(request.set, "roleEligibility")) successor.roleEligibility = [...(request.set.roleEligibility ?? [])];
+          if (Object.prototype.hasOwnProperty.call(request.set, "leaseWindowMs")) successor.leaseWindowMs = request.set.leaseWindowMs ?? undefined;
+          if (Object.prototype.hasOwnProperty.call(request.set, "nodeConfig")) successor.nodeConfig = request.set.nodeConfig ?? undefined;
+        }
+        successor.references = [...(nextReferences ?? [])];
+        successor.boundReferences = [...(nextBoundReferences ?? [])];
+      }
+      if (successor.nodeConfig?.pulse) {
+        const pulse = successor.nodeConfig.pulse;
+        successor.nodeConfig = { pulse: {
+          intervalSeconds: pulse.intervalSeconds,
+          message: pulse.message,
+          responseShape: pulse.responseShape,
+          missedThreshold: pulse.missedThreshold,
+          ...(pulse.firstFireDelaySeconds !== undefined ? { firstFireDelaySeconds: pulse.firstFireDelaySeconds } : {}),
+        } };
+      }
+      delete successor.nodeContractHashVersion;
+      delete successor.nodeContractHash;
+      delete successor.nodeTopologyHashVersion;
+      delete successor.nodeTopologyHash;
+      delete successor.localExecutionIdentity;
+      delete successor.topologyGeneration;
+      delete successor.observedTopologyGeneration;
+      delete successor.observedTopologyHash;
+      successorByLogical.set(logicalId, successor);
+    }
+
+    const candidateItems = Object.keys(generation.bindings).sort().map((logicalId) => successorByLogical.get(logicalId) ?? itemsByLogical.get(logicalId)!);
+    const boundReferencesByPhysicalId: Record<string, readonly BoundWorkItemReferenceV4[]> = {};
+    const familyScopesByPhysicalId: Record<string, { kind: "mission" | "standalone"; id: string }> = {};
+    for (const item of candidateItems) {
+      boundReferencesByPhysicalId[item.id] = item.boundReferences ?? [];
+      const logicalId = item.logicalId ?? item.id;
+      familyScopesByPhysicalId[item.id] = familiesByLogical.get(logicalId)!.familyScope;
+    }
+    const prepared = buildWorkRevisionStorageV4({
+      operationId: request.operationId,
+      requestHash,
+      previousGeneration: activeHead.generation,
+      generation: activeHead.generation + 1,
+      createdAt: now,
+      workItems: candidateItems,
+      existingFamiliesByLogicalId: Object.fromEntries(familiesByLogical),
+      boundReferencesByPhysicalId,
+      familyScopesByPhysicalId,
+      recommitSet: affectedSet,
+    });
+    // Materialize every new physical successor atomically BEFORE publishing
+    // the prepared operation lookup. A crash before the lookup leaves harmless
+    // unreachable drafts; a visible prepared operation is always recoverable.
+    await this.revisionStorage.persistProjectedWorkItems(prepared);
+    await this.revisionStorage.persistPrepared(prepared);
+    // Re-resolve every mutable binding immediately before the one visibility CAS.
+    for (const item of candidateItems) await this.assertBoundReferencesFresh(item);
+    await this.revisionStorage.activateGeneration(prepared.generation.generation, request.operationId, now);
+    const committed = (await this.revisionStorage.getOperation(request.operationId))!;
+    return this.revisionResult(committed, rootLogicalId, false);
   }
 
   /** Compose event/watchdog/PR integrations under one immutable topology observation. */
@@ -1861,7 +2312,65 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     }
   }
 
+  async recommitRevisionSet(
+    request: UnpauseWorkRequestV4,
+    actor: { agentId: string; role: string },
+  ): Promise<{ workItems: WorkItem[]; operationReplay: boolean }> {
+    if (actor.role !== "architect" && actor.role !== "director") throw new TransitionRejected("revision-set recommit requires architect or Director");
+    const logicalIds = [...(request.logicalIds ?? [])].sort();
+    if (logicalIds.length === 0 || new Set(logicalIds).size !== logicalIds.length || !request.operationId?.trim() || !request.reason?.trim()) {
+      throw new TransitionRejected("revision-set recommit requires unique logicalIds, operationId, and reason");
+    }
+    if (request.expectedGeneration === undefined || !request.expectedRevisions) throw new TransitionRejected("revision-set recommit requires expectedGeneration and expectedRevisions");
+    const expectedRevisions = request.expectedRevisions;
+    if (canonicalJson(Object.keys(expectedRevisions).sort()) !== canonicalJson(logicalIds)) throw new TransitionRejected("expectedRevisions must exactly cover logicalIds");
+    const requestHash = hashCanonicalDomain("workgraph-recommit-request-v4", JSON.parse(JSON.stringify({
+      logicalIds, expectedRevisions, expectedGeneration: request.expectedGeneration,
+      operationId: request.operationId, reason: request.reason, actor,
+    })));
+
+    return this.currentness.withWriterFence(async (pin) => {
+      if (pin.mode !== "generation" || pin.head.generation !== request.expectedGeneration) throw new WorkGraphCurrentnessRejected("workgraph.currentness.head_changed", "recommit generation changed");
+      const operationRow = await this.substrate.getWithRevision<WorkGraphRevisionOperationV4>(WORK_REVISION_KINDS.operation, pin.generation.operationId);
+      if (!operationRow) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "active revision operation is missing");
+      const operation = decodeEnvelopeToFlat(operationRow.entity);
+      if (operation.recommitSet.length === 0) {
+        if (operation.recommitOperationId !== request.operationId || operation.recommitRequestHash !== requestHash) throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", "no matching pending recommit set");
+        const workItems: WorkItem[] = [];
+        for (const logicalId of logicalIds) {
+          const binding = pin.generation.bindings[logicalId];
+          const item = binding ? await this.getWorkItem(binding.physicalId) : null;
+          if (!item || item.status !== "ready") throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `recommitted ${logicalId} is not ready`);
+          workItems.push(this.observe(item, pin));
+        }
+        return { workItems, operationReplay: true };
+      }
+      if (canonicalJson([...operation.recommitSet].sort()) !== canonicalJson(logicalIds)) throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", "recommit set is not exact");
+      const rows: Array<{ item: WorkItem; resourceVersion: string }> = [];
+      for (const logicalId of logicalIds) {
+        const binding = pin.generation.bindings[logicalId];
+        if (!binding || binding.revision !== expectedRevisions[logicalId]) throw new WorkGraphCurrentnessRejected("workgraph.currentness.head_changed", `recommit revision mismatch for ${logicalId}`);
+        const row = await this.substrate.getWithRevision<WorkItem>(KIND, binding.physicalId);
+        if (!row) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `recommit row ${binding.physicalId} missing`);
+        const item = cloneWorkItem(row.entity);
+        this.currentness.assertCurrent(item, pin);
+        if (item.status !== "paused" || item.lease) throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", `recommit ${logicalId} is not paused and unleased`);
+        rows.push({ item, resourceVersion: row.resourceVersion });
+      }
+      const nowISO = this.clock.now().toISOString();
+      const nextRows = rows.map(({ item, resourceVersion }) => ({ next: { ...item, status: "ready" as const, ...accrueExitingState(item, nowISO), updatedAt: nowISO }, resourceVersion }));
+      const nextOperation: WorkGraphRevisionOperationV4 = { ...operation, recommittedSet: [...operation.recommitSet], recommitSet: [], recommitOperationId: request.operationId, recommitRequestHash: requestHash, recommittedAt: nowISO };
+      const batch = await this.substrate.putBatchIfMatch([
+        ...nextRows.map((row) => ({ kind: KIND, entity: row.next, expectedRevision: row.resourceVersion })),
+        { kind: WORK_REVISION_KINDS.operation, entity: nextOperation, expectedRevision: operationRow.resourceVersion },
+      ]);
+      if (!batch.ok) throw new WorkGraphCurrentnessRejected("workgraph.currentness.head_changed", `atomic recommit CAS conflict: ${batch.conflicts.map((entry) => `${entry.kind}/${entry.id}`).join(",")}`);
+      return { workItems: nextRows.map((row) => this.observe(row.next, pin)), operationReplay: false };
+    });
+  }
+
   async unpauseWork(request: UnpauseWorkRequestV4, actor: { agentId: string; role: string }): Promise<WorkItem | null> {
+    if (request.logicalIds !== undefined) throw new TransitionRejected("batch unpause must use recommitRevisionSet");
     if (!this.currentness.currentPin()) return this.withWriterFence(() => this.unpauseWork(request, actor));
     const workId = await this.resolvePauseLocator(request);
     return this.tryCasUpdate(workId, async (w) => {
@@ -2298,6 +2807,14 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return map;
   }
 
+  private async addRevisionAuthorExclusions(item: WorkItem, excluded: Set<string>): Promise<void> {
+    if (item.revisedBy?.agentId) excluded.add(item.revisedBy.agentId);
+    const logicalId = item.logicalId;
+    if (!logicalId) return;
+    const family = await this.revisionStorage.getFamily(logicalId);
+    if (family?.originalCreatedBy.agentId) excluded.add(family.originalCreatedBy.agentId);
+  }
+
   /** idea-528 / bug-249: resolve the SELF-attestation exclusion set for a verifier-attestation
    *  gate. The laundering risk is the verifier authoring the VERIFIED WORK, not merely driving the
    *  verifier-gate node. Prefer target-work history: an explicit WorkItem targetRef and/or the
@@ -2329,6 +2846,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       for (const target of targets.values()) {
         for (const agentId of target.executorHistory) excluded.add(agentId);
         if (target.createdBy?.agentId) excluded.add(target.createdBy.agentId);
+        await this.addRevisionAuthorExclusions(target, excluded);
         if (target.lease?.holder) excluded.add(target.lease.holder);
       }
       return { excluded, basis: "target-work", targetIds: [...targets.keys()].sort() };
@@ -2336,6 +2854,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
 
     for (const agentId of gate.executorHistory) excluded.add(agentId);
     if (gate.createdBy?.agentId) excluded.add(gate.createdBy.agentId);
+    await this.addRevisionAuthorExclusions(gate, excluded);
     if (gate.lease?.holder) excluded.add(gate.lease.holder);
     return { excluded, basis: "gate-node", targetIds: [] };
   }

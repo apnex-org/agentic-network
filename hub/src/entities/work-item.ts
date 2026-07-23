@@ -50,11 +50,65 @@ export interface PauseWorkRequestV4 {
 }
 
 export interface UnpauseWorkRequestV4 {
-  /** Scalar compatibility path; atomic revision-set recommit lands with the revision slice. */
+  /** Scalar compatibility: exactly one physical/logical locator. Batch recommit:
+   *  logicalIds + exact revisions + operationId/reason, with scalar locators absent. */
   workId?: string;
   logicalId?: string;
+  logicalIds?: string[];
   expectedRevision?: number;
+  expectedRevisions?: Record<string, number>;
   expectedGeneration?: number;
+  operationId?: string;
+  reason?: string;
+}
+
+export interface ReviseWorkSetV4 {
+  runbook?: string;
+  payload?: unknown;
+  targetRef?: { kind: string; id: string } | null;
+  roleEligibility?: string[];
+  leaseWindowMs?: number | null;
+  nodeConfig?: NodeConfig | null;
+}
+
+/** Semantic revision request. type/evidenceRequirements and historical/status
+ *  fields are intentionally absent: they cannot be caller-mutated. Edge arrays
+ *  are replace-semantics over stable logical IDs. */
+export interface ReviseWorkRequestV4 {
+  workId?: string;
+  logicalId?: string;
+  operationId: string;
+  reason: string;
+  expectedGeneration: number;
+  expectedAffectedSet?: string[];
+  set?: ReviseWorkSetV4;
+  dependsOn?: string[];
+  completionDependsOn?: string[];
+  references?: WorkItemReference[];
+}
+
+export interface ReviseWorkResultV4 {
+  operationId: string;
+  requestHash: string;
+  generation: number;
+  previousGeneration: number;
+  topologyHash: string;
+  rootLogicalId: string;
+  affectedSet: string[];
+  recommitSet: string[];
+  current: Array<{ logicalId: string; physicalId: string; revision: number; localExecutionIdentity: string }>;
+  operationReplay: boolean;
+}
+
+export interface CurrentWorkProjectionV4 {
+  logicalId: string;
+  physicalId: string;
+  revision: number;
+  generation: number;
+  topologyHash: string;
+  predecessorPhysicalId: string | null;
+  localExecutionIdentity: string;
+  workItem: WorkItem;
 }
 
 /** work-94 (cold-start spine, non-dark digest): WHY a caller-scoped claimable digest is
@@ -674,6 +728,15 @@ export interface IWorkItemStore {
 
   getWorkItem(workId: string): Promise<WorkItem | null>;
 
+  /** Mission-140 logical-current resolver. Exact getWorkItem(physicalId) never
+   *  redirects; this explicit surface follows the pinned generation binding. */
+  getCurrentWork(logicalId: string): Promise<CurrentWorkProjectionV4 | null>;
+
+  /** Mission-140 semantic revision: immutable successors + exhaustive reverse
+   *  closure + one topology-head CAS. New rows activate paused and carry no
+   *  migrated evidence/attestations. */
+  reviseWork(request: ReviseWorkRequestV4, actor: { agentId: string; role: string }): Promise<ReviseWorkResultV4>;
+
   /** Mission-140: compose a multi-read integration under one immutable topology pin. */
   withTopologyReadPin?<T>(fn: () => Promise<T>): Promise<T>;
 
@@ -812,8 +875,9 @@ export interface IWorkItemStore {
    *  exact-holder notice intent before projection. Review/terminal/failed/noncurrent rows reject. */
   pauseWork(request: PauseWorkRequestV4, actor: { agentId: string; role: string }): Promise<WorkItem | null>;
 
-  /** Scalar paused→ready compatibility. Current revision/generation and authority are revalidated;
-   *  dependency state remains claim_work's concern. Batch revision recommit is a later slice. */
+  /** Atomic exact revision-set recommit. Dependency state remains claim_work's concern. */
+  recommitRevisionSet(request: UnpauseWorkRequestV4, actor: { agentId: string; role: string }): Promise<{ workItems: WorkItem[]; operationReplay: boolean }>;
+  /** Scalar paused→ready compatibility. */
   unpauseWork(request: UnpauseWorkRequestV4, actor: { agentId: string; role: string }): Promise<WorkItem | null>;
 
   /** Mission-140 persist-first exact-holder recall outbox projection support. */

@@ -47,6 +47,7 @@ import {
 } from "../entities/work-item-repository-substrate.js";
 import { LockAcquisitionTimeoutError } from "../storage-substrate/advisory-lock.js";
 import { WorkGraphCurrentnessRejected } from "../entities/workgraph-currentness-fence-v4.js";
+import { WorkRevisionStorageError } from "../entities/work-revision-storage-v4.js";
 import type {
   WorkItem,
   WorkItemBlockedOn,
@@ -179,6 +180,7 @@ function mapVerbError(e: unknown): PolicyResult {
   if (e instanceof AttestationRejected) return err("attestation_rejected", e.message);
   if (e instanceof LockAcquisitionTimeoutError) return err("lock_timeout", e.message);
   if (e instanceof WorkGraphCurrentnessRejected) return err("transition_rejected", e.message);
+  if (e instanceof WorkRevisionStorageError) return err("transition_rejected", e.message);
   if (e instanceof TransitionRejected) return err("transition_rejected", e.message);
   throw e;
 }
@@ -358,6 +360,17 @@ async function unpauseWork(args: Record<string, unknown>, ctx: IPolicyContext): 
   if (!store) return err("not_wired", "WorkItem store is not available");
   const caller = await resolveCreatedBy(ctx);
   try {
+    if (Array.isArray(args.logicalIds)) {
+      const result = await store.recommitRevisionSet({
+        logicalIds: args.logicalIds as string[],
+        expectedRevisions: args.expectedRevisions as Record<string, number>,
+        expectedGeneration: args.expectedGeneration as number,
+        operationId: args.operationId as string,
+        reason: args.reason as string,
+      }, { agentId: caller.agentId, role: caller.role });
+      if (!result.operationReplay) for (const item of result.workItems) await emitWorkTransition(ctx, { item, verb: "unpause_work", fromStatus: "paused", actor: caller });
+      return ok({ workItems: result.workItems, operationReplay: result.operationReplay, atomic: true });
+    }
     const w = await store.unpauseWork({
       workId: args.workId as string | undefined,
       logicalId: args.logicalId as string | undefined,
@@ -368,6 +381,42 @@ async function unpauseWork(args: Record<string, unknown>, ctx: IPolicyContext): 
     if (!w) return notFound(locator);
     await emitWorkTransition(ctx, { item: w, verb: "unpause_work", fromStatus: "paused", actor: caller });
     return workItemResult(w);
+  } catch (e) { return mapVerbError(e); }
+}
+
+async function getCurrentWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const store = ctx.stores.workItem;
+  if (!store) return err("not_wired", "WorkItem store is not available");
+  try {
+    const projection = await store.getCurrentWork(args.logicalId as string);
+    return projection ? ok(projection) : notFound(args.logicalId as string);
+  } catch (e) { return mapVerbError(e); }
+}
+
+async function reviseWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const store = ctx.stores.workItem;
+  if (!store) return err("not_wired", "WorkItem store is not available");
+  const caller = await resolveCreatedBy(ctx);
+  try {
+    const result = await store.reviseWork({
+      workId: args.workId as string | undefined,
+      logicalId: args.logicalId as string | undefined,
+      operationId: args.operationId as string,
+      reason: args.reason as string,
+      expectedGeneration: args.expectedGeneration as number,
+      expectedAffectedSet: args.expectedAffectedSet as string[] | undefined,
+      set: args.set as never,
+      dependsOn: args.dependsOn as string[] | undefined,
+      completionDependsOn: args.completionDependsOn as string[] | undefined,
+      references: args.references as WorkItemReference[] | undefined,
+    }, { agentId: caller.agentId, role: caller.role });
+    if (!result.operationReplay) {
+      for (const binding of result.current) {
+        const item = await store.getWorkItem(binding.physicalId);
+        if (item) await emitWorkUpdated(ctx, item, caller, ["semantic_revision", "topology_generation"]);
+      }
+    }
+    return ok(result);
   } catch (e) { return mapVerbError(e); }
 }
 
@@ -1706,6 +1755,38 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
   );
 
   router.register(
+    "get_current_work",
+    "[Any] Resolve a stable logical WorkItem id through the pinned active WorkGraph generation. Returns the exact current physical id/revision, predecessor lineage, local execution identity, and WorkItem. Unlike get_work, this surface intentionally follows supersession.",
+    { logicalId: z.string().min(1) },
+    getCurrentWork,
+  );
+
+  router.register(
+    "revise_work",
+    "[Any] Mission-140 semantic revision. Creates immutable paused successors for the exact exhaustive reverse-dependent closure, recomputes contracts/topology, and publishes them through one generation-head CAS. Original creators are narrow (single-family, no role expansion); architect/Director may revise within the immutable family scope. type/evidenceRequirements/history/status are never mutable. No evidence or attestation migrates.",
+    {
+      workId: z.string().optional().describe("Exact current physical id; historical/draft ids reject"),
+      logicalId: z.string().optional().describe("Stable logical id resolved at expectedGeneration"),
+      operationId: z.string().min(1),
+      reason: z.string().min(1),
+      expectedGeneration: z.number().int().positive(),
+      expectedAffectedSet: z.array(z.string().min(1)).optional().describe("Optional exact closure CAS; mismatch rejects"),
+      set: z.object({
+        runbook: z.string().optional(),
+        payload: z.unknown().optional(),
+        targetRef: z.object({ kind: z.string().min(1), id: z.string().min(1) }).strict().nullable().optional(),
+        roleEligibility: z.array(z.string().min(1)).optional(),
+        leaseWindowMs: z.number().positive().nullable().optional(),
+        nodeConfig: nodeConfigSchema.nullable().optional(),
+      }).strict().optional(),
+      dependsOn: z.array(z.string().min(1)).optional().describe("Replacement stable-logical start edges"),
+      completionDependsOn: z.array(z.string().min(1)).optional().describe("Replacement stable-logical completion edges"),
+      references: z.array(referenceSchema).optional().describe("Replacement references; Hub re-resolves inline/document/entity bytes/state; changed git refs fail closed without authoritative blob bytes"),
+    },
+    reviseWork,
+  );
+
+  router.register(
     "pause_work",
     "[Any] Mission-140 pause/recall. Exactly one of workId|logicalId. Ready work: original creator, architect, or Director. Claimed/in_progress/blocked: architect or Director only. One CAS records the full pre-state, invalidates the token, clears lease/blocker, and persists an exact-holder notice before restart-safe projection. Review/terminal/failed/noncurrent rows reject.",
     {
@@ -1721,12 +1802,16 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "unpause_work",
-    "[Any] Scalar paused→ready recommit. Exactly one of workId|logicalId. Validates current revision/generation and failed-seal fence but deliberately leaves dependency-state checks to claim_work. Original creator may unpause only an unchanged row they lawfully paused; architect/Director may recommit within their authority.",
+    "[Any] Scalar compatibility OR architect/Director atomic revision-set recommit. Batch mode requires exact logicalIds + expectedRevisions + generation + operationId/reason and makes the entire successor set ready in one transaction; no partial visibility survives conflict, crash, or retry. Dependency-state checks remain claim_work's concern.",
     {
-      workId: z.string().optional().describe("Exact physical WorkItem id"),
-      logicalId: z.string().optional().describe("Logical WorkItem id resolved at the pinned current generation"),
+      workId: z.string().optional().describe("Scalar exact physical WorkItem id"),
+      logicalId: z.string().optional().describe("Scalar logical WorkItem id"),
+      logicalIds: z.array(z.string().min(1)).optional().describe("Batch exact pending revision set"),
       expectedRevision: z.number().int().positive().optional(),
+      expectedRevisions: z.record(z.string(), z.number().int().positive()).optional(),
       expectedGeneration: z.number().int().nonnegative().optional(),
+      operationId: z.string().min(1).optional(),
+      reason: z.string().min(1).optional(),
     },
     unpauseWork,
   );

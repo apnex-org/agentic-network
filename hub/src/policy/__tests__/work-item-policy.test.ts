@@ -38,11 +38,11 @@ function makeStub(overrides: Partial<Record<keyof IWorkItemStore, (...a: unknown
   return {
     calls,
     createWorkItem: m("createWorkItem"), updateWorkItem: m("updateWorkItem"), createBlueprintNode: m("createBlueprintNode"), deleteWorkItem: m("deleteWorkItem"),
-    getWorkItem: m("getWorkItem"), getCompletionProgress: m("getCompletionProgress"), getStintProjection: m("getStintProjection"), getNextAction: m("getNextAction"), getLegalMoves: m("getLegalMoves"), entityExists: m("entityExists"),
+    getWorkItem: m("getWorkItem"), getCurrentWork: m("getCurrentWork"), reviseWork: m("reviseWork"), getCompletionProgress: m("getCompletionProgress"), getStintProjection: m("getStintProjection"), getNextAction: m("getNextAction"), getLegalMoves: m("getLegalMoves"), entityExists: m("entityExists"),
     listWorkItems: m("listWorkItems"), listPrReviewBindingWorkItems: m("listPrReviewBindingWorkItems"), listWorkItemsByProjectionKey: m("listWorkItemsByProjectionKey"), listReadyForRole: m("listReadyForRole"),
     claimWorkItem: m("claimWorkItem"), startWork: m("startWork"), blockWork: m("blockWork"),
     resumeWork: m("resumeWork"), renewLease: m("renewLease"), releaseWork: m("releaseWork"),
-    abandonWork: m("abandonWork"), pauseWork: m("pauseWork"), unpauseWork: m("unpauseWork"), completeWork: m("completeWork"),
+    abandonWork: m("abandonWork"), pauseWork: m("pauseWork"), recommitRevisionSet: m("recommitRevisionSet"), unpauseWork: m("unpauseWork"), completeWork: m("completeWork"),
   } as unknown as StubStore;
 }
 
@@ -85,8 +85,8 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
   let router: PolicyRouter;
   beforeEach(() => { router = new PolicyRouter(() => {}); registerWorkItemPolicy(router); });
 
-  it("registers all 20 tools (create_work + seed_blueprint + get_work + get_current_stint + get_next_action + legal_moves + list_work snapshot + the 9 lifecycle verbs + S3 pause_work/unpause_work + SEAL attest_evidence/verify_attestation)", () => {
-    for (const t of ["create_work", "seed_blueprint", "get_work", "get_current_stint", "get_next_action", "legal_moves", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "pause_work", "unpause_work", "complete_work", "attest_evidence", "verify_attestation"]) {
+  it("registers the WorkGraph cold-start, semantic-revision, lifecycle, and SEAL tools", () => {
+    for (const t of ["create_work", "seed_blueprint", "get_work", "get_current_work", "revise_work", "get_current_stint", "get_next_action", "legal_moves", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "pause_work", "unpause_work", "complete_work", "attest_evidence", "verify_attestation"]) {
       expect(router.getRegisteredTools()).toContain(t);
     }
   });
@@ -159,6 +159,35 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     expect(r.isError).toBe(true);
     expect(body(r).errorKind).toBe("transition_rejected");
     expect(String(body(r).error)).toContain("workgraph.currentness.revision_required");
+  });
+
+  it("get_current_work follows the explicit logical resolver rather than getWorkItem", async () => {
+    const projection = { logicalId: "logical-1", physicalId: "physical-2", revision: 2, generation: 7, topologyHash: "h", predecessorPhysicalId: "physical-1", localExecutionIdentity: "i", workItem: sampleItem({ id: "physical-2", status: "paused", lease: null }) };
+    const stub = makeStub({ getCurrentWork: () => projection });
+    const r = await router.handle("get_current_work", { logicalId: "logical-1" }, ctxFor(stub));
+    expect(r.isError).toBeFalsy();
+    expect(body(r)).toMatchObject({ physicalId: "physical-2", revision: 2 });
+    expect(stub.calls[0]).toMatchObject({ method: "getCurrentWork", args: ["logical-1"] });
+  });
+
+  it("revise_work passes only the SERVER-STAMPED actor and returns the revision receipt", async () => {
+    const receipt = { operationId: "rev-1", requestHash: "h", generation: 2, previousGeneration: 1, topologyHash: "t", rootLogicalId: "a", affectedSet: ["a"], recommitSet: ["a"], current: [], operationReplay: false };
+    const stub = makeStub({ reviseWork: () => receipt });
+    const r = await router.handle("revise_work", { logicalId: "a", operationId: "rev-1", reason: "semantic", expectedGeneration: 1, set: { runbook: "new" }, role: "director", agentId: "spoof" }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy();
+    expect(body(r)).toMatchObject({ operationId: "rev-1", affectedSet: ["a"] });
+    expect(stub.calls[0].method).toBe("reviseWork");
+    expect(stub.calls[0].args[1]).toEqual({ agentId: "anonymous-architect", role: "architect" });
+  });
+
+  it("unpause_work batch routes to the atomic revision-set verb and preserves replay", async () => {
+    const item = sampleItem({ id: "physical-2", status: "ready", lease: null });
+    const stub = makeStub({ recommitRevisionSet: () => ({ workItems: [item], operationReplay: true }) });
+    const r = await router.handle("unpause_work", { logicalIds: ["a"], expectedRevisions: { a: 2 }, expectedGeneration: 2, operationId: "recommit-2", reason: "activate" }, ctxFor(stub, "architect"));
+    expect(r.isError).toBeFalsy();
+    expect(body(r)).toMatchObject({ atomic: true, operationReplay: true });
+    expect(stub.calls[0].method).toBe("recommitRevisionSet");
+    expect(stub.calls[0].args[1]).toEqual({ agentId: "anonymous-architect", role: "architect" });
   });
 
   it("list_work: the status schema ADMITS `paused` (digest-excluded items are findable via the snapshot)", async () => {

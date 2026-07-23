@@ -8,5 +8,8 @@ export const createWorkGraphRevisionOperationMigrationModule = (schema: SchemaDe
       "operationId", "requestHash", "generation", "previousGeneration",
       "topologyHash", "manifestId", "recommitSet",
     ],
-    status: ["state", "committedAt"],
+    status: [
+      "state", "committedAt", "recommittedSet", "recommitOperationId",
+      "recommitRequestHash", "recommittedAt",
+    ],
   });

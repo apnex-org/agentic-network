@@ -233,6 +233,28 @@ export type PutIfMatchResult =
   | { ok: true; resourceVersion: string }
   | { ok: false; conflict: "revision-mismatch"; actualRevision: string };
 
+/** Mission-140 D2: one atomic multi-row CAS across entity kinds. The substrate
+ * validates EVERY expected revision before publishing ANY write. PostgreSQL
+ * executes the batch in one transaction; memory validates then commits in one
+ * synchronous turn. Used by revision-set recommit so partial ready visibility is
+ * structurally impossible. */
+export interface BatchPutIfMatchEntry<T = unknown> {
+  kind: string;
+  entity: T;
+  expectedRevision: string;
+}
+export type BatchCreateOnlyResult =
+  | { ok: true; resourceVersions: Record<string, string> }
+  | { ok: false; conflict: "existing"; existing: Array<{ kind: string; id: string }> };
+
+export type BatchPutIfMatchResult =
+  | { ok: true; resourceVersions: Record<string, string> }
+  | {
+      ok: false;
+      conflict: "revision-mismatch";
+      conflicts: Array<{ kind: string; id: string; expectedRevision: string; actualRevision: string | null }>;
+    };
+
 // ─── Snapshot / restore (per Design §2.5) ───────────────────────────────────
 
 export type SnapshotRef = {
@@ -285,7 +307,12 @@ export interface HubStorageSubstrate {
 
   // ── CAS primitives (preserve v0 race-protection; round-1 audit C1) ────────
   createOnly<T>(kind: string, entity: T): Promise<CreateOnlyResult>;
+  /** Atomic all-or-nothing create over multiple rows/kinds. */
+  createBatchOnly(entries: readonly { kind: string; entity: unknown }[]): Promise<BatchCreateOnlyResult>;
   putIfMatch<T>(kind: string, entity: T, expectedRevision: string): Promise<PutIfMatchResult>;
+  /** Atomic all-or-nothing CAS over multiple rows and kinds. Duplicate
+   *  kind/id entries reject before effect. */
+  putBatchIfMatch(entries: readonly BatchPutIfMatchEntry[]): Promise<BatchPutIfMatchResult>;
 
   // ── Watch / change-notification (per Design §2.4 LISTEN/NOTIFY) ───────────
   /**

@@ -23,6 +23,9 @@ import type {
   ChangeEvent,
   CreateOnlyResult,
   PutIfMatchResult,
+  BatchCreateOnlyResult,
+  BatchPutIfMatchEntry,
+  BatchPutIfMatchResult,
   SnapshotRef,
   Filter,
   FilterValue,
@@ -390,6 +393,47 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
     return { ok: true, id, resourceVersion: String(r.rows[0]!.resource_version) };
   }
 
+  async createBatchOnly(entries: readonly { kind: string; entity: unknown }[]): Promise<BatchCreateOnlyResult> {
+    if (entries.length === 0) return { ok: true, resourceVersions: {} };
+    const prepared = entries.map((entry) => {
+      const stored = this.encodeForWrite(entry.kind, entry.entity);
+      const id = extractId(stored, entry.kind);
+      return { ...entry, stored, id, key: `${entry.kind}/${id}` };
+    });
+    if (new Set(prepared.map((entry) => entry.key)).size !== prepared.length) throw new Error("createBatchOnly rejects duplicate kind/id entries");
+    const inherited = this.lockClientContext.getStore();
+    const ownsConnection = !inherited;
+    const client = inherited?.client ?? await this.pool.connect();
+    try {
+      if (inherited) await inherited.tail;
+      await client.query("BEGIN");
+      const existing: Array<{ kind: string; id: string }> = [];
+      for (const entry of prepared) {
+        const row = await client.query(`SELECT 1 FROM entities WHERE kind = $1 AND id = $2 FOR UPDATE`, [entry.kind, entry.id]);
+        if (row.rowCount !== 0) existing.push({ kind: entry.kind, id: entry.id });
+      }
+      if (existing.length > 0) {
+        await client.query("ROLLBACK");
+        return { ok: false, conflict: "existing", existing };
+      }
+      const resourceVersions: Record<string, string> = {};
+      for (const entry of prepared) {
+        const inserted = await client.query<{ resource_version: string }>(
+          `INSERT INTO entities (kind, id, data, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW()) RETURNING resource_version`,
+          [entry.kind, entry.id, entry.stored as object],
+        );
+        resourceVersions[entry.key] = String(inserted.rows[0]!.resource_version);
+      }
+      await client.query("COMMIT");
+      return { ok: true, resourceVersions };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      if (ownsConnection) client.release();
+    }
+  }
+
   async putIfMatch<T>(kind: string, entity: T, expectedRevision: string): Promise<PutIfMatchResult> {
     const stored = this.encodeForWrite(kind, entity); // mission-90 W4: envelope-encode (idempotent)
     const id = extractId(stored, kind);
@@ -418,6 +462,65 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
       };
     }
     return { ok: true, resourceVersion: String(r.rows[0]!.resource_version) };
+  }
+
+  async putBatchIfMatch(entries: readonly BatchPutIfMatchEntry[]): Promise<BatchPutIfMatchResult> {
+    if (entries.length === 0) return { ok: true, resourceVersions: {} };
+    const prepared = entries.map((entry) => {
+      const stored = this.encodeForWrite(entry.kind, entry.entity);
+      const id = extractId(stored, entry.kind);
+      return { ...entry, stored, id, key: `${entry.kind}/${id}` };
+    });
+    if (new Set(prepared.map((entry) => entry.key)).size !== prepared.length) {
+      throw new Error("putBatchIfMatch rejects duplicate kind/id entries");
+    }
+
+    const inherited = this.lockClientContext.getStore();
+    const ownsConnection = !inherited;
+    const client = inherited?.client ?? await this.pool.connect();
+    // All ordinary CRUD inside a WorkGraph writer fence already routes to this
+    // client. The batch uses it directly so BEGIN/validation/CAS/COMMIT cannot
+    // be split across pool sessions.
+    try {
+      if (inherited) await inherited.tail;
+      await client.query("BEGIN");
+      const conflicts: Array<{ kind: string; id: string; expectedRevision: string; actualRevision: string | null }> = [];
+      for (const entry of prepared) {
+        const row = await client.query<{ resource_version: string }>(
+          `SELECT resource_version FROM entities WHERE kind = $1 AND id = $2 FOR UPDATE`,
+          [entry.kind, entry.id],
+        );
+        const actualRevision = row.rowCount === 0 ? null : String(row.rows[0]!.resource_version);
+        if (actualRevision !== entry.expectedRevision) {
+          conflicts.push({ kind: entry.kind, id: entry.id, expectedRevision: entry.expectedRevision, actualRevision });
+        }
+      }
+      if (conflicts.length > 0) {
+        await client.query("ROLLBACK");
+        return { ok: false, conflict: "revision-mismatch", conflicts };
+      }
+      const resourceVersions: Record<string, string> = {};
+      for (const entry of prepared) {
+        const updated = await client.query<{ resource_version: string }>(
+          `UPDATE entities
+             SET data = $3,
+                 updated_at = NOW(),
+                 resource_version = nextval('entities_rv_seq')
+           WHERE kind = $1 AND id = $2 AND resource_version = $4
+           RETURNING resource_version`,
+          [entry.kind, entry.id, entry.stored as object, entry.expectedRevision],
+        );
+        if (updated.rowCount !== 1) throw new Error(`putBatchIfMatch lost locked row ${entry.key}`);
+        resourceVersions[entry.key] = String(updated.rows[0]!.resource_version);
+      }
+      await client.query("COMMIT");
+      return { ok: true, resourceVersions };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      if (ownsConnection) client.release();
+    }
   }
 
   // ── Watch / change-notification (per Design §2.4 LISTEN/NOTIFY) ───────────

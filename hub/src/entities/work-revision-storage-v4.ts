@@ -63,7 +63,14 @@ export interface WorkGraphRevisionOperationV4 {
   previousGeneration: number;
   topologyHash: Sha256Hex;
   manifestId: string;
+  /** Pending current-successor logical IDs that must recommit paused→ready in
+   *  one atomic batch. Cleared only in the same multi-row CAS that readies the
+   *  rows; recommittedSet preserves the immutable receipt projection. */
   recommitSet: string[];
+  recommittedSet?: string[];
+  recommitOperationId?: string;
+  recommitRequestHash?: Sha256Hex;
+  recommittedAt?: string;
   state: "prepared" | "committed";
   preparedAt: string;
   committedAt?: string;
@@ -168,6 +175,8 @@ export interface BuildWorkRevisionStorageInputV4 {
   requestHash?: Sha256Hex;
   createdAt: string;
   notices?: readonly Omit<WorkGraphRevisionNoticeV4, "id" | "projected">[];
+  /** Exact sorted logical successor set activated paused by this generation. */
+  recommitSet?: readonly string[];
   shardSize?: number;
 }
 
@@ -608,6 +617,14 @@ export function buildWorkRevisionStorageV4(input: BuildWorkRevisionStorageInputV
     ...generationWithoutManifest,
     manifestHash: hashCanonicalDomain(WORK_TOPOLOGY_MANIFEST_VERSION, manifestPayload(generationWithoutManifest)),
   };
+  const recommitSet = sortedUnique(input.recommitSet ?? [], "recommitSet");
+  for (const logicalId of recommitSet) {
+    if (!bindings[logicalId]) fail("storage.integrity", `recommitSet names absent logical ID ${logicalId}`);
+    const projection = projections.find((candidate) => candidate.logicalId === logicalId)!;
+    if (projection.workItem.status !== "paused" || projection.workItem.lease) {
+      fail("storage.integrity", `recommitSet ${logicalId} must bind a paused, unleased successor`);
+    }
+  }
   const operation: WorkGraphRevisionOperationV4 = {
     id: input.operationId,
     operationId: input.operationId,
@@ -616,7 +633,7 @@ export function buildWorkRevisionStorageV4(input: BuildWorkRevisionStorageInputV
     previousGeneration: input.previousGeneration,
     topologyHash,
     manifestId: generation.id,
-    recommitSet: [],
+    recommitSet,
     state: "prepared",
     preparedAt: input.createdAt,
   };
@@ -967,14 +984,16 @@ export class WorkRevisionStorageRepositoryV4 {
       operation: storage.operation,
       notices: storage.notices,
     });
-    // Every row is inert until the last head CAS. Partial failure leaves only
-    // idempotently replayable drafts; no current graph changes.
-    await this.persistPreparedOperation(storage.operation);
+    // Every row is inert until the last head CAS. Publish the operation lookup
+    // LAST: observing a prepared operation proves its complete generation,
+    // shards, edges, families, and notices are durable (restart replay never
+    // follows a half-written lookup pointer).
     for (const family of storage.families) await this.persistFamily(family);
     for (const notice of storage.notices) await this.persistPreparedNotice(notice);
     for (const edge of storage.edges) await this.immutablePut(WORK_REVISION_KINDS.edge, edge);
     for (const shard of storage.shards) await this.immutablePut(WORK_REVISION_KINDS.shard, shard);
     await this.immutablePut(WORK_REVISION_KINDS.generation, storage.generation);
+    await this.persistPreparedOperation(storage.operation);
   }
 
   async bootstrapLegacyShadow(opts: BootstrapLegacyShadowOptionsV4): Promise<BuiltWorkRevisionStorageV4> {
@@ -1012,6 +1031,7 @@ export class WorkRevisionStorageRepositoryV4 {
   }
 
   private async persistProjectedWorkItemsUnderLock(storage: BuiltWorkRevisionStorageV4): Promise<void> {
+    const missing: WorkItem[] = [];
     for (const projection of storage.projections) {
       const row: WorkItem = {
         ...plainPersisted(projection.workItem),
@@ -1037,8 +1057,13 @@ export class WorkRevisionStorageRepositoryV4 {
         }
         continue;
       }
-      await this.immutablePut("WorkItem", row);
+      missing.push(row);
     }
+    // A process death may occur before or after this transaction, never between
+    // successor rows. Retained old bindings are read-only validations; every new
+    // physical successor for the generation is one all-or-nothing create batch.
+    const created = await this.substrate.createBatchOnly(missing.map((entity) => ({ kind: "WorkItem", entity })));
+    if (!created.ok) fail("storage.immutable_conflict", `successor batch conflicted at ${created.existing.map((entry) => entry.id).join(",")}`);
   }
 
   /**
@@ -1105,6 +1130,10 @@ export class WorkRevisionStorageRepositoryV4 {
   async getNotice(intentId: string): Promise<WorkGraphRevisionNoticeV4 | null> {
     const row = await this.substrate.get<WorkGraphRevisionNoticeV4>(WORK_REVISION_KINDS.notice, intentId);
     return row ? decodeRow(row, WORK_REVISION_KINDS.notice) : null;
+  }
+
+  async loadEdgesComplete(generation: number): Promise<WorkGraphTopologyEdgeV4[]> {
+    return listAllStable<WorkGraphTopologyEdgeV4>(this.substrate, WORK_REVISION_KINDS.edge, { generation });
   }
 
   async listReverseSources(generation: number, targetLogicalId: string, edgeClass: EdgeClassV4): Promise<string[]> {

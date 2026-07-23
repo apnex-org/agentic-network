@@ -27,6 +27,7 @@
  * Per-id revisions are NOT per-kind-isolated (matches postgres semantic).
  */
 
+import { AsyncLocalStorage } from "node:async_hooks";
 import type {
   HubStorageSubstrate,
   SchemaDef,
@@ -35,6 +36,9 @@ import type {
   ChangeEvent,
   CreateOnlyResult,
   PutIfMatchResult,
+  BatchCreateOnlyResult,
+  BatchPutIfMatchEntry,
+  BatchPutIfMatchResult,
   SnapshotRef,
   Filter,
   FilterValue,
@@ -231,6 +235,28 @@ class MemoryStorageSubstrate implements MemorySubstrate {
     return { ok: true, id, resourceVersion: String(rv) };
   }
 
+  async createBatchOnly(entries: readonly { kind: string; entity: unknown }[]): Promise<BatchCreateOnlyResult> {
+    if (entries.length === 0) return { ok: true, resourceVersions: {} };
+    const prepared = entries.map((entry) => {
+      const stored = this.encodeForWrite(entry.kind, entry.entity);
+      const id = extractId(stored, entry.kind);
+      return { ...entry, stored, id, key: `${entry.kind}/${id}` };
+    });
+    if (new Set(prepared.map((entry) => entry.key)).size !== prepared.length) throw new Error("createBatchOnly rejects duplicate kind/id entries");
+    const existing = prepared.filter((entry) => this.entities.get(entry.kind)?.has(entry.id)).map(({ kind, id }) => ({ kind, id }));
+    if (existing.length > 0) return { ok: false, conflict: "existing", existing };
+    const resourceVersions: Record<string, string> = {};
+    const events: ChangeEvent[] = [];
+    for (const entry of prepared) {
+      const rv = ++this.revisionCounter;
+      this.getKindStore(entry.kind).set(entry.id, { data: cloneEntity(entry.stored), resourceVersion: rv });
+      resourceVersions[entry.key] = String(rv);
+      events.push({ op: "put", kind: entry.kind, id: entry.id, entity: cloneEntity(entry.stored), resourceVersion: String(rv) });
+    }
+    for (const event of events) this.emit(event);
+    return { ok: true, resourceVersions };
+  }
+
   async putIfMatch<T>(kind: string, entity: T, expectedRevision: string): Promise<PutIfMatchResult> {
     const stored = this.encodeForWrite(kind, entity); // mission-90 W8: envelope-encode (idempotent)
     const id = extractId(stored, kind);
@@ -256,6 +282,40 @@ class MemoryStorageSubstrate implements MemorySubstrate {
       resourceVersion: String(rv),
     });
     return { ok: true, resourceVersion: String(rv) };
+  }
+
+  async putBatchIfMatch(entries: readonly BatchPutIfMatchEntry[]): Promise<BatchPutIfMatchResult> {
+    if (entries.length === 0) return { ok: true, resourceVersions: {} };
+    const prepared = entries.map((entry) => {
+      const stored = this.encodeForWrite(entry.kind, entry.entity);
+      const id = extractId(stored, entry.kind);
+      return { ...entry, stored, id, key: `${entry.kind}/${id}` };
+    });
+    if (new Set(prepared.map((entry) => entry.key)).size !== prepared.length) {
+      throw new Error("putBatchIfMatch rejects duplicate kind/id entries");
+    }
+    const conflicts: Array<{ kind: string; id: string; expectedRevision: string; actualRevision: string | null }> = [];
+    for (const entry of prepared) {
+      const row = this.entities.get(entry.kind)?.get(entry.id);
+      const actualRevision = row ? String(row.resourceVersion) : null;
+      if (actualRevision !== entry.expectedRevision) {
+        conflicts.push({ kind: entry.kind, id: entry.id, expectedRevision: entry.expectedRevision, actualRevision });
+      }
+    }
+    if (conflicts.length > 0) return { ok: false, conflict: "revision-mismatch", conflicts };
+
+    // No await from validation through all writes: readers cannot observe a
+    // partially committed batch in the single-threaded memory substrate.
+    const resourceVersions: Record<string, string> = {};
+    const events: ChangeEvent[] = [];
+    for (const entry of prepared) {
+      const rv = ++this.revisionCounter;
+      this.getKindStore(entry.kind).set(entry.id, { data: cloneEntity(entry.stored), resourceVersion: rv });
+      resourceVersions[entry.key] = String(rv);
+      events.push({ op: "put", kind: entry.kind, id: entry.id, entity: cloneEntity(entry.stored), resourceVersion: String(rv) });
+    }
+    for (const event of events) this.emit(event);
+    return { ok: true, resourceVersions };
   }
 
   // ─── Watch / change-notification ──────────────────────────────────────────
@@ -379,6 +439,7 @@ class MemoryStorageSubstrate implements MemorySubstrate {
   // semantics — adequate for unit tests where lock-presence is incidental;
   // NOT a substitute for testcontainer pg per Design §4.2 Observation 1.
   private readonly lockChain = new Map<string, Promise<void>>();
+  private readonly heldLockContext = new AsyncLocalStorage<ReadonlySet<string>>();
 
   async withAdvisoryLock<T>(
     lockClass: number,
@@ -387,6 +448,8 @@ class MemoryStorageSubstrate implements MemorySubstrate {
     opts?: { timeoutMs?: number; latencyWarnMs?: number },
   ): Promise<T> {
     const compositeKey = `${lockClass}:${lockKey}`;
+    const inherited = this.heldLockContext.getStore();
+    if (inherited?.has(compositeKey)) return fn();
     const startedAt = Date.now();
     const timeoutMs = opts?.timeoutMs;
     const latencyWarnMs = opts?.latencyWarnMs ?? 100;
@@ -421,7 +484,7 @@ class MemoryStorageSubstrate implements MemorySubstrate {
         );
       }
 
-      return await fn();
+      return await this.heldLockContext.run(new Set([...(inherited ?? []), compositeKey]), fn);
     } finally {
       releaseNext();
       // Clean up the chain entry if we're still the tail (best-effort GC).

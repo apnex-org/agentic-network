@@ -20,6 +20,9 @@ export type {
   ChangeEvent,
   CreateOnlyResult,
   PutIfMatchResult,
+  BatchCreateOnlyResult,
+  BatchPutIfMatchEntry,
+  BatchPutIfMatchResult,
   SnapshotRef,
 } from "./types.js";
 

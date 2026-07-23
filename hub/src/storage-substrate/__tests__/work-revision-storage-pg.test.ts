@@ -20,6 +20,8 @@ import {
   type WorkGraphTopologyEdgeV4,
 } from "../../entities/work-revision-storage-v4.js";
 import type { WorkItem } from "../../entities/work-item.js";
+import { WorkItemRepositorySubstrate } from "../../entities/work-item-repository-substrate.js";
+import { SubstrateCounter } from "../../entities/substrate-counter.js";
 
 const SETUP_TIMEOUT = 120_000;
 const OP_TIMEOUT = 120_000;
@@ -180,6 +182,56 @@ describe("Mission-140 revision storage real PostgreSQL", () => {
     expect(snapshot.generation.topologyHash).toBe(head.topologyHash);
     expect(snapshot.operation.state).toBe("committed");
     expect(snapshot.families).toHaveLength(1);
+
+    const workRepo = new WorkItemRepositorySubstrate(substrate, new SubstrateCounter(substrate));
+    const revised = await workRepo.reviseWork({
+      logicalId: "one", operationId: "pg-revise-one-2", reason: "real-pg semantic revision",
+      expectedGeneration: 1, expectedAffectedSet: ["one"], set: { runbook: "new semantics" },
+    }, { role: "architect", agentId: "architect-1" });
+    expect(revised).toMatchObject({ generation: 2, affectedSet: ["one"], operationReplay: false });
+    expect((await workRepo.getWorkItem("one"))?.status).toBe("ready");
+    expect((await workRepo.getCurrentWork("one"))?.workItem).toMatchObject({ status: "paused", runbook: "new semantics", evidence: [], attestationHistory: [] });
+
+    const afterRestart = new WorkItemRepositorySubstrate(substrate, new SubstrateCounter(substrate));
+    const recommitRequest = {
+      logicalIds: ["one"], expectedRevisions: { one: 2 }, expectedGeneration: 2,
+      operationId: "pg-recommit-one-2", reason: "real-pg atomic recommit",
+    };
+    expect((await afterRestart.recommitRevisionSet(recommitRequest, { role: "architect", agentId: "architect-1" })).operationReplay).toBe(false);
+    const secondRestart = new WorkItemRepositorySubstrate(substrate, new SubstrateCounter(substrate));
+    expect((await secondRestart.recommitRevisionSet(recommitRequest, { role: "architect", agentId: "architect-1" })).operationReplay).toBe(true);
+    expect((await secondRestart.getCurrentWork("one"))?.workItem.status).toBe("ready");
+  }, OP_TIMEOUT);
+
+  it("real-PG multi-row CAS rolls back every row on one conflict and commits all rows together", async () => {
+    const left = work("batch-left");
+    const right = work("batch-right");
+    await substrate.createOnly("WorkItem", left);
+    await substrate.createOnly("WorkItem", right);
+    const leftRow = (await substrate.getWithRevision<WorkItem>("WorkItem", left.id))!;
+    const rightRow = (await substrate.getWithRevision<WorkItem>("WorkItem", right.id))!;
+    const createRejected = await substrate.createBatchOnly([
+      { kind: "WorkItem", entity: left },
+      { kind: "WorkItem", entity: work("batch-create-must-not-leak") },
+    ]);
+    expect(createRejected.ok).toBe(false);
+    expect(await substrate.get("WorkItem", "batch-create-must-not-leak")).toBeNull();
+
+    const rejected = await substrate.putBatchIfMatch([
+      { kind: "WorkItem", entity: { ...left, status: "paused" }, expectedRevision: leftRow.resourceVersion },
+      { kind: "WorkItem", entity: { ...right, status: "paused" }, expectedRevision: "0" },
+    ]);
+    expect(rejected.ok).toBe(false);
+    expect(decodeEnvelopeToFlat((await substrate.get<Record<string, unknown>>("WorkItem", left.id))!, "WorkItem")).toMatchObject({ status: "ready" });
+    expect(decodeEnvelopeToFlat((await substrate.get<Record<string, unknown>>("WorkItem", right.id))!, "WorkItem")).toMatchObject({ status: "ready" });
+
+    const committed = await substrate.putBatchIfMatch([
+      { kind: "WorkItem", entity: { ...left, status: "paused" }, expectedRevision: leftRow.resourceVersion },
+      { kind: "WorkItem", entity: { ...right, status: "paused" }, expectedRevision: rightRow.resourceVersion },
+    ]);
+    expect(committed.ok).toBe(true);
+    expect(decodeEnvelopeToFlat((await substrate.get<Record<string, unknown>>("WorkItem", left.id))!, "WorkItem")).toMatchObject({ status: "paused" });
+    expect(decodeEnvelopeToFlat((await substrate.get<Record<string, unknown>>("WorkItem", right.id))!, "WorkItem")).toMatchObject({ status: "paused" });
   }, OP_TIMEOUT);
 
   it("real-PG EXPLAIN uses reverse, family-scope, operation, notice, and recall indexes", async () => {
