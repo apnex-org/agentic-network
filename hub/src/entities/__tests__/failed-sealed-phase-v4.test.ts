@@ -105,12 +105,19 @@ describe("bug-371 — real terminal phase for seal-failed rows", () => {
     expect(post.status, "the seal write path stores review, NOT ready").toBe("review");
   });
 
-  it("F1: list filtered by the terminal phase RETURNS both sealed shapes", async () => {
+  // PREDICATE NARROWED (architect ruling 2026-07-25): the migration matches a sealed row ONLY when
+  // its STORED phase is `ready` — bug-371's actual defect. The `post` fixture is stored `review`,
+  // which is NOT claimable and therefore does NOT misrepresent itself, so it is deliberately left
+  // alone. This case previously asserted BOTH shapes migrate; that encoded the over-broad
+  // predicate the first complete production dry run exposed (24 matched where 12 were expected).
+  it("F1: list filtered by the terminal phase returns the migrated stored-`ready` shape", async () => {
     const h = harness();
     await seed(h);
     await h.repo.migrateSealedRowsToFailedPhase();
     const { items } = await h.repo.listWorkItems({ status: SEALED });
-    expect(items.map((i) => i.id).sort(), "an auditor filtering terminal MUST find the sealed rows").toEqual(["post", "pre"]);
+    expect(items.map((i) => i.id), "an auditor filtering terminal finds the row that exhibited the defect").toEqual(["pre"]);
+    // and the review-stored sealed row is UNTOUCHED — narrowing asserted, not merely un-asserted
+    expect((await h.repo.getWorkItem("post"))!.status, "a sealed `review` row is not claimable, so not migrated").toBe("review");
   });
 
   it("F2: list filtered by `ready` no longer returns them, and returns nothing terminal", async () => {
@@ -178,7 +185,10 @@ describe("bug-371 — real terminal phase for seal-failed rows", () => {
     expect(verdictBytes(afterPost)).toBe(beforePost);
     // ...and the migration DID something — otherwise the byte-identity above is vacuous.
     expect(afterPre.status).toBe(SEALED);
-    expect(afterPost.status).toBe(SEALED);
+    // PREDICATE NARROWED: the review-stored sealed row is deliberately NOT migrated — `review` is
+    // not claimable, so it does not exhibit bug-371. Asserting it stays `review` makes the
+    // narrowing explicit rather than merely dropping the old expectation.
+    expect(afterPost.status, "a sealed `review` row is left exactly as found").toBe("review");
     // the seal still derives, so the row stays terminal for every guard that consults it
     expect(afterPre.effectiveDisposition).toBe("failed_sealed");
     expect(isFailedGateSealed(afterPre)).toBe(true);
@@ -194,8 +204,9 @@ describe("bug-371 — real terminal phase for seal-failed rows", () => {
     const after = (await h.repo.getWorkItem("plain-ready"))!;
     expect(after.status).toBe("ready");
     expect(JSON.stringify(after)).toBe(JSON.stringify(before));
-    expect(result.migrated.map((r) => r.id).sort()).toEqual(["post", "pre"]);
+    expect(result.migrated.map((r) => r.id)).toEqual(["pre"]);
     expect(result.skipped, "the clean row is skipped, not silently rewritten").toContain("plain-ready");
+    expect(result.skipped, "and so is the review-stored sealed row").toContain("post");
     const ready = await h.repo.listReadyForRole("engineer", 100);
     expect(ready.items.map((i) => i.id)).toContain("plain-ready");
   });
@@ -231,11 +242,11 @@ describe("bug-371 — real terminal phase for seal-failed rows", () => {
     ]);
     expect(after, "a dry run must leave storage byte-identical").toBe(before);
     expect(dry.dryRun).toBe(true);
-    expect(dry.migrated.map((r) => r.id).sort(), "and must still REPORT the rows it would write").toEqual(["post", "pre"]);
+    expect(dry.migrated.map((r) => r.id), "and must still REPORT the rows it would write").toEqual(["pre"]);
     expect(dry.migrated.find((r) => r.id === "pre")!.before).toBe("ready");
     // and a real run afterwards still works — the dry run did not consume anything
     const real = await h.repo.migrateSealedRowsToFailedPhase();
-    expect(real.migrated.map((r) => r.id).sort()).toEqual(["post", "pre"]);
+    expect(real.migrated.map((r) => r.id)).toEqual(["pre"]);
     expect((await h.repo.getWorkItem("pre"))!.status).toBe(SEALED);
   });
 
@@ -244,11 +255,15 @@ describe("bug-371 — real terminal phase for seal-failed rows", () => {
     const h = harness();
     await seed(h);
     const first = await h.repo.migrateSealedRowsToFailedPhase();
-    expect(first.migrated.find((r) => r.id === "pre")!.before).toBe("ready");
-    expect(first.migrated.find((r) => r.id === "post")!.before).toBe("review");
+    expect(first.migrated.map((r) => r.id)).toEqual(["pre"]);
+    expect(first.migrated[0].before, "every `before` is `ready` under the narrowed predicate").toBe("ready");
     expect(first.migrated.every((r) => r.after === SEALED)).toBe(true);
     const second = await h.repo.migrateSealedRowsToFailedPhase();
     expect(second.migrated, "a second run must be a no-op, not a rewrite").toEqual([]);
+    // 🔴 SEMANTIC CHANGE WORTH KNOWING: `matched` now counts rows that STILL EXHIBIT THE DEFECT, so
+    // after a successful migration a re-run reports matched=0 — that is the SUCCESS signal, not a
+    // regression. Under the old predicate it would have reported the full sealed count forever.
+    expect(second.matched, "nothing still misrepresents itself").toBe(0);
     expect(second.skipped.sort()).toEqual(["plain-ready", "post", "pre"]);
   });
 });

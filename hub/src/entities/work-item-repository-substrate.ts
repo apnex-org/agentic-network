@@ -595,9 +595,45 @@ export function hasActiveVerifierFail(item: WorkItem): boolean {
  * this runs after. It touches DISPLAY only, enters no predicate and no claimability path, and must
  * not be mistaken for the migration.
  */
+/**
+ * 🔴 bug-371's DEFECT, STATED EXACTLY: **a sealed row whose STORED phase is `ready` misrepresents
+ * itself as claimable.** Nothing else does.
+ *
+ * DEFINED ONCE and used by BOTH the read projection and the migration match, because two copies of
+ * one rule is the defect this entire arc exists to kill — introducing a fresh instance inside the
+ * fix for it would be the joke writing itself.
+ *
+ * WHY IT IS NOT SIMPLY `isFailedGateSealed`, which is what shipped and was wrong: that matches
+ * EVERY sealed row regardless of stored phase, which is a strictly larger and partly DESTRUCTIVE
+ * claim. Measured against production — 24 sealed rows, not the 12 we believed, because we had
+ * counted them through `list_work(status="ready")`, THE VERY FILTER bug-371 EXISTS TO FIX:
+ *   - 8 stored `abandoned` — rewriting collapses a PERSON'S DECISION into a VERDICT. Both are
+ *     terminal, both unclaimable, both in TERMINAL_WORK_PHASES, so nothing downstream treats them
+ *     differently: the ONLY thing a rewrite changes is that we can no longer tell which happened.
+ *   - 4 stored `paused` — converting reversible dormancy to terminal is a LIFECYCLE mutation
+ *     riding a DISPLAY correction, the bundling hazard this arc already diagnosed once.
+ * Neither group is claimable and neither presents as `ready`, so neither exhibits the defect.
+ *
+ * The seal itself is untouched and still governs every guard: `isFailedGateSealed` remains the
+ * capability predicate and consults no phase, so an abandoned-or-paused sealed row stays refused
+ * by all ten lifecycle verbs whatever this returns. THIS PREDICATE IS ABOUT REPRESENTATION ONLY.
+ */
+export function misrepresentsAsClaimable(item: WorkItem): boolean {
+  return item.status === "ready" && isFailedGateSealed(item);
+}
+
+/**
+ * bug-371 TRANSITIONAL PROJECTION — display-only, and narrowed to the defect.
+ *
+ * A no-op once a row is migrated, and a no-op for sealed rows stored at any other phase. It maps
+ * to `failed_sealed`, the same token the migration stores, so the displayed answer is identical
+ * either side of the migration and this becomes provably dead once storage is corrected.
+ *
+ * IT DOES NOT AND CANNOT FIX A FILTER — filters are decided in the storage layer before decode;
+ * this runs after. It buys display consistency for the affected rows and nothing else.
+ */
 export function projectSealedStatus(item: WorkItem): WorkItem {
-  if (item.status === "failed_sealed") return item;          // already migrated → no-op
-  if (item.effectiveDisposition !== "failed_sealed") return item;
+  if (!misrepresentsAsClaimable(item)) return item;
   return { ...item, status: "failed_sealed" };
 }
 
@@ -3651,9 +3687,14 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const skipped: string[] = [];
     let matched = 0;
     for (const item of items) {
-      if (!isFailedGateSealed(item)) { skipped.push(item.id); continue; }
+      // THE SAME PREDICATE THE READ PATH USES — one definition, two call sites. It matches only a
+      // sealed row whose STORED phase is `ready`, which is precisely bug-371's defect. Sealed rows
+      // stored `abandoned` or `paused` are deliberately NOT matched and NOT written: they do not
+      // misrepresent themselves, and rewriting them would destroy provenance (abandoned) or mutate
+      // a lifecycle (paused). An already-migrated row stores `failed_sealed`, so it fails this too
+      // and the migration stays idempotent without needing a separate check.
+      if (!misrepresentsAsClaimable(item)) { skipped.push(item.id); continue; }
       matched += 1;
-      if (item.status === "failed_sealed") { skipped.push(item.id); continue; }
       // loud refusal on an unrecognised sealed shape — see the doc comment
       if (item.failedGateSeal == null && !hasActiveVerifierFail(item)) {
         throw new Error(

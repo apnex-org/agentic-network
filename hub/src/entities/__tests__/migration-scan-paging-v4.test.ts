@@ -137,7 +137,11 @@ describe("bug-371 — the migration scan is exhaustive", () => {
     expect(first.migrated.length).toBe(3);
 
     const second = await h.repo.migrateSealedRowsToFailedPhase();
-    expect(second.matched, "still SEES them — matched is not the same as written").toBe(3);
+    // 🔴 PREDICATE NARROWED: `matched` counts rows that STILL EXHIBIT bug-371 (sealed AND stored
+    // `ready`). After a successful migration they store `failed_sealed`, so a re-run reports
+    // matched=0. THAT IS THE SUCCESS SIGNAL, not a regression — under the old predicate this
+    // reported the full sealed count forever and could never indicate completion.
+    expect(second.matched, "nothing still misrepresents itself after the first run").toBe(0);
     expect(second.migrated, "and writes nothing on the second pass").toEqual([]);
     expect(second.skipped.length).toBe(CAP + 23);
     for (const id of ids) {
