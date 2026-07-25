@@ -54,19 +54,13 @@ export interface PrReviewObligationDraft {
     };
   };
   runbook: string;
-  evidenceRequirements: Array<
-    | {
-        id: "github_review_artifact";
-        kind: "freeform";
-        description: string;
-      }
-    | {
-        id: "independent_pr_review_validation";
-        kind: "review";
-        description: string;
-        evidenceAuthority: "verifier-attestation";
-      }
-  >;
+  // bug-377: the `independent_pr_review_validation` variant is RETIRED from this union, so a
+  // future edit cannot silently re-mint it — the type no longer admits it.
+  evidenceRequirements: Array<{
+    id: "github_review_artifact";
+    kind: "freeform";
+    description: string;
+  }>;
 }
 
 export interface PrReviewRequestRuleResult {
@@ -136,19 +130,15 @@ function buildObligationDraft(
     },
     runbook:
       "Review the bound PR. Complete with explicit GitHub review evidence. Do not merge or enqueue unless separately authorized.",
+    // bug-377: ONE REQUIREMENT, ONE PERSON — see the matching note in
+    // pr-review-workitem-projection.ts. TWO rules mint this node shape; both had to change, or the
+    // unfixed one keeps producing the wedging contract.
     evidenceRequirements: [
       {
         id: "github_review_artifact",
         kind: "freeform",
         description:
-          "Executor-submitted GitHub PR review artifact URL/id for the requested reviewer and bound head. This artifact is load-bearing input for verifier attestation but does not complete the review obligation alone.",
-      },
-      {
-        id: "independent_pr_review_validation",
-        kind: "review",
-        evidenceAuthority: "verifier-attestation",
-        description:
-          "Verifier attestation that the submitted GitHub review artifact matches the requested reviewer, bound PR head, and independence policy. External-only refs are not load-bearing; cite the submitted evidence ref.",
+          "The requested reviewer's own GitHub PR review artifact URL/id, for the bound head. Submitting it completes this obligation — no second party attests it.",
       },
     ],
   };

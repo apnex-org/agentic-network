@@ -3257,7 +3257,10 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         // PASS dual-edge: LEAF-only auto-advance. A gated ARC completes only through
         // complete_work, which independently re-checks completionDependsOn.
         if (w.status === "review") {
-          const gate = evaluateCompletionGate({ evidenceRequirements: w.evidenceRequirements, attestations });
+          // bug-377: `payload` is load-bearing here — the PR-review carve-out keys on it. Passing a
+          // narrowed literal without it would silently disable the carve-out on THIS edge only,
+          // which is the one-rule-two-call-sites failure this codebase keeps producing.
+          const gate = evaluateCompletionGate({ evidenceRequirements: w.evidenceRequirements, attestations, payload: w.payload });
           let executorDone = false;
           try {
             executorDone = evaluateEvidence(w.evidenceRequirements, w.evidence, w.lease, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey))).nextPhase === "done";

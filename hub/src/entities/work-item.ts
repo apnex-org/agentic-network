@@ -665,13 +665,47 @@ export interface WorkItem {
  * `attest_evidence` tail (attest advances review→done when the gate flips true, no re-poke) — and
  * adds the hard fence (executor evidence cannot satisfy a `verifier-attestation` requirement).
  */
+/**
+ * bug-377 — a PR-review obligation projected from a PR (`obligationKind`
+ * `github_pr_review_request`). Identified by the projection's OWN payload marker rather than by
+ * `type` or by `evidenceAuthority`, so the carve-out below cannot widen to any other node kind:
+ * only a row the projection rule itself minted can match.
+ */
+export function isProjectedPrReviewObligation(
+  item: Pick<WorkItem, "payload">,
+): boolean {
+  const payload = item.payload;
+  if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return false;
+  return (payload as Record<string, unknown>).obligationKind === "github_pr_review_request";
+}
+
 export function evaluateCompletionGate(
-  item: Pick<WorkItem, "evidenceRequirements" | "attestations">,
+  item: Pick<WorkItem, "evidenceRequirements" | "attestations" | "payload">,
 ): { attestationReqsSatisfied: boolean; pendingAttestationReqs: string[] } {
+  // bug-377 CARVE-OUT — a PR-review obligation is ONE PERSON'S TASK.
+  //
+  // MECHANICS: for a row the PR-review projection minted, no `verifier-attestation` requirement
+  // is treated as blocking, so the gate cannot park it in `review`.
+  //
+  // RATIONALE: the projection used to mint TWO requirements — the reviewer's own artifact, and a
+  // second party's attestation that the artifact matched. THE SECOND PARTY WAS NEVER INTENDED TO
+  // EXIST: the node's runbook asks one reviewer to review a PR and close the item. The reviewer
+  // entered `executorHistory` by submitting the artifact and was then blocked from attesting it —
+  // a self-attestation trap MANUFACTURED BY THE CONTRACT, not by the independence rule. The
+  // independence that matters is unaffected: the reviewer is never the PR author (see the
+  // projection's `forbiddenReviewerLogins` / `lastPusherLogin`).
+  //
+  // CONSEQUENCE: rows ALREADY carrying the retired requirement discharge, because
+  // `evidenceRequirements` is immutable data and this predicate is code. Without this, every such
+  // row is permanently unfinishable and wedges its parent forever (`completionDependsOn` clears
+  // only on `done`). What is genuinely given up, per the Director's ruling: nobody second-checks
+  // the reviewer's own artifact. That trade was named and accepted, not slipped in.
+  const prReviewObligation = isProjectedPrReviewObligation(item);
   const pending: string[] = [];
   for (const req of item.evidenceRequirements) {
     // executor-evidence (or absent default) requirements are not this gate's domain.
     if (req.evidenceAuthority !== "verifier-attestation") continue;
+    if (prReviewObligation) continue;
     const active = item.attestations[req.id];
     if (!active || active.verdict !== "pass") pending.push(req.id);
   }
