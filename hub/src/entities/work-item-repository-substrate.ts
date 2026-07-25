@@ -1003,25 +1003,48 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return w ? cloneWorkItem(w) : null;
   }
 
+  /**
+   * idea-633 Part 1 — the V2 §2.1 legacy projection, extracted so the globally-legacy branch and
+   * the per-row unbound fallback CANNOT DRIFT APART. Two copies of this shape would be two
+   * chances for the fallback to disagree with the thing it is supposed to be a fallback to.
+   * `generation: 0` and `topologyHash: "legacy"` are the projection's stated legacy contract, not
+   * a stand-in for a value read from storage (storage holds null; see fence:102).
+   */
+  private async legacyProjection(logicalId: string): Promise<CurrentWorkProjectionV4 | null> {
+    const item = await this.getWorkItem(logicalId);
+    if (!item) return null;
+    return {
+      logicalId,
+      physicalId: item.id,
+      revision: item.revision ?? 1,
+      generation: 0,
+      topologyHash: "legacy",
+      predecessorPhysicalId: item.predecessorPhysicalId ?? null,
+      localExecutionIdentity: item.localExecutionIdentity ?? "legacy",
+      workItem: item,
+    };
+  }
+
   async getCurrentWork(logicalId: string): Promise<CurrentWorkProjectionV4 | null> {
     if (!this.currentness.currentPin()) return this.withReadPin(() => this.getCurrentWork(logicalId));
     const pin = this.currentness.currentPin()!;
-    if (pin.mode === "legacy") {
-      const item = await this.getWorkItem(logicalId);
-      if (!item) return null;
-      return {
-        logicalId,
-        physicalId: item.id,
-        revision: item.revision ?? 1,
-        generation: 0,
-        topologyHash: "legacy",
-        predecessorPhysicalId: item.predecessorPhysicalId ?? null,
-        localExecutionIdentity: item.localExecutionIdentity ?? "legacy",
-        workItem: item,
-      };
-    }
+    if (pin.mode === "legacy") return this.legacyProjection(logicalId);
+    // idea-633 Part 1 — V2 §2.1 is UNCONDITIONAL about projection: "Legacy rows project
+    // logicalId=physicalId, revision 1, and a deterministic v4 contract without write-on-read."
+    // It does not say "while no head exists". The implementation made legacy projection
+    // conditional on the GLOBAL pin (fence:102 keys only on head existence), so the FIRST head
+    // to be activated would make every row absent from that generation return null here —
+    // silently, since this site returns rather than throws. Measured: an unbound row went
+    // RESOLVES gen=0 -> NULL the moment a partial generation was activated.
+    //
+    // BINDING WINS, ALWAYS. The fallback is reached ONLY when the logicalId is absent from the
+    // generation, never as an alternative to a binding that exists — otherwise a revision's
+    // successor could be shadowed by its own legacy predecessor, which would be silent and
+    // green. Unbound is unambiguous: §2.2 a generation carries a COMPLETE bindings map (not a
+    // delta) and §1 invariant 4 publishes the entire new generation, so a logicalId cannot enter
+    // a generation and later be absent from one. UNBOUND <=> NEVER ENTERED.
     const binding = pin.generation.bindings[logicalId];
-    if (!binding) return null;
+    if (!binding) return this.legacyProjection(logicalId);
     const item = await this.getWorkItem(binding.physicalId);
     if (!item) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `current binding ${logicalId} points at missing ${binding.physicalId}`);
     const current = this.currentness.assertCurrent(item, pin)!;
@@ -1190,7 +1213,14 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
 
     const head = await this.revisionStorage.getHead();
     if (!head || head.head.generation !== request.expectedGeneration) {
-      throw new WorkGraphCurrentnessRejected("revision.currentness_mismatch", `expected generation ${request.expectedGeneration}; current is ${head?.head.generation ?? "absent"}`);
+      // idea-633 Part 1 — "absent" was wrong and cost two probes plus a false hypothesis. ONE
+      // condition currently carries THREE names: storage holds null (fence:102), the reader
+      // prints a hardcoded 0 (getCurrentWork's legacy branch), and this writer said "absent".
+      // The replacement is true for the reader's 0 and honest about the internal null, so a
+      // caller comparing this message against what get_current_work told them sees the same
+      // number rather than two vocabularies for one state.
+      const currentDesc = head ? String(head.head.generation) : "0 (legacy: no generation head)";
+      throw new WorkGraphCurrentnessRejected("revision.currentness_mismatch", `expected generation ${request.expectedGeneration}; current is ${currentDesc}`);
     }
     const activeHead = head.head;
     const generation = await this.revisionStorage.getGeneration(activeHead.generation);
@@ -2621,6 +2651,15 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       const parentLogicalIds = pin.generation.reverseCompletionDependsOn[child.logicalId] ?? [];
       const parents: WorkItem[] = [];
       for (const logicalId of parentLogicalIds) {
+        // idea-633 Part 1 deliberately does NOT add an unbound->legacy fallback here. It was
+        // implemented, measured, and reverted: a generation cannot carry an edge whose target is
+        // unbound (buildWorkRevisionStorageV4 rejects it as storage.dangling_edge), so
+        // reverseCompletionDependsOn can only name BOUND ids and this `!binding` throw is
+        // unreachable while the generation is internally consistent. A guard that cannot execute
+        // is not defence in depth — it is a claim that something is handled.
+        // The REAL defect here is the opposite one and is filed as bug-370: a legacy completion
+        // parent is INVISIBLE to this branch (reverseCompletionDependsOn simply omits it), so it
+        // is never bumped, silently — where the legacy substrate scan below would have found it.
         const binding = pin.generation.bindings[logicalId];
         if (!binding) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `reverse completion edge names absent binding ${logicalId}`);
         const parent = await this.getCurrentProjectionItem(binding.physicalId);
