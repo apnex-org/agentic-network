@@ -173,19 +173,18 @@ function toPrEvidenceReviewObligationDraft(args: {
     },
     runbook:
       "Review the bound PR created from admitted PR evidence. Complete with explicit GitHub review evidence. Do not merge or enqueue unless separately authorized.",
+    // bug-377: ONE REQUIREMENT, ONE PERSON. This used to mint a second,
+    // `verifier-attestation` requirement asking a DIFFERENT party to certify the reviewer's own
+    // artifact — a party this design never had. The reviewer entered `executorHistory` by
+    // submitting the artifact and was then blocked from attesting it, wedging the obligation and
+    // its parent permanently. The runbook above always described a single reviewer completing a
+    // single task; the contract disagreed with it. The contract now matches the runbook.
     evidenceRequirements: [
       {
         id: "github_review_artifact",
         kind: "freeform",
         description:
-          "Executor-submitted GitHub PR review artifact URL/id for the selected reviewer and bound head. This artifact is load-bearing input for verifier attestation but does not complete the review obligation alone.",
-      },
-      {
-        id: "independent_pr_review_validation",
-        kind: "review",
-        evidenceAuthority: "verifier-attestation",
-        description:
-          "Verifier attestation that the submitted GitHub review artifact matches the selected reviewer, bound PR head, and independence policy. External-only refs are not load-bearing; cite the submitted evidence ref.",
+          "The selected reviewer's own GitHub PR review artifact URL/id, for the bound head. Submitting it completes this obligation — no second party attests it.",
       },
     ],
   };

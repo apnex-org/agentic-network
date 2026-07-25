@@ -75,18 +75,14 @@ describe("pr_review_request_to_workitem_v0 static rule", () => {
         },
       },
       evidenceRequirements: [
+        // bug-377: ONE requirement. The second, `verifier-attestation` requirement is RETIRED —
+        // it demanded an attester this design never had, and the reviewer who submitted the
+        // artifact was then blocked from attesting it, wedging the obligation and its parent.
         {
           id: "github_review_artifact",
           kind: "freeform",
           description:
-            "Executor-submitted GitHub PR review artifact URL/id for the requested reviewer and bound head. This artifact is load-bearing input for verifier attestation but does not complete the review obligation alone.",
-        },
-        {
-          id: "independent_pr_review_validation",
-          kind: "review",
-          evidenceAuthority: "verifier-attestation",
-          description:
-            "Verifier attestation that the submitted GitHub review artifact matches the requested reviewer, bound PR head, and independence policy. External-only refs are not load-bearing; cite the submitted evidence ref.",
+            "The requested reviewer's own GitHub PR review artifact URL/id, for the bound head. Submitting it completes this obligation — no second party attests it.",
         },
       ],
     });

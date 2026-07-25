@@ -54,17 +54,12 @@ describe("PR review WorkItem projection", () => {
         reviewerAgentId: "agent-lily",
         completionPolicy: { verifierAuthorityRequired: true },
       },
+      // bug-377: ONE requirement — see the matching note in pr-review-request-static-rule.test.ts.
       evidenceRequirements: [
         {
           id: "github_review_artifact",
           kind: "freeform",
-          description: "Executor-submitted GitHub PR review artifact URL/id for the requested reviewer and bound head. This artifact is load-bearing input for verifier attestation but does not complete the review obligation alone.",
-        },
-        {
-          id: "independent_pr_review_validation",
-          kind: "review",
-          evidenceAuthority: "verifier-attestation",
-          description: "Verifier attestation that the submitted GitHub review artifact matches the requested reviewer, bound PR head, and independence policy. External-only refs are not load-bearing; cite the submitted evidence ref.",
+          description: "The requested reviewer's own GitHub PR review artifact URL/id, for the bound head. Submitting it completes this obligation — no second party attests it.",
         },
       ],
     });
@@ -219,13 +214,29 @@ describe("PR review WorkItem projection", () => {
     await substrate.put("Agent", { id: "agent-arch", role: "architect" });
     await substrate.put("Agent", { id: "agent-verifier", role: "verifier" });
     const repo = new WorkItemRepositorySubstrate(substrate, new SubstrateCounter(substrate));
+    // bug-377: this case covers the SEAL path — artifact evidence parks, the verifier must cite an
+    // evidence ref, external-only is rejected, and a passing attestation advances review→done.
+    // That path is REAL and still enforced, but it is NO LONGER the PR-review node's shape: a
+    // PR-review obligation is now one person's task and carries no attestation requirement.
+    // So the subject is pinned EXPLICITLY here — a non-PR-review payload plus an explicit
+    // verifier-attestation requirement — rather than inherited from the projection spec, which
+    // would silently stop testing the SEAL path the moment the projection changed. That silent
+    // drift is exactly what this rewrite is repairing.
     const item = await repo.createWorkItem({
       type: projection.createSpec.type,
       roleEligibility: projection.createSpec.roleEligibility,
       targetRef: projection.createSpec.targetRef,
-      payload: projection.createSpec.payload,
+      payload: { obligationKind: "seal_path_fixture_not_a_pr_review" },
       runbook: projection.createSpec.runbook,
-      evidenceRequirements: projection.createSpec.evidenceRequirements,
+      evidenceRequirements: [
+        { id: "github_review_artifact", kind: "freeform", description: "artifact" },
+        {
+          id: "independent_pr_review_validation",
+          kind: "review",
+          evidenceAuthority: "verifier-attestation",
+          description: "a verifier-attestation requirement on a NON-PR-review node — still enforced",
+        },
+      ],
     });
     const claimed = await repo.claimWorkItem(item.id, "agent-arch", "architect");
     const token = claimed!.lease!.token;
