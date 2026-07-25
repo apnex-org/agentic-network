@@ -23,7 +23,7 @@ import type { SchemaDef } from "../types.js";
 
 const Agent: SchemaDef = {
   kind: "Agent",
-  version: 2,
+  version: 3,
   fields: [
     { name: "id", type: "string", required: true },
     { name: "fingerprint", type: "string", required: true },
@@ -32,6 +32,8 @@ const Agent: SchemaDef = {
     { name: "lastSeenAt", type: "string", required: false },
     { name: "lastHeartbeatAt", type: "string", required: false },
     { name: "sessionEpoch", type: "number", required: false },
+    { name: "currentSessionId", type: "string", required: false },
+    { name: "registeredSessions", type: "array", required: false },
   ],
   indexes: [
     // mission-88 W7 (bug-123): envelope-path indexes; renamed for clarity per
@@ -39,6 +41,10 @@ const Agent: SchemaDef = {
     // reconciler via indexOwnershipPattern.
     { name: "agent_spec_role_idx", fields: ["spec.role"] },
     { name: "agent_metadata_fingerprint_idx", fields: ["metadata.fingerprint"] },
+    // bug-343: Hub-restart session rehydration must pinpoint the persisted
+    // binding instead of listAgents() over the whole Agent kind.
+    { name: "agent_status_current_session_idx", fields: ["status.currentSessionId"] },
+    { name: "agent_status_registered_sessions_gin_idx", fields: ["status.registeredSessions"], type: "gin" },
   ],
   watchable: true,
   indexOwnershipPattern: "^agent_",
@@ -54,7 +60,17 @@ const Agent: SchemaDef = {
   // quarantine). NOT list-filtered, but declared here per the dual-source discipline
   // (idea-346) so the W1 sentinel-probe verifies their encoder placement (the
   // WorkItem-seeding-bug class) — mirrored in migrations/v2-envelope/kinds/Agent.ts.
-  renameMap: { status: "status.phase", firstSeenAt: "metadata.createdAt", lastSeenAt: "metadata.updatedAt", fingerprint: "metadata.fingerprint", thrashCount: "status.thrashCount", quarantined: "status.quarantined" },
+  // bug-343 adds the two persisted session bindings used by restart rehydration.
+  renameMap: {
+    status: "status.phase",
+    firstSeenAt: "metadata.createdAt",
+    lastSeenAt: "metadata.updatedAt",
+    fingerprint: "metadata.fingerprint",
+    currentSessionId: "status.currentSessionId",
+    registeredSessions: "status.registeredSessions",
+    thrashCount: "status.thrashCount",
+    quarantined: "status.quarantined",
+  },
 };
 
 const Audit: SchemaDef = {
@@ -223,7 +239,7 @@ const Mission: SchemaDef = {
 
 const PendingAction: SchemaDef = {
   kind: "PendingAction",
-  version: 2,
+  version: 3,
   // W4.x.6 architect-blind-correction (minor gaps per architect proactive audit
   // thread-569 round 5): v1 missing 'naturalKey' field which is INV-PA2
   // idempotency-key hot-path (every enqueue call scans for naturalKey collision);
@@ -242,6 +258,9 @@ const PendingAction: SchemaDef = {
     // metadata; state renamed to status.phase per cluster-2 PendingAction.ts.
     { name: "pa_spec_target_idx", fields: ["spec.targetAgentId"] },
     { name: "pa_status_phase_idx", fields: ["status.phase"] },
+    // bug-343: drain_pending_actions and reconnect summary both constrain the
+    // target + state; one composite plan avoids scanning every item for an agent.
+    { name: "pa_spec_target_state_idx", fields: ["spec.targetAgentId", "status.phase"] },
     { name: "pa_metadata_natural_key_idx", fields: ["metadata.naturalKey"] },
   ],
   watchable: true,
@@ -289,7 +308,7 @@ const Proposal: SchemaDef = {
 
 const Thread: SchemaDef = {
   kind: "Thread",
-  version: 2,
+  version: 3,
   // W4.x.10 architect-blind-correction: v1 status enum [active/converged/
   // closed/force_closed] vs actual ThreadStatus [active/converged/round_limit/
   // closed/abandoned/cascade_failed] (6 values; 1 of 4 in v1 invalid 'force_closed';
@@ -301,6 +320,7 @@ const Thread: SchemaDef = {
     { name: "status", type: "string", required: true, enum: ["active", "converged", "round_limit", "closed", "abandoned", "cascade_failed"] },
     { name: "routingMode", type: "string", required: false, enum: ["unicast", "multicast", "broadcast"] },
     { name: "currentTurnAgentId", type: "string", required: false },
+    { name: "currentTurn", type: "string", required: false },
     { name: "correlationId", type: "string", required: false },
   ],
   indexes: [
@@ -312,6 +332,9 @@ const Thread: SchemaDef = {
     { name: "thread_status_phase_idx", fields: ["status.phase"] },
     // currentTurnAgentId moved to status partition per cluster-1 Thread.ts.
     { name: "thread_status_turn_agent_idx", fields: ["status.currentTurnAgentId"] },
+    // bug-343: get_pending_actions asks specifically for active architect-turn
+    // threads. Keep the reconnect read on one partial kind-local index plan.
+    { name: "thread_status_phase_currentturn_idx", fields: ["status.phase", "status.currentTurn"] },
     // mission-90 W2 (bug-149 hot-path W6-deploy-gate): cascade-sweeper queries
     // cascadePending at Hub-startup; post-W2 it resolves to status.cascadePending,
     // so it must be indexed before W2 reaches prod (else startup JSONB full-scan).
@@ -328,7 +351,13 @@ const Thread: SchemaDef = {
   // missed the renameMap entry, so substrate-side filter-translate mis-pathed it
   // to top-level → directed-thread discovery by recipientAgentId returned zero
   // (read still worked via normalizeThreadShape's flat-spread, masking the gap).
-  renameMap: { status: "status.phase", cascadePending: "status.cascadePending", currentTurnAgentId: "status.currentTurnAgentId", recipientAgentId: "spec.recipientAgentId" },
+  renameMap: {
+    status: "status.phase",
+    cascadePending: "status.cascadePending",
+    currentTurn: "status.currentTurn",
+    currentTurnAgentId: "status.currentTurnAgentId",
+    recipientAgentId: "spec.recipientAgentId",
+  },
 };
 
 // work-162 (A1): Turn SchemaDef DELETED with the Turn subsystem. Historical
@@ -552,17 +581,39 @@ const MigrationCursor: SchemaDef = {
 // Reference-only claimable work-item; born under the live C3-R4 governor.
 const WorkItem: SchemaDef = {
   kind: "WorkItem",
-  version: 1,
+  version: 3,
   fields: [
     { name: "id", type: "string", required: true },
     { name: "type", type: "string", required: false, enum: ["task", "bug", "review", "verifier-gate", "freeform"] },
     { name: "priority", type: "string", required: false, enum: ["critical", "high", "normal", "low"] },
     { name: "status", type: "string", required: false, enum: ["ready", "claimed", "in_progress", "blocked", "paused", "review", "done", "abandoned"] },
+    { name: "logicalId", type: "string", required: false },
+    { name: "revision", type: "number", required: false },
+    { name: "predecessorPhysicalId", type: "string", required: false },
+    { name: "revisedBy", type: "object", required: false },
+    { name: "revisionReason", type: "string", required: false },
+    { name: "revisionGeneration", type: "number", required: false },
+    { name: "nodeContractHashVersion", type: "string", required: false },
+    { name: "nodeContractHash", type: "string", required: false },
+    { name: "nodeTopologyHashVersion", type: "string", required: false },
+    { name: "nodeTopologyHash", type: "string", required: false },
+    { name: "boundReferences", type: "array", required: false },
+    { name: "localExecutionIdentity", type: "string", required: false },
+    { name: "topologyGeneration", type: "number", required: false },
+    { name: "recallHistory", type: "array", required: false },
+    { name: "pendingRecallIntents", type: "array", required: false },
+    { name: "recallNoticePending", type: "boolean", required: false },
   ],
   indexes: [
     { name: "workitem_status_phase_idx", fields: ["status.phase"] },
     { name: "workitem_status_lease_holder_idx", fields: ["status.lease.holder"] },
     { name: "workitem_status_lease_expiresat_idx", fields: ["status.lease.expiresAt"] },
+    { name: "workitem_status_failedsealnoticepending_idx", fields: ["status.failedSealNoticePending"] },
+    { name: "workitem_spec_logicalid_idx", fields: ["spec.logicalId"] },
+    { name: "workitem_spec_topologygeneration_idx", fields: ["spec.topologyGeneration"] },
+    { name: "workitem_status_recallhistory_gin_idx", fields: ["status.recallHistory"], type: "gin" },
+    { name: "workitem_status_pendingrecallintents_gin_idx", fields: ["status.pendingRecallIntents"], type: "gin" },
+    { name: "workitem_status_recallnoticepending_idx", fields: ["status.recallNoticePending"] },
     // C1-R2: GIN index backing the $contains (@>) array-membership on roleEligibility.
     { name: "workitem_spec_roleeligibility_gin_idx", fields: ["spec.roleEligibility"], type: "gin" },
     // work-88 (arc-node): GIN index backing the reverse-ancestor lookup over the
@@ -600,6 +651,29 @@ const WorkItem: SchemaDef = {
     attestationHistory: "status.attestationHistory",
     attestations: "status.attestations",
     executorHistory: "status.executorHistory",
+    // Mission-140 failed-gate-seal-v2: immutable failure authority + persist-first
+    // exact-holder outbox and read-served effective terminality.
+    failedGateSeal: "status.failedGateSeal",
+    pendingFailedSealNotices: "status.pendingFailedSealNotices",
+    failedSealNoticePending: "status.failedSealNoticePending",
+    effectiveDisposition: "status.effectiveDisposition",
+    // Mission-140 revision storage: explicit preserve-not-inject placement.
+    logicalId: "spec.logicalId",
+    revision: "spec.revision",
+    predecessorPhysicalId: "spec.predecessorPhysicalId",
+    revisedBy: "spec.revisedBy",
+    revisionReason: "spec.revisionReason",
+    revisionGeneration: "spec.revisionGeneration",
+    nodeContractHashVersion: "spec.nodeContractHashVersion",
+    nodeContractHash: "spec.nodeContractHash",
+    nodeTopologyHashVersion: "spec.nodeTopologyHashVersion",
+    nodeTopologyHash: "spec.nodeTopologyHash",
+    boundReferences: "spec.boundReferences",
+    localExecutionIdentity: "spec.localExecutionIdentity",
+    topologyGeneration: "spec.topologyGeneration",
+    recallHistory: "status.recallHistory",
+    pendingRecallIntents: "status.pendingRecallIntents",
+    recallNoticePending: "status.recallNoticePending",
     // W1 (idea-446 / work-181): the node-native pulse subtree — status (lifecycle),
     // non-filterable (surfaced on get_work, swept by role, not queried). Sweeper-written
     // bookkeeping → status so every owner-path write round-trips it (preserve-not-inject);
@@ -609,6 +683,202 @@ const WorkItem: SchemaDef = {
     type: "spec.type",
     roleEligibility: "spec.roleEligibility",
     completionDependsOn: "spec.completionDependsOn",
+  },
+};
+
+// ─── Mission-140: immutable WorkGraph revision storage kinds ────────────────
+// These rows are inert storage authority. Generations/shards/edges are append-only;
+// the singleton head is the sole CAS publication pointer. Operation/notice rows
+// are projections/lookups and never inject evidence or attestation state.
+const WorkRevisionFamily: SchemaDef = {
+  kind: "WorkRevisionFamily",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "logicalId", type: "string", required: true },
+    { name: "originPhysicalId", type: "string", required: true },
+    { name: "latestAllocatedRevision", type: "number", required: true },
+    { name: "familyScope", type: "object", required: true },
+  ],
+  indexes: [
+    { name: "workrevfamily_spec_origin_idx", fields: ["spec.originPhysicalId"] },
+    { name: "workrevfamily_spec_scope_idx", fields: ["spec.familyScope.kind", "spec.familyScope.id"] },
+  ],
+  watchable: true,
+  indexOwnershipPattern: "^workrevfamily_",
+  renameMap: {
+    logicalId: "spec.logicalId",
+    originPhysicalId: "spec.originPhysicalId",
+    latestAllocatedRevision: "spec.latestAllocatedRevision",
+    originalCreatedBy: "spec.originalCreatedBy",
+    familyScope: "spec.familyScope",
+    "familyScope.kind": "spec.familyScope.kind",
+    "familyScope.id": "spec.familyScope.id",
+    createdAt: "metadata.createdAt",
+  },
+};
+
+const WorkGraphTopologyGeneration: SchemaDef = {
+  kind: "WorkGraphTopologyGeneration",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "generation", type: "number", required: true },
+    { name: "previousGeneration", type: "number", required: true },
+    { name: "operationId", type: "string", required: true },
+    { name: "topologyHash", type: "string", required: true },
+    { name: "manifestHash", type: "string", required: true },
+  ],
+  indexes: [
+    { name: "worktopogen_spec_generation_idx", fields: ["spec.generation"] },
+    { name: "worktopogen_spec_previous_idx", fields: ["spec.previousGeneration"] },
+    { name: "worktopogen_spec_operation_idx", fields: ["spec.operationId"] },
+  ],
+  watchable: true,
+  indexOwnershipPattern: "^worktopogen_",
+  renameMap: {
+    generation: "spec.generation",
+    previousGeneration: "spec.previousGeneration",
+    operationId: "spec.operationId",
+    topologyHash: "spec.topologyHash",
+    manifestHash: "spec.manifestHash",
+    createdAt: "metadata.createdAt",
+  },
+};
+
+const WorkGraphTopologyShard: SchemaDef = {
+  kind: "WorkGraphTopologyShard",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "generation", type: "number", required: true },
+    { name: "shardIndex", type: "number", required: true },
+    { name: "shardHash", type: "string", required: true },
+  ],
+  indexes: [
+    { name: "worktoposhard_spec_generation_idx", fields: ["spec.generation", "spec.shardIndex"] },
+  ],
+  watchable: false,
+  indexOwnershipPattern: "^worktoposhard_",
+  renameMap: {
+    generation: "spec.generation",
+    shardIndex: "spec.shardIndex",
+    shardHash: "spec.shardHash",
+    createdAt: "metadata.createdAt",
+  },
+};
+
+const WorkGraphTopologyHead: SchemaDef = {
+  kind: "WorkGraphTopologyHead",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "domain", type: "string", required: true },
+    { name: "generation", type: "number", required: true },
+    { name: "manifestId", type: "string", required: true },
+    { name: "topologyHash", type: "string", required: true },
+    { name: "operationId", type: "string", required: true },
+    { name: "activatedAt", type: "string", required: true },
+  ],
+  indexes: [],
+  watchable: true,
+  renameMap: {
+    domain: "spec.domain",
+    generation: "spec.generation",
+    manifestId: "spec.manifestId",
+    topologyHash: "spec.topologyHash",
+    operationId: "spec.operationId",
+    activatedAt: "metadata.activatedAt",
+  },
+};
+
+const WorkGraphTopologyEdge: SchemaDef = {
+  kind: "WorkGraphTopologyEdge",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "generation", type: "number", required: true },
+    { name: "edgeClass", type: "string", required: true, enum: ["dependsOn", "completionDependsOn"] },
+    { name: "sourceLogicalId", type: "string", required: true },
+    { name: "targetLogicalId", type: "string", required: true },
+  ],
+  indexes: [
+    { name: "worktopoedge_reverse_idx", fields: ["spec.generation", "spec.targetLogicalId", "spec.edgeClass"] },
+    { name: "worktopoedge_forward_idx", fields: ["spec.generation", "spec.sourceLogicalId", "spec.edgeClass"] },
+  ],
+  watchable: false,
+  indexOwnershipPattern: "^worktopoedge_",
+  renameMap: {
+    generation: "spec.generation",
+    edgeClass: "spec.edgeClass",
+    sourceLogicalId: "spec.sourceLogicalId",
+    targetLogicalId: "spec.targetLogicalId",
+  },
+};
+
+const WorkGraphRevisionOperation: SchemaDef = {
+  kind: "WorkGraphRevisionOperation",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "operationId", type: "string", required: true },
+    { name: "requestHash", type: "string", required: true },
+    { name: "generation", type: "number", required: true },
+    { name: "state", type: "string", required: true, enum: ["prepared", "committed"] },
+  ],
+  indexes: [
+    { name: "workrevop_spec_generation_idx", fields: ["spec.generation"] },
+    { name: "workrevop_status_state_idx", fields: ["status.state"] },
+  ],
+  watchable: true,
+  indexOwnershipPattern: "^workrevop_",
+  renameMap: {
+    operationId: "spec.operationId",
+    requestHash: "spec.requestHash",
+    generation: "spec.generation",
+    previousGeneration: "spec.previousGeneration",
+    topologyHash: "spec.topologyHash",
+    manifestId: "spec.manifestId",
+    recommitSet: "spec.recommitSet",
+    recommittedSet: "status.recommittedSet",
+    recommitOperationId: "status.recommitOperationId",
+    recommitRequestHash: "status.recommitRequestHash",
+    recommittedAt: "status.recommittedAt",
+    state: "status.state",
+    preparedAt: "metadata.preparedAt",
+    committedAt: "status.committedAt",
+  },
+};
+
+const WorkGraphRevisionNotice: SchemaDef = {
+  kind: "WorkGraphRevisionNotice",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+    { name: "intentId", type: "string", required: true },
+    { name: "operationId", type: "string", required: true },
+    { name: "exactHolderAgentId", type: "string", required: true },
+    { name: "projected", type: "boolean", required: true },
+  ],
+  indexes: [
+    { name: "workrevnotice_spec_operation_idx", fields: ["spec.operationId"] },
+    { name: "workrevnotice_spec_holder_idx", fields: ["spec.exactHolderAgentId"] },
+    { name: "workrevnotice_status_projected_idx", fields: ["status.projected"] },
+  ],
+  watchable: true,
+  indexOwnershipPattern: "^workrevnotice_",
+  renameMap: {
+    intentId: "spec.intentId",
+    operationId: "spec.operationId",
+    generation: "spec.generation",
+    logicalId: "spec.logicalId",
+    physicalId: "spec.physicalId",
+    exactHolderAgentId: "spec.exactHolderAgentId",
+    payloadHash: "spec.payloadHash",
+    createdAt: "metadata.createdAt",
+    projected: "status.projected",
+    projectedMessageId: "status.projectedMessageId",
+    projectedAt: "status.projectedAt",
   },
 };
 
@@ -838,6 +1108,15 @@ export const ALL_SCHEMAS: SchemaDef[] = [
 
   // 1 NEW C1-R2 mission-94 (the claimable work-queue keystone kind)
   WorkItem,
+
+  // Mission-140 immutable revision/family/topology storage + lookup rows.
+  WorkRevisionFamily,
+  WorkGraphTopologyGeneration,
+  WorkGraphTopologyShard,
+  WorkGraphTopologyHead,
+  WorkGraphTopologyEdge,
+  WorkGraphRevisionOperation,
+  WorkGraphRevisionNotice,
 
   // 1 NEW mission-102 P3-B1 (the Decision authority-resolution spine)
   Decision,

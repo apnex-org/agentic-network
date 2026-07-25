@@ -106,6 +106,25 @@ function reviewRequestedEvent(target: { reviewer?: string; teamSlug?: string; te
   });
 }
 
+function missionKitReviewRequestedEvent() {
+  return translateGhEvent({
+    type: "PullRequestEvent",
+    repo: { name: "apnex/mission-kit" },
+    payload: {
+      action: "review_requested",
+      pull_request: {
+        number: 13,
+        title: "Codify the end-to-end WorkGraph arc lifecycle",
+        html_url: "https://github.com/apnex/mission-kit/pull/13",
+        user: { login: "apnex-greg" },
+        base: { ref: "main", sha: "8d3886823dfc1c971e5a47eec53d22eee3b91911" },
+        head: { ref: "feature", sha: "23c49d3282f29e8831cefa836d23f6d56ababe4e" },
+      },
+      requested_reviewer: { login: "apnex-lily" },
+    },
+  });
+}
+
 describe("PR review request handler", () => {
   it("routes unique requested reviewer login directly to target.agentId", async () => {
     const ctx = makeCtx([makeAgent("agent-lily", "architect", "apnex-lily")]);
@@ -474,6 +493,72 @@ describe("PR review request handler", () => {
         reviewerAgentId: "agent-steve",
         completionPolicy: {
           requiredReviewerLogin: "apnex",
+          forbiddenReviewerLogins: ["apnex-greg"],
+          lastPusherLogin: "apnex-greg",
+        },
+      },
+    });
+  });
+
+  it("uses the mission-kit all-path policy to materialize exactly the independent architect reviewer", async () => {
+    const createdNodes: unknown[] = [];
+    const bindingItem = {
+      id: "work-465",
+      createdBy: { role: "architect", agentId: "agent-architect" },
+      status: "paused",
+      payload: {
+        obligationKind: "github_pr_workgraph_binding",
+        repo: "apnex/mission-kit",
+        prNumber: 13,
+        targetWorkId: "work-skills",
+        headSha: "23c49d3282f29e8831cefa836d23f6d56ababe4e",
+        baseSha: "8d3886823dfc1c971e5a47eec53d22eee3b91911",
+        version: "1",
+        authorLogin: "apnex-greg",
+        lastPusherLogin: "apnex-greg",
+        changedPathSource: "PR #13 exact head",
+      },
+    };
+    const workItem = {
+      getWorkItem: async () => ({ id: "work-skills", status: "ready", payload: {}, roleEligibility: ["engineer"] }),
+      listWorkItems: async () => ({ items: [bindingItem], truncated: false }),
+      createBlueprintNode: async (input: unknown) => {
+        createdNodes.push(input);
+        return { item: { id: "work-prrev-mission-kit", status: "ready", payload: (input as { payload?: unknown }).payload }, created: true };
+      },
+      updateWorkItem: async (id: string) => ({ before: { id }, after: { id } }),
+    };
+    const ctx = makeCtx([
+      makeAgent("agent-greg", "engineer", "apnex-greg"),
+      makeAgent("agent-ruby", "engineer", "apnex-greg"),
+      makeAgent("agent-lily", "architect", "apnex-lily"),
+      makeAgent("agent-steve", "verifier", "apnex"),
+    ], workItem);
+
+    const out = await PR_REVIEW_REQUESTED_HANDLER.handle(
+      wrapAsMessage(missionKitReviewRequestedEvent()),
+      ctx,
+    );
+
+    const payload = out[0].payload as Record<string, unknown>;
+    expect(payload.ruleDecision).toMatchObject({
+      action: "materialize_review_obligation",
+      eligibility: {
+        ok: true,
+        pathClasses: ["all_paths_independent_architect"],
+        selectedReviewers: [{ agentId: "agent-lily", role: "architect", githubLogin: "apnex-lily" }],
+        policyVersion: "apnex-mission-kit-review-policy-2026-07-23",
+      },
+    });
+    expect(payload.projectionDecision).toMatchObject({ action: "create_review_workitem" });
+    expect(createdNodes).toHaveLength(1);
+    expect(createdNodes[0]).toMatchObject({
+      roleEligibility: ["architect"],
+      targetRef: { kind: "pull_request", id: "apnex/mission-kit#13" },
+      payload: {
+        selectedReviewerLogin: "apnex-lily",
+        reviewerAgentId: "agent-lily",
+        completionPolicy: {
           forbiddenReviewerLogins: ["apnex-greg"],
           lastPusherLogin: "apnex-greg",
         },

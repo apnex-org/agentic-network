@@ -6,7 +6,10 @@ import {
   type ReviewerAgentIdentity,
   type ReviewerEligibilityInput,
 } from "../../src/policy/pr-reviewer-eligibility.js";
-import { APNEX_AGENTIC_NETWORK_REVIEW_POLICY } from "../../src/policy/pr-reviewer-eligibility-policy-fixture.js";
+import {
+  APNEX_AGENTIC_NETWORK_REVIEW_POLICY,
+  APNEX_MISSION_KIT_REVIEW_POLICY,
+} from "../../src/policy/pr-reviewer-eligibility-policy-fixture.js";
 
 const agents: ReviewerAgentIdentity[] = [
   { agentId: "agent-greg", name: "greg", role: "engineer", githubLogin: "apnex-greg" },
@@ -136,5 +139,53 @@ describe("evaluateReviewerEligibility", () => {
       ok: false,
       reason: "path_class_unresolved",
     });
+  });
+
+  it("uses the authoritative all-path mission-kit class when a bound PR has no file inventory", () => {
+    const result = evaluateReviewerEligibility(input({
+      repo: "apnex/mission-kit",
+      prNumber: 13,
+      requestedReviewerLogin: undefined,
+      paths: { provenance: APNEX_MISSION_KIT_REVIEW_POLICY.provenance },
+      policy: APNEX_MISSION_KIT_REVIEW_POLICY,
+    }));
+
+    expect(result).toMatchObject({
+      ok: true,
+      pathClasses: ["all_paths_independent_architect"],
+      requiredTeams: ["architect"],
+      selected: [
+        expect.objectContaining({ agentId: "agent-lily", githubLogin: "apnex-lily" }),
+      ],
+    });
+  });
+
+  it("keeps mission-kit actual-author and last-pusher exclusions fail closed", () => {
+    const common = {
+      repo: "apnex/mission-kit",
+      prNumber: 13,
+      requestedReviewerLogin: undefined,
+      paths: { provenance: APNEX_MISSION_KIT_REVIEW_POLICY.provenance },
+      policy: APNEX_MISSION_KIT_REVIEW_POLICY,
+    };
+    const authoredByArchitect = evaluateReviewerEligibility(input({
+      ...common,
+      authorLogin: "apnex-lily",
+      lastPusherLogin: "apnex-greg",
+    }));
+    expect(authoredByArchitect).toMatchObject({ ok: false, reason: "no_eligible_reviewer" });
+    expect(authoredByArchitect.disqualified).toContainEqual(
+      expect.objectContaining({ githubLogin: "apnex-lily", reason: "author_self_review" }),
+    );
+
+    const pushedByArchitect = evaluateReviewerEligibility(input({
+      ...common,
+      authorLogin: "apnex-greg",
+      lastPusherLogin: "apnex-lily",
+    }));
+    expect(pushedByArchitect).toMatchObject({ ok: false, reason: "no_eligible_reviewer" });
+    expect(pushedByArchitect.disqualified).toContainEqual(
+      expect.objectContaining({ githubLogin: "apnex-lily", reason: "last_pusher_self_review" }),
+    );
   });
 });

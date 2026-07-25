@@ -122,6 +122,31 @@ describe("update_work (work-136 / idea-419: the ratified WorkItem mutation contr
     expect(String(body(r).error)).toMatch(/empty mutation/);
   });
 
+  it("Mission-140: every public semantic alias rejects while paused; priority-only scalar metadata remains legal", async () => {
+    const child = await created();
+    const item = await created();
+    await repo.pauseWork({ workId: item, operationId: "policy-paused-freeze", reason: "revision" }, {
+      role: "architect", agentId: "policy-architect",
+    });
+    const mutations = [
+      { set: { targetRef: { kind: "mission", id: "m-other" } } },
+      { set: { runbook: "changed" } },
+      { set: { payload: { changed: true } } },
+      { set: { roleEligibility: ["architect"] } },
+      { appendDependsOn: [child] },
+      { appendCompletionDependsOn: [child] },
+      { appendReferences: [{ kind: "doc", ref: "inline", storage: "inline", mode: "read", required: false }] },
+    ];
+    for (const mutation of mutations) {
+      const result = await router.handle("update_work", { workId: item, ...mutation }, ctx);
+      expect(result.isError, JSON.stringify(mutation)).toBe(true);
+      expect(String(body(result).error)).toMatch(/revision_required|frozen while paused/);
+    }
+    const scalar = await router.handle("update_work", { workId: item, set: { priority: "high" } }, ctx);
+    expect(scalar.isError).toBeFalsy();
+    expect((await repo.getWorkItem(item))!).toMatchObject({ status: "paused", priority: "high" });
+  });
+
   it("rejects: terminal items (done and abandoned) refuse all mutation", async () => {
     const item = await created({ roleEligibility: [] });
     const claimed = await repo.claimWorkItem(item, "agent-x");

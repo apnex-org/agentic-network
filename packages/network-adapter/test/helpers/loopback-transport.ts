@@ -95,7 +95,9 @@ export class LoopbackHub {
       };
     });
     this.handlers.set("get_task", () => ({ task: null }));
+    this.handlers.set("get_now", () => ({ now: new Date(0).toISOString(), epochMs: 0 }));
     this.handlers.set("get_pending_actions", () => ({ totalPending: 0 }));
+    this.handlers.set("drain_pending_actions", () => ({ items: [] }));
   }
 
   /** Register a custom tool handler (test-only extension). */

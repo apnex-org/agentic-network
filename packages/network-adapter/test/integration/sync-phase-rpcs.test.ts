@@ -1,18 +1,11 @@
 /**
- * Invariant #10 — State sync issues list_missions + get_pending_actions during
- * the synchronizing phase, strictly after the enriched register_role, and
- * strictly before the state transitions to `streaming`.
+ * bug-343 reconnect state-sync contract.
  *
- * Ordering matters: the Hub uses the enriched register_role to bind the
- * session to an agentId + sessionEpoch. The sync RPCs then fetch the
- * directive and pending actions scoped to *that* engineer. If sync ran
- * before the enriched handshake, the Hub wouldn't know which engineer to
- * sync; if sync ran after streaming started, live events would race the
- * initial state fetch.
- *
- * Post-Phase-6: runSynchronizingPhase lives in `McpAgentClient`. It must
- * continue to issue both RPCs between the enriched handshake and
- * completeSync().
+ * The enriched register_role must bind identity before reconciliation. State
+ * sync then issues a store-free get_now probe and the target-filtered queue
+ * drain sequentially. Only architects call the architect-only aggregate.
+ * list_missions is deliberately absent: using it as a liveness probe hydrated
+ * Mission/Idea rows and amplified PostgreSQL scans during fleet reconnects.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
@@ -32,7 +25,7 @@ interface StateTick {
   at: number;
 }
 
-describe("Invariant #10 — sync phase RPCs", () => {
+describe("bug-343 — bounded sync phase RPCs", () => {
   let hub: LoopbackHub;
   let log: LogCapture;
   let agent: McpAgentClient | undefined;
@@ -47,20 +40,18 @@ describe("Invariant #10 — sync phase RPCs", () => {
     try { if (agent) await agent.stop(); } catch { /* */ }
   });
 
-  it("list_missions and get_pending_actions fire during synchronizing, after enriched register_role, before streaming", async () => {
-    const ticks: StateTick[] = [];
+  function build(role: "engineer" | "architect", name: string, ticks: StateTick[]): McpAgentClient {
     const callbacks: AgentClientCallbacks = {
       onStateChange: (state, prev, reason) => {
         ticks.push({ state, prev, reason, at: Date.now() });
       },
     };
-
-    agent = new McpAgentClient(
+    const client = new McpAgentClient(
       {
-        role: "engineer",
+        role,
         logger: log.logger,
         handshake: {
-          name: "test-instance-uuid-10",
+          name,
           proxyName: "@apnex/test",
           proxyVersion: "1.0.0",
           transport: "test-mcp",
@@ -69,62 +60,54 @@ describe("Invariant #10 — sync phase RPCs", () => {
           llmModel: "test-model",
         },
       },
-      { transport: new LoopbackTransport(hub) }
+      { transport: new LoopbackTransport(hub), reconnectSyncJitterMs: 0 },
     );
-    agent.setCallbacks(callbacks);
+    client.setCallbacks(callbacks);
+    return client;
+  }
 
+  it("engineer sync is register → get_now → drain, with no whole-mission or architect aggregate read", async () => {
+    const ticks: StateTick[] = [];
+    agent = build("engineer", "test-engineer-sync", ticks);
     await agent.start();
 
-    // Wait until both sync RPCs have landed on the Hub.
     await waitFor(
-      () =>
-        hub.getToolCalls("list_missions").length >= 1 &&
-        hub.getToolCalls("get_pending_actions").length >= 1,
-      10_000
+      () => hub.getToolCalls("get_now").length === 1 && hub.getToolCalls("drain_pending_actions").length === 1,
+      10_000,
     );
-
-    // Also wait until we observe the streaming transition — this is the
-    // upper bound against which we check ordering.
     await waitFor(() => ticks.some((t) => t.state === "streaming"), 10_000);
 
-    const streamingAt = ticks.find((t) => t.state === "streaming")!.at;
+    expect(hub.getToolCalls("list_missions")).toHaveLength(0);
+    expect(hub.getToolCalls("get_pending_actions")).toHaveLength(0);
 
-    const registerRoleCalls = hub.getToolCalls("register_role");
-    const listMissionsCalls = hub.getToolCalls("list_missions");
-    const getPendingCalls = hub.getToolCalls("get_pending_actions");
+    const full = hub.getToolCallLog();
+    const register = full.findIndex((c) => c.tool === "register_role" && c.args.name === "test-engineer-sync");
+    const now = full.findIndex((c) => c.tool === "get_now");
+    const drain = full.findIndex((c) => c.tool === "drain_pending_actions");
+    expect(register).toBeGreaterThanOrEqual(0);
+    expect(now).toBeGreaterThan(register);
+    expect(drain).toBeGreaterThan(now);
+  });
 
-    // Enriched register_role is the second call (first is the plain
-    // bootstrap call from McpAgentClient.runHandshake).
-    expect(registerRoleCalls.length).toBeGreaterThanOrEqual(2);
-    const enrichedRegister = registerRoleCalls[1];
-    expect(enrichedRegister.args.name).toBe("test-instance-uuid-10");
+  it("architect sync adds the filtered aggregate sequentially before queue drain", async () => {
+    const ticks: StateTick[] = [];
+    agent = build("architect", "test-architect-sync", ticks);
+    await agent.start();
 
-    expect(listMissionsCalls.length).toBeGreaterThanOrEqual(1);
-    expect(getPendingCalls.length).toBeGreaterThanOrEqual(1);
-
-    // Ordering: sync RPCs happen strictly after enriched register_role.
-    expect(listMissionsCalls[0].at).toBeGreaterThanOrEqual(enrichedRegister.at);
-    expect(getPendingCalls[0].at).toBeGreaterThanOrEqual(enrichedRegister.at);
-
-    // Ordering: sync RPCs happen strictly before streaming.
-    expect(listMissionsCalls[0].at).toBeLessThanOrEqual(streamingAt);
-    expect(getPendingCalls[0].at).toBeLessThanOrEqual(streamingAt);
-
-    // Cross-check via the Hub's full tool-call log — enriched register_role
-    // must appear before both sync RPCs.
-    const fullLog = hub.getToolCallLog();
-    const enrichedIdx = fullLog.findIndex(
-      (c) => c.tool === "register_role" && c.args.name === "test-instance-uuid-10"
+    await waitFor(
+      () => hub.getToolCalls("get_pending_actions").length === 1 && hub.getToolCalls("drain_pending_actions").length === 1,
+      10_000,
     );
-    const listMissionsIdx = fullLog.findIndex((c) => c.tool === "list_missions");
-    const getPendingIdx = fullLog.findIndex((c) => c.tool === "get_pending_actions");
+    await waitFor(() => ticks.some((t) => t.state === "streaming"), 10_000);
 
-    expect(enrichedIdx).toBeGreaterThanOrEqual(0);
-    expect(listMissionsIdx).toBeGreaterThan(enrichedIdx);
-    expect(getPendingIdx).toBeGreaterThan(enrichedIdx);
-
-    // Sync RPCs run on the same session as the enriched register_role.
-    expect(listMissionsCalls[0].sessionId).toBe(enrichedRegister.sessionId);
-    expect(getPendingCalls[0].sessionId).toBe(enrichedRegister.sessionId);
-  }, 20_000);
+    expect(hub.getToolCalls("list_missions")).toHaveLength(0);
+    const full = hub.getToolCallLog();
+    const register = full.findIndex((c) => c.tool === "register_role" && c.args.name === "test-architect-sync");
+    const now = full.findIndex((c) => c.tool === "get_now");
+    const pending = full.findIndex((c) => c.tool === "get_pending_actions");
+    const drain = full.findIndex((c) => c.tool === "drain_pending_actions");
+    expect(now).toBeGreaterThan(register);
+    expect(pending).toBeGreaterThan(now);
+    expect(drain).toBeGreaterThan(pending);
+  });
 });

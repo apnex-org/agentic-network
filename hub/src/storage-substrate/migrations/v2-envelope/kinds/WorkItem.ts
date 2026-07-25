@@ -33,7 +33,17 @@ export function createWorkItemMigrationModule(schema: SchemaDef): KindMigrationM
       // completionDependsOn + the evidenceRequirements/targetRef objects + the freeform
       // payload). work-88: completionDependsOn explicit (it backs a GIN index — don't rely
       // on default-routing for an indexed field).
-      spec: ["type", "priority", "roleEligibility", "dependsOn", "completionDependsOn", "evidenceRequirements", "targetRef", "payload"],
+      spec: [
+        "type", "priority", "roleEligibility", "dependsOn", "completionDependsOn",
+        "evidenceRequirements", "targetRef", "payload",
+        // Mission-140 immutable physical-revision + exact-reference identity.
+        // Explicit placement is preserve-not-inject: every legacy owner write
+        // round-trips these fields after activation; no writer reconstructs them.
+        "logicalId", "revision", "predecessorPhysicalId", "revisedBy",
+        "revisionReason", "revisionGeneration", "nodeContractHashVersion",
+        "nodeContractHash", "nodeTopologyHashVersion", "nodeTopologyHash",
+        "boundReferences", "localExecutionIdentity", "topologyGeneration",
+      ],
       // status = lifecycle (phase via the rename above; lease = sole claim
       // authority; evidence accumulates; blockedOn + the per-item poison counter;
       // work-98 idea-384 Part A: the per-FSM-state wall-clock timers;
@@ -41,7 +51,7 @@ export function createWorkItemMigrationModule(schema: SchemaDef): KindMigrationM
       // projection — partitioned into status so EVERY write round-trips them by
       // construction (the structural preserve-not-inject; closes the un-partitioned→
       // spec resurrection trap in envelope.ts pickPartition).
-      status: ["lease", "evidence", "frictionReflections", "blockedOn", "leaseExpiryCount", "enteredCurrentStateAt", "stateDurations", "attestationHistory", "attestations", "executorHistory", "nodeConfig"],
+      status: ["lease", "evidence", "frictionReflections", "blockedOn", "leaseExpiryCount", "enteredCurrentStateAt", "stateDurations", "attestationHistory", "attestations", "executorHistory", "recallHistory", "pendingRecallIntents", "recallNoticePending", "failedGateSeal", "pendingFailedSealNotices", "failedSealNoticePending", "effectiveDisposition", "nodeConfig"],
     },
   };
 

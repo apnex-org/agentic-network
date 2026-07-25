@@ -213,7 +213,12 @@ export class PulseSweeper {
     // passes (dual-run-safe per v0.3 §4); the live-cutover of an existing
     // mission's pulse is the STAGED Director-ratified procedure, not this code.
     try {
-      await this.iterateNodePulses(result);
+      const nodeStore = this.nodeStore();
+      if (nodeStore?.withTopologyReadPin) {
+        await nodeStore.withTopologyReadPin(() => this.iterateNodePulses(result));
+      } else {
+        await this.iterateNodePulses(result);
+      }
     } catch (err) {
       result.errors += 1;
       this.logger.warn(`iterateNodePulses pass failed`, err);
@@ -859,7 +864,7 @@ export class PulseSweeper {
       );
     }
     const terminal = new Set(["done", "abandoned"]);
-    const pulseNodes = items.filter((n) => n.nodeConfig?.pulse && !terminal.has(n.status));
+    const pulseNodes = items.filter((n) => n.nodeConfig?.pulse && n.effectiveDisposition !== "failed_sealed" && !terminal.has(n.status));
     for (const node of pulseNodes) {
       result.scanned += 1;
       try {

@@ -1,0 +1,8 @@
+{
+  "bug": "bug-343",
+  "workItem": "work-470",
+  "profile": "e2-small-equivalent-1vcpu-2GiB-overcap",
+  "failedAt": "2026-07-23T17:24:16.042Z",
+  "error": "Error: required container CPU cgroup unavailable for bug343-pg-overcap",
+  "stack": "Error: required container CPU cgroup unavailable for bug343-pg-overcap\n    at main (/home/apnex/taceng/agentic-network-drew-bug343-truncation/hub/scripts/bug343-reconnect-scale.ts:390:41)\n    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at async <anonymous> (/home/apnex/taceng/agentic-network-drew-bug343-truncation/hub/scripts/bug343-reconnect-scale.ts:456:3)"
+}

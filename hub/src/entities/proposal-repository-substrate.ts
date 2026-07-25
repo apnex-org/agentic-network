@@ -26,7 +26,11 @@
  * W4.x.7 — eighth-slice of W4.x sweep after W4.x.6 PendingActionRepositorySubstrate.
  */
 
-import type { HubStorageSubstrate } from "../storage-substrate/index.js";
+import {
+  listCompleteStable,
+  type CompleteListResult,
+  type HubStorageSubstrate,
+} from "../storage-substrate/index.js";
 import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 import type {
   IProposalStore,
@@ -116,6 +120,18 @@ export class ProposalRepositorySubstrate implements IProposalStore {
     });
     // mission-90 W8: decode envelope→flat (idea-327) at the read boundary.
     return items.map((p) => decodeEnvelopeToFlat(p, "Proposal"));
+  }
+
+  async getProposalsComplete(
+    status?: ProposalStatus,
+    expectedRevision?: string,
+  ): Promise<CompleteListResult<Proposal>> {
+    const filter = status ? { status } : undefined;
+    const result = await listCompleteStable<Proposal>(this.substrate, KIND, { filter }, { expectedRevision });
+    return {
+      ...result,
+      items: result.items.map((p) => decodeEnvelopeToFlat(p, "Proposal")),
+    };
   }
 
   async getProposal(proposalId: string): Promise<Proposal | null> {

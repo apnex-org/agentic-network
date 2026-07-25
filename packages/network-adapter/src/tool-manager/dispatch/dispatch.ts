@@ -85,6 +85,12 @@ export interface ToolDispatchContext {
   onCallEnd: () => void;
   /** Optional gate the dispatch awaits before touching the Hub. */
   callToolGate?: Promise<void>;
+  /**
+   * bug-340 P0: dynamic native-catalog readiness. Unlike callToolGate this can
+   * return to false on every wire generation change. A false result blocks the
+   * stale registered definition loudly before any Hub call is attempted.
+   */
+  getReadiness?: () => { ready: boolean; reason?: string; identityKey?: string };
   /** bug-126 gate timeout (ms). Default 30000; 0 disables. */
   callToolGateTimeoutMs?: number;
   /** idea-353 W2 host observation hook (best-effort). */
@@ -191,6 +197,25 @@ export async function runToolDispatch(
         await ctx.callToolGate;
       }
       log(`[CallTool] ${requestedTool} gate passed (+${Date.now() - callStartedAt}ms)`);
+    }
+    const readiness = ctx.getReadiness?.();
+    if (readiness && !readiness.ready) {
+      const reason = readiness.reason ?? "authoritative catalog has not been installed";
+      log(`[CallTool] ${requestedTool} aborted — Hub tool catalog NOT READY (${reason})`);
+      return {
+        content: [
+          {
+            type: "text" as const,
+            text: JSON.stringify({
+              error: "Hub tool catalog not ready",
+              code: "catalog_not_ready",
+              message: reason,
+              identityKey: readiness.identityKey,
+            }),
+          },
+        ],
+        isError: true,
+      };
     }
     let agent = ctx.getAgent();
     if (!isUsableAgent(agent)) {

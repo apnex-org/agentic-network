@@ -21,7 +21,11 @@ import { parsePrEvidenceLocator } from "./pr-evidence-admission-contract.js";
 import { resolvePrEvidenceBinding } from "./pr-evidence-admission-binding.js";
 import { prEvidenceAdmittedProjection, prEvidenceDeniedProjection, prManualCheckRequiredProjection, prReviewRequiredProjection, type PrEvidenceActionabilityProjection } from "./pr-evidence-actionability.js";
 import { findExistingPrReviewProjection, buildPrEvidenceReviewProjectionKey, projectPrEvidenceReviewWorkItem, reconcilePrReviewProjection } from "./pr-review-workitem-projection.js";
-import { APNEX_AGENTIC_NETWORK_REVIEW_POLICY } from "./pr-reviewer-eligibility-policy-fixture.js";
+import {
+  REPO_REVIEW_POLICY_SELECTION_SOURCE_REF,
+  REPO_REVIEW_POLICY_SELECTION_VERSION,
+  selectRepoReviewPolicy,
+} from "./pr-reviewer-eligibility-policy-fixture.js";
 import { projectReviewerGithubIdentities } from "./pr-reviewer-identity-source.js";
 import { evaluateReviewerEligibility, PR_REVIEWER_ELIGIBILITY_CONTRACT_VERSION, summarizeReviewerEligibility, type ReviewerEligibilityProjectionSummary } from "./pr-reviewer-eligibility.js";
 import type { PrWorkGraphBindingProof } from "./pr-review-workitem-event-contract.js";
@@ -29,6 +33,8 @@ import type { PrWorkGraphBindingProof } from "./pr-review-workitem-event-contrac
 // never-throws — the store transition is the source of truth; the event is
 // enhancement (the mission-policy runTriggers posture).
 import { emitWorkTransition, emitDependencyUnblocks, emitWorkUpdated } from "./work-item-events.js";
+import { projectPendingFailedSealNotices } from "./failed-gate-notice-projector.js";
+import { projectPendingRecallNotices } from "./recall-notice-projector.js";
 import { DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
 import {
   TransitionRejected,
@@ -37,8 +43,11 @@ import {
   EvidencePredicateFailed,
   CompletionGateRejected,
   AttestationRejected,
+  isPauseOperationReplay,
 } from "../entities/work-item-repository-substrate.js";
 import { LockAcquisitionTimeoutError } from "../storage-substrate/advisory-lock.js";
+import { WorkGraphCurrentnessRejected } from "../entities/workgraph-currentness-fence-v4.js";
+import { WorkRevisionStorageError } from "../entities/work-revision-storage-v4.js";
 import type {
   WorkItem,
   WorkItemBlockedOn,
@@ -98,6 +107,7 @@ function prAdmissionDenied(projection: PrEvidenceActionabilityProjection, detail
 function failedPrEvidenceReviewerEligibility(
   binding: PrWorkGraphBindingProof,
   reason: ReviewerEligibilityProjectionSummary["reason"],
+  policyIdentity: { version: string; sourceRef: string },
 ): ReviewerEligibilityProjectionSummary {
   return {
     contractVersion: PR_REVIEWER_ELIGIBILITY_CONTRACT_VERSION,
@@ -108,8 +118,8 @@ function failedPrEvidenceReviewerEligibility(
     selectedReviewers: [],
     requestedReviewerStatus: "insufficient_no_alternative",
     disqualified: [],
-    policyVersion: APNEX_AGENTIC_NETWORK_REVIEW_POLICY.version,
-    policySourceRef: APNEX_AGENTIC_NETWORK_REVIEW_POLICY.provenance.sourceRef,
+    policyVersion: policyIdentity.version,
+    policySourceRef: policyIdentity.sourceRef,
     lastPusherLogin: binding.lastPusherLogin,
   };
 }
@@ -118,8 +128,20 @@ async function buildPrEvidenceReviewerEligibility(
   ctx: IPolicyContext,
   binding: PrWorkGraphBindingProof,
 ): Promise<ReviewerEligibilityProjectionSummary> {
-  if (!binding.authorLogin) return failedPrEvidenceReviewerEligibility(binding, "identity_missing");
-  if (!binding.lastPusherLogin) return failedPrEvidenceReviewerEligibility(binding, "last_pusher_missing");
+  const policy = selectRepoReviewPolicy(binding.repo);
+  if (!policy) {
+    return failedPrEvidenceReviewerEligibility(binding, "unsupported_policy", {
+      version: REPO_REVIEW_POLICY_SELECTION_VERSION,
+      sourceRef: REPO_REVIEW_POLICY_SELECTION_SOURCE_REF,
+    });
+  }
+  const policyIdentity = { version: policy.version, sourceRef: policy.provenance.sourceRef };
+  if (!binding.authorLogin) {
+    return failedPrEvidenceReviewerEligibility(binding, "identity_missing", policyIdentity);
+  }
+  if (!binding.lastPusherLogin) {
+    return failedPrEvidenceReviewerEligibility(binding, "last_pusher_missing", policyIdentity);
+  }
   const agents = await ctx.stores.engineerRegistry.listAgents();
   const identityProjection = projectReviewerGithubIdentities(
     agents.map((agent) => ({
@@ -140,9 +162,9 @@ async function buildPrEvidenceReviewerEligibility(
     paths: {
       changedPaths: binding.changedPaths,
       pathClasses: binding.pathClasses,
-      provenance: APNEX_AGENTIC_NETWORK_REVIEW_POLICY.provenance,
+      provenance: policy.provenance,
     },
-    policy: APNEX_AGENTIC_NETWORK_REVIEW_POLICY,
+    policy,
     agents: identityProjection.identities,
   }));
   return { ...summary, lastPusherLogin: binding.lastPusherLogin };
@@ -157,6 +179,8 @@ function mapVerbError(e: unknown): PolicyResult {
   if (e instanceof CompletionGateRejected) return err("completion_gate_unmet", e.message);
   if (e instanceof AttestationRejected) return err("attestation_rejected", e.message);
   if (e instanceof LockAcquisitionTimeoutError) return err("lock_timeout", e.message);
+  if (e instanceof WorkGraphCurrentnessRejected) return err("transition_rejected", e.message);
+  if (e instanceof WorkRevisionStorageError) return err("transition_rejected", e.message);
   if (e instanceof TransitionRejected) return err("transition_rejected", e.message);
   throw e;
 }
@@ -300,16 +324,34 @@ async function abandonWork(args: Record<string, unknown>, ctx: IPolicyContext): 
   } catch (e) { return mapVerbError(e); }
 }
 
-// ── S3 (idea-454) — pause_work / unpause_work ───────────────────────────────
+// ── Mission-140 pause/recall + scalar recommit ─────────────────────────────
 async function pauseWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
-  const caller = await resolveCreatedBy(ctx); // server-stamped {role, agentId} — the authz basis
+  const caller = await resolveCreatedBy(ctx);
   try {
-    const w = await store.pauseWork(args.workId as string, { agentId: caller.agentId, role: caller.role }, args.reason as string | undefined);
-    if (!w) return notFound(args.workId as string);
-    await emitWorkTransition(ctx, { item: w, verb: "pause_work", fromStatus: "ready", actor: caller });
-    return workItemResult(w);
+    const w = await store.pauseWork({
+      workId: args.workId as string | undefined,
+      logicalId: args.logicalId as string | undefined,
+      operationId: args.operationId as string,
+      reason: args.reason as string,
+      expectedRevision: args.expectedRevision as number | undefined,
+      expectedGeneration: args.expectedGeneration as number | undefined,
+    }, { agentId: caller.agentId, role: caller.role });
+    const locator = (args.workId ?? args.logicalId) as string;
+    if (!w) return notFound(locator);
+    const recall = (w.recallHistory ?? []).find((entry) => entry.operationId === args.operationId);
+    const operationReplay = isPauseOperationReplay(w);
+    if (!operationReplay) {
+      await emitWorkTransition(ctx, { item: w, verb: "pause_work", fromStatus: recall?.before.phase ?? null, actor: caller });
+    }
+    let recallNoticeProjection: unknown;
+    try {
+      recallNoticeProjection = await projectPendingRecallNotices(ctx, store, { workId: w.id });
+    } catch (projectionError) {
+      recallNoticeProjection = { deferred: true, error: (projectionError as Error)?.message ?? String(projectionError) };
+    }
+    return ok({ workItem: w, leaseToken: null, operationReplay, recallNoticeProjection });
   } catch (e) { return mapVerbError(e); }
 }
 
@@ -318,10 +360,63 @@ async function unpauseWork(args: Record<string, unknown>, ctx: IPolicyContext): 
   if (!store) return err("not_wired", "WorkItem store is not available");
   const caller = await resolveCreatedBy(ctx);
   try {
-    const w = await store.unpauseWork(args.workId as string, { agentId: caller.agentId, role: caller.role });
-    if (!w) return notFound(args.workId as string);
+    if (Array.isArray(args.logicalIds)) {
+      const result = await store.recommitRevisionSet({
+        logicalIds: args.logicalIds as string[],
+        expectedRevisions: args.expectedRevisions as Record<string, number>,
+        expectedGeneration: args.expectedGeneration as number,
+        operationId: args.operationId as string,
+        reason: args.reason as string,
+      }, { agentId: caller.agentId, role: caller.role });
+      if (!result.operationReplay) for (const item of result.workItems) await emitWorkTransition(ctx, { item, verb: "unpause_work", fromStatus: "paused", actor: caller });
+      return ok({ workItems: result.workItems, operationReplay: result.operationReplay, atomic: true });
+    }
+    const w = await store.unpauseWork({
+      workId: args.workId as string | undefined,
+      logicalId: args.logicalId as string | undefined,
+      expectedRevision: args.expectedRevision as number | undefined,
+      expectedGeneration: args.expectedGeneration as number | undefined,
+    }, { agentId: caller.agentId, role: caller.role });
+    const locator = (args.workId ?? args.logicalId) as string;
+    if (!w) return notFound(locator);
     await emitWorkTransition(ctx, { item: w, verb: "unpause_work", fromStatus: "paused", actor: caller });
     return workItemResult(w);
+  } catch (e) { return mapVerbError(e); }
+}
+
+async function getCurrentWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const store = ctx.stores.workItem;
+  if (!store) return err("not_wired", "WorkItem store is not available");
+  try {
+    const projection = await store.getCurrentWork(args.logicalId as string);
+    return projection ? ok(projection) : notFound(args.logicalId as string);
+  } catch (e) { return mapVerbError(e); }
+}
+
+async function reviseWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const store = ctx.stores.workItem;
+  if (!store) return err("not_wired", "WorkItem store is not available");
+  const caller = await resolveCreatedBy(ctx);
+  try {
+    const result = await store.reviseWork({
+      workId: args.workId as string | undefined,
+      logicalId: args.logicalId as string | undefined,
+      operationId: args.operationId as string,
+      reason: args.reason as string,
+      expectedGeneration: args.expectedGeneration as number,
+      expectedAffectedSet: args.expectedAffectedSet as string[] | undefined,
+      set: args.set as never,
+      dependsOn: args.dependsOn as string[] | undefined,
+      completionDependsOn: args.completionDependsOn as string[] | undefined,
+      references: args.references as WorkItemReference[] | undefined,
+    }, { agentId: caller.agentId, role: caller.role });
+    if (!result.operationReplay) {
+      for (const binding of result.current) {
+        const item = await store.getWorkItem(binding.physicalId);
+        if (item) await emitWorkUpdated(ctx, item, caller, ["semantic_revision", "topology_generation"]);
+      }
+    }
+    return ok(result);
   } catch (e) { return mapVerbError(e); }
 }
 
@@ -780,7 +875,9 @@ async function updateWork(args: Record<string, unknown>, ctx: IPolicyContext): P
     await emitWorkUpdated(ctx, after, { agentId: caller.agentId, role: caller.role }, Object.keys(changes));
     return ok({ workItem: after, changed: Object.keys(changes) });
   } catch (e) {
-    if (e instanceof TransitionRejected) return err("update_rejected", e.message);
+    if (e instanceof TransitionRejected || e instanceof WorkGraphCurrentnessRejected) {
+      return err("update_rejected", e.message);
+    }
     throw e;
   }
 }
@@ -1227,7 +1324,18 @@ async function attestEvidence(args: Record<string, unknown>, ctx: IPolicyContext
   const note = typeof args.note === "string" ? args.note : undefined;
   try {
     const { item, attestation } = await store.attestEvidence(workId, requirementId, caller.agentId, verdict, evidenceRefs, note);
-    return ok({ workItem: item, attestation });
+    let failedSealNoticeProjection: unknown;
+    if (verdict === "fail" && item.effectiveDisposition === "failed_sealed") {
+      try {
+        failedSealNoticeProjection = await projectPendingFailedSealNotices(ctx, store, { workId });
+      } catch (projectionError) {
+        // Authority is already committed. Never roll it back or misreport FAIL as
+        // rejected because the downstream wake failed; the restart sweeper retries.
+        console.error(`[attest_evidence] failed-seal notice projection deferred for ${workId}: ${(projectionError as Error)?.message ?? String(projectionError)}`);
+        failedSealNoticeProjection = { deferred: true, reason: (projectionError as Error)?.message ?? String(projectionError) };
+      }
+    }
+    return ok({ workItem: item, attestation, ...(failedSealNoticeProjection ? { failedSealNoticeProjection } : {}) });
   } catch (e) {
     return mapVerbError(e);
   }
@@ -1475,7 +1583,7 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "update_work",
-    "[Any] work-136 (idea-419, ratified contract v1.0 / decision-11): mutate a WorkItem per the field-mutability table. AUTHORITY: the item's AUTHOR or the ARCHITECT (Hub-derived from the session — no lease-holder writes in v1). set{} replaces priority/targetRef anytime pre-terminal; runbook/payload/roleEligibility PRE-CLAIM only (the claimant's contract freezes at claim). Structural edges are APPEND-ONLY explicit params (never via set): appendDependsOn (while ready; re-gating is the intended effect — the work-133 case), appendCompletionDependsOn (until done; arc accretion), appendReferences (pre-claim; required refs fail-closed resolve). Rejects: empty mutation, terminal item, phase violations, dangling/cyclic edges, unclaimable roleEligibility, stale CAS (re-read and re-decide). Every accepted call: one audit entry (actor + before→after) + one work-updated event, role-targeted per work-124. type + evidenceRequirements are IMMUTABLE FOREVER (the anti-gameability contract).",
+    "[Any] work-136 + Mission-140 frozen-generation repair: mutate a WorkItem per the field-mutability table. AUTHORITY: the item's AUTHOR or the ARCHITECT (Hub-derived; no lease-holder writes). priority is scalar pre-terminal metadata. targetRef/runbook/payload/roleEligibility and all dependency/completion/reference appends are CLAIMANT-SIGNIFICANT: they reject with workgraph.currentness.revision_required while paused or whenever a topology generation is active; use the semantic revision protocol instead. In legacy ready state, prior pre-claim/append-only rules remain. Rejects: empty mutation, terminal/phase violations, dangling/cyclic edges, unclaimable roles, stale CAS. Every accepted call writes one audit and one role-targeted work-updated event. type + evidenceRequirements remain immutable forever.",
     {
       workId: z.string(),
       set: z.object({
@@ -1486,7 +1594,7 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
         roleEligibility: z.array(z.string()).optional(),
       }).strict().optional().describe("Replace-semantics fields, per-field phase rules; UNKNOWN KEYS REJECT (strict)"),
       appendDependsOn: z.array(z.string()).optional().describe("Append claim-gate deps (while ready; existence+cycle checked)"),
-      appendCompletionDependsOn: z.array(z.string()).optional().describe("Append completion-gate children (until done; existence+cycle checked)"),
+      appendCompletionDependsOn: z.array(z.string()).optional().describe("Append completion-gate children in legacy non-paused mode (until done; existence+cycle checked); active-generation or paused rows require semantic revision"),
       appendReferences: z.array(referenceSchema).optional().describe("Append node-contract inputs (pre-claim; required refs must resolve)"),
     },
     updateWork,
@@ -1647,20 +1755,63 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
   );
 
   router.register(
-    "pause_work",
-    "[Any] S3 (idea-454): ready → PAUSED — a dormancy state (unclaimable, no lease, resumable). READY-ONLY (a leased item cannot be paused — its holder would be zombied; use release_work/abandon_work for leased work). AUTHZ: the item's CREATOR (Hub-derived from the session) or the Director. Paused items are EXCLUDED from list_ready_work + the claimable digest (dormant, not dark — get_current_stint surfaces them). NOTE: the reverse is `unpause_work` (paused→ready); `resume_work` is the DISTINCT blocked→in_progress lease-holder verb.",
+    "get_current_work",
+    "[Any] Resolve a stable logical WorkItem id through the pinned active WorkGraph generation. Returns the exact current physical id/revision, predecessor lineage, local execution identity, and WorkItem. Unlike get_work, this surface intentionally follows supersession.",
+    { logicalId: z.string().min(1) },
+    getCurrentWork,
+  );
+
+  router.register(
+    "revise_work",
+    "[Any] Mission-140 semantic revision. Creates immutable paused successors for the exact exhaustive reverse-dependent closure, recomputes contracts/topology, and publishes them through one generation-head CAS. Original creators are narrow (single-family, no role expansion); architect/Director may revise within the immutable family scope. type/evidenceRequirements/history/status are never mutable. No evidence or attestation migrates.",
     {
-      workId: z.string(),
-      reason: z.string().optional().describe("Why the item is being paused (advisory)"),
+      workId: z.string().optional().describe("Exact current physical id; historical/draft ids reject"),
+      logicalId: z.string().optional().describe("Stable logical id resolved at expectedGeneration"),
+      operationId: z.string().min(1),
+      reason: z.string().min(1),
+      expectedGeneration: z.number().int().positive(),
+      expectedAffectedSet: z.array(z.string().min(1)).optional().describe("Optional exact closure CAS; mismatch rejects"),
+      set: z.object({
+        runbook: z.string().optional(),
+        payload: z.unknown().optional(),
+        targetRef: z.object({ kind: z.string().min(1), id: z.string().min(1) }).strict().nullable().optional(),
+        roleEligibility: z.array(z.string().min(1)).optional(),
+        leaseWindowMs: z.number().positive().nullable().optional(),
+        nodeConfig: nodeConfigSchema.nullable().optional(),
+      }).strict().optional(),
+      dependsOn: z.array(z.string().min(1)).optional().describe("Replacement stable-logical start edges"),
+      completionDependsOn: z.array(z.string().min(1)).optional().describe("Replacement stable-logical completion edges"),
+      references: z.array(referenceSchema).optional().describe("Replacement references; Hub re-resolves inline/document/entity bytes/state; changed git refs fail closed without authoritative blob bytes"),
+    },
+    reviseWork,
+  );
+
+  router.register(
+    "pause_work",
+    "[Any] Mission-140 pause/recall. Exactly one of workId|logicalId. Ready work: original creator, architect, or Director. Claimed/in_progress/blocked: architect or Director only. One CAS records the full pre-state, invalidates the token, clears lease/blocker, and persists an exact-holder notice before restart-safe projection. Review/terminal/failed/noncurrent rows reject.",
+    {
+      workId: z.string().optional().describe("Exact physical WorkItem id; never follows a successor"),
+      logicalId: z.string().optional().describe("Logical WorkItem id resolved at the pinned current generation"),
+      operationId: z.string().min(1).describe("Idempotency key; same key with changed bytes rejects"),
+      reason: z.string().min(1).describe("Required recall reason"),
+      expectedRevision: z.number().int().positive().optional(),
+      expectedGeneration: z.number().int().nonnegative().optional(),
     },
     pauseWork,
   );
 
   router.register(
     "unpause_work",
-    "[Any] S3 (idea-454): PAUSED → ready — reactivate a paused item back into the normal claim gate. Start-gates are NOT bypassed: dependencies + roleEligibility are re-validated fail-closed at the subsequent claim_work. AUTHZ: the item's CREATOR or the Director.",
+    "[Any] Scalar compatibility OR architect/Director atomic revision-set recommit. Batch mode requires exact logicalIds + expectedRevisions + generation + operationId/reason and makes the entire successor set ready in one transaction; no partial visibility survives conflict, crash, or retry. Dependency-state checks remain claim_work's concern.",
     {
-      workId: z.string(),
+      workId: z.string().optional().describe("Scalar exact physical WorkItem id"),
+      logicalId: z.string().optional().describe("Scalar logical WorkItem id"),
+      logicalIds: z.array(z.string().min(1)).optional().describe("Batch exact pending revision set"),
+      expectedRevision: z.number().int().positive().optional(),
+      expectedRevisions: z.record(z.string(), z.number().int().positive()).optional(),
+      expectedGeneration: z.number().int().nonnegative().optional(),
+      operationId: z.string().min(1).optional(),
+      reason: z.string().min(1).optional(),
     },
     unpauseWork,
   );

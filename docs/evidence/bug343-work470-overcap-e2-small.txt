@@ -1,0 +1,460 @@
+[AgentRepositorySubstrate] session→agent binding rehydrated from the persisted row: session-scale-current → agent-scale-1 (bug-230)
+{
+  "bug": "bug-343",
+  "workItem": "work-470",
+  "predecessorCommit": "be7272dd7e19fd9e91c351d7f9905e834b1d8772",
+  "profile": "e2-small-equivalent-1vcpu-2GiB-overcap",
+  "measuredAt": "2026-07-23T17:26:58.000Z",
+  "clients": 12,
+  "corpus": {
+    "workloadEntities": 212156,
+    "totalEntities": 212162,
+    "logicalJsonBytes": 416633433,
+    "physicalJsonbBytes": 421480569
+  },
+  "overCap": {
+    "checks": {
+      "submittedProposals": true,
+      "approvedProposals": true,
+      "activeArchitectThreads": true,
+      "convergedThreads": true,
+      "inFlightQueue": true,
+      "drainQueue": true
+    },
+    "all": true,
+    "authoritative": {
+      "submittedProposals": 675,
+      "activeArchitectThreads": 650,
+      "inFlightPendingActions": 600
+    },
+    "thresholdsMet": true,
+    "dimensions": {
+      "submittedProposals": {
+        "complete": true,
+        "truncated": false,
+        "returnedCount": 675,
+        "exactCount": 675,
+        "pagesRead": 2,
+        "pageSize": 500,
+        "snapshotRevision": "212186",
+        "nextOffset": null,
+        "reason": null
+      },
+      "activeArchitectThreads": {
+        "complete": true,
+        "truncated": false,
+        "returnedCount": 650,
+        "exactCount": 650,
+        "pagesRead": 2,
+        "pageSize": 500,
+        "snapshotRevision": "212186",
+        "nextOffset": null,
+        "reason": null
+      },
+      "inFlightPendingActions": {
+        "complete": true,
+        "truncated": false,
+        "returnedCount": 600,
+        "exactCount": 600,
+        "pagesRead": 2,
+        "pageSize": 500,
+        "snapshotRevision": "212186",
+        "nextOffset": null,
+        "reason": null
+      },
+      "approvedProposals": {
+        "complete": true,
+        "truncated": false,
+        "returnedCount": 0,
+        "exactCount": 0,
+        "pagesRead": 1,
+        "pageSize": 500,
+        "snapshotRevision": "212186",
+        "nextOffset": null,
+        "reason": null
+      },
+      "convergedThreads": {
+        "complete": true,
+        "truncated": false,
+        "returnedCount": 0,
+        "exactCount": 0,
+        "pagesRead": 1,
+        "pageSize": 500,
+        "snapshotRevision": "212186",
+        "nextOffset": null,
+        "reason": null
+      },
+      "drainQueue": {
+        "complete": true,
+        "truncated": false,
+        "returnedCount": 300,
+        "exactCount": 300,
+        "pagesRead": 1,
+        "pageSize": 500,
+        "snapshotRevision": "212186",
+        "nextOffset": null,
+        "reason": null
+      }
+    }
+  },
+  "phases": {
+    "preFix": {
+      "name": "pre-fix-capped-fanout",
+      "reconnects": {
+        "count": 12,
+        "errors": 0,
+        "p50Ms": 202.19,
+        "p95Ms": 287.37,
+        "maxMs": 288.34,
+        "errorMessages": []
+      },
+      "wallMs": 288.46,
+      "issuedQueries": 72,
+      "processCpuMs": 194.94,
+      "databaseCpu": {
+        "available": true,
+        "usageUsec": 327658.11599999666,
+        "utilizationPct": 113.59
+      },
+      "listAdmission": {
+        "active": 0,
+        "queued": 0,
+        "maxActive": 4,
+        "maxQueued": 96,
+        "highWaterActive": 0,
+        "highWaterQueued": 0,
+        "admitted": 0,
+        "rejectedQueueFull": 0,
+        "rejectedTimeout": 0
+      }
+    },
+    "postFix": {
+      "name": "post-fix-complete-paging",
+      "reconnects": {
+        "count": 12,
+        "errors": 0,
+        "p50Ms": 351.72,
+        "p95Ms": 357.65,
+        "maxMs": 359.16,
+        "errorMessages": []
+      },
+      "wallMs": 359.27,
+      "issuedQueries": 108,
+      "processCpuMs": 342.45,
+      "databaseCpu": {
+        "available": true,
+        "usageUsec": 318728.27099999785,
+        "utilizationPct": 88.72
+      },
+      "listAdmission": {
+        "active": 0,
+        "queued": 0,
+        "maxActive": 4,
+        "maxQueued": 96,
+        "highWaterActive": 4,
+        "highWaterQueued": 8,
+        "admitted": 108,
+        "rejectedQueueFull": 0,
+        "rejectedTimeout": 0
+      }
+    }
+  },
+  "preservation": {
+    "beforeHistory": {
+      "count": 209981,
+      "digest": "f4013981d671707192c9cdd97480f66a"
+    },
+    "afterHistory": {
+      "count": 209981,
+      "digest": "f4013981d671707192c9cdd97480f66a"
+    },
+    "historyPreserved": true,
+    "beforeData": {
+      "count": 212162,
+      "digest": "e489550531ea7ffd461a5ab17892a8f6"
+    },
+    "afterData": {
+      "count": 212162,
+      "digest": "e489550531ea7ffd461a5ab17892a8f6"
+    },
+    "dataPreserved": true,
+    "beforeTotal": 212162,
+    "afterTotal": 212162,
+    "noRowsDeleted": true
+  },
+  "plans": {
+    "preFix": [
+      {
+        "nodeType": "Result",
+        "relation": null,
+        "index": null,
+        "actualRows": 1,
+        "sharedReadBlocks": 4,
+        "sharedHitBlocks": 55
+      },
+      {
+        "nodeType": "Result",
+        "relation": null,
+        "index": null,
+        "actualRows": 1,
+        "sharedReadBlocks": 0,
+        "sharedHitBlocks": 5
+      },
+      {
+        "nodeType": "Limit",
+        "relation": null,
+        "index": null,
+        "actualRows": 1,
+        "sharedReadBlocks": 0,
+        "sharedHitBlocks": 5
+      },
+      {
+        "nodeType": "Index Only Scan",
+        "relation": "entities",
+        "index": "entities_rv_idx",
+        "actualRows": 1,
+        "sharedReadBlocks": 0,
+        "sharedHitBlocks": 5
+      },
+      {
+        "nodeType": "Aggregate",
+        "relation": null,
+        "index": null,
+        "actualRows": 1,
+        "sharedReadBlocks": 4,
+        "sharedHitBlocks": 50
+      },
+      {
+        "nodeType": "Limit",
+        "relation": null,
+        "index": null,
+        "actualRows": 200,
+        "sharedReadBlocks": 4,
+        "sharedHitBlocks": 50
+      },
+      {
+        "nodeType": "Index Scan",
+        "relation": "entities",
+        "index": "entities_pkey",
+        "actualRows": 200,
+        "sharedReadBlocks": 4,
+        "sharedHitBlocks": 50
+      }
+    ],
+    "completePaging": {
+      "Proposal": [
+        {
+          "nodeType": "Result",
+          "relation": null,
+          "index": null,
+          "actualRows": 1,
+          "sharedReadBlocks": 5,
+          "sharedHitBlocks": 44
+        },
+        {
+          "nodeType": "Result",
+          "relation": null,
+          "index": null,
+          "actualRows": 1,
+          "sharedReadBlocks": 4,
+          "sharedHitBlocks": 1
+        },
+        {
+          "nodeType": "Limit",
+          "relation": null,
+          "index": null,
+          "actualRows": 1,
+          "sharedReadBlocks": 4,
+          "sharedHitBlocks": 1
+        },
+        {
+          "nodeType": "Index Only Scan",
+          "relation": "entities",
+          "index": "entities_rv_idx",
+          "actualRows": 1,
+          "sharedReadBlocks": 4,
+          "sharedHitBlocks": 1
+        },
+        {
+          "nodeType": "Aggregate",
+          "relation": null,
+          "index": null,
+          "actualRows": 1,
+          "sharedReadBlocks": 1,
+          "sharedHitBlocks": 43
+        },
+        {
+          "nodeType": "Limit",
+          "relation": null,
+          "index": null,
+          "actualRows": 175,
+          "sharedReadBlocks": 1,
+          "sharedHitBlocks": 43
+        },
+        {
+          "nodeType": "Sort",
+          "relation": null,
+          "index": null,
+          "actualRows": 675,
+          "sharedReadBlocks": 1,
+          "sharedHitBlocks": 43
+        },
+        {
+          "nodeType": "Index Scan",
+          "relation": "entities",
+          "index": "proposal_status_phase_idx",
+          "actualRows": 675,
+          "sharedReadBlocks": 1,
+          "sharedHitBlocks": 43
+        }
+      ],
+      "Thread": [
+        {
+          "nodeType": "Result",
+          "relation": null,
+          "index": null,
+          "actualRows": 1,
+          "sharedReadBlocks": 1,
+          "sharedHitBlocks": 59
+        },
+        {
+          "nodeType": "Result",
+          "relation": null,
+          "index": null,
+          "actualRows": 1,
+          "sharedReadBlocks": 0,
+          "sharedHitBlocks": 5
+        },
+        {
+          "nodeType": "Limit",
+          "relation": null,
+          "index": null,
+          "actualRows": 1,
+          "sharedReadBlocks": 0,
+          "sharedHitBlocks": 5
+        },
+        {
+          "nodeType": "Index Only Scan",
+          "relation": "entities",
+          "index": "entities_rv_idx",
+          "actualRows": 1,
+          "sharedReadBlocks": 0,
+          "sharedHitBlocks": 5
+        },
+        {
+          "nodeType": "Aggregate",
+          "relation": null,
+          "index": null,
+          "actualRows": 1,
+          "sharedReadBlocks": 1,
+          "sharedHitBlocks": 54
+        },
+        {
+          "nodeType": "Limit",
+          "relation": null,
+          "index": null,
+          "actualRows": 150,
+          "sharedReadBlocks": 1,
+          "sharedHitBlocks": 54
+        },
+        {
+          "nodeType": "Sort",
+          "relation": null,
+          "index": null,
+          "actualRows": 650,
+          "sharedReadBlocks": 1,
+          "sharedHitBlocks": 54
+        },
+        {
+          "nodeType": "Index Scan",
+          "relation": "entities",
+          "index": "thread_status_phase_currentturn_idx",
+          "actualRows": 650,
+          "sharedReadBlocks": 1,
+          "sharedHitBlocks": 51
+        }
+      ],
+      "PendingAction": [
+        {
+          "nodeType": "Result",
+          "relation": null,
+          "index": null,
+          "actualRows": 1,
+          "sharedReadBlocks": 1,
+          "sharedHitBlocks": 49
+        },
+        {
+          "nodeType": "Result",
+          "relation": null,
+          "index": null,
+          "actualRows": 1,
+          "sharedReadBlocks": 0,
+          "sharedHitBlocks": 5
+        },
+        {
+          "nodeType": "Limit",
+          "relation": null,
+          "index": null,
+          "actualRows": 1,
+          "sharedReadBlocks": 0,
+          "sharedHitBlocks": 5
+        },
+        {
+          "nodeType": "Index Only Scan",
+          "relation": "entities",
+          "index": "entities_rv_idx",
+          "actualRows": 1,
+          "sharedReadBlocks": 0,
+          "sharedHitBlocks": 5
+        },
+        {
+          "nodeType": "Aggregate",
+          "relation": null,
+          "index": null,
+          "actualRows": 1,
+          "sharedReadBlocks": 1,
+          "sharedHitBlocks": 44
+        },
+        {
+          "nodeType": "Limit",
+          "relation": null,
+          "index": null,
+          "actualRows": 100,
+          "sharedReadBlocks": 1,
+          "sharedHitBlocks": 44
+        },
+        {
+          "nodeType": "Sort",
+          "relation": null,
+          "index": null,
+          "actualRows": 600,
+          "sharedReadBlocks": 1,
+          "sharedHitBlocks": 44
+        },
+        {
+          "nodeType": "Index Scan",
+          "relation": "entities",
+          "index": "pa_spec_target_idx",
+          "actualRows": 600,
+          "sharedReadBlocks": 1,
+          "sharedHitBlocks": 41
+        }
+      ]
+    }
+  },
+  "cpuEvidence": {
+    "container": "bug343-pg-overcap",
+    "cgroupCpuStatPath": "/sys/fs/cgroup/cpu,cpuacct/docker/efbbbc2026270ee59139774437d946d023eba63184fec9e75b48e8efa3883a7d/cpuacct.usage",
+    "cgroupFormat": "cgroup-v1-nsec",
+    "required": true
+  },
+  "notes": [
+    "all accepted pages in a dimension share one substrate high-water revision and immutable id order",
+    "675/650/600 dimensions reconstruct in two pages; exact counts are emitted only when complete",
+    "pre/post CPU and list-admission observations are reset and measured in distinct phases",
+    "history and whole-dataset digests cover id/resourceVersion/data before and after",
+    "setup TRUNCATE is confined to the explicitly ephemeral scale database"
+  ]
+}
+
+exitCode=0

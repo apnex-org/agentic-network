@@ -13,6 +13,7 @@
  */
 
 import pg from "pg";
+import { AsyncLocalStorage } from "node:async_hooks";
 import { attachPgErrorHandler } from "./pg-error-handler.js";
 import type {
   HubStorageSubstrate,
@@ -22,6 +23,9 @@ import type {
   ChangeEvent,
   CreateOnlyResult,
   PutIfMatchResult,
+  BatchCreateOnlyResult,
+  BatchPutIfMatchEntry,
+  BatchPutIfMatchResult,
   SnapshotRef,
   Filter,
   FilterValue,
@@ -29,6 +33,7 @@ import type {
 } from "./types.js";
 import { translateKeyOrThrow } from "./filter-translation-error.js";
 import { assertKnownFilterOps, hasImplementedFilterOp } from "./types.js";
+import { AdmissionGate, type AdmissionGateSnapshot } from "./admission-gate.js";
 
 const { Pool, Client } = pg;
 
@@ -49,6 +54,9 @@ export interface PostgresSubstrate extends HubStorageSubstrate {
   setFieldTranslator(translator: FieldTranslator | null): void;
   setWriteEncoder(encoder: WriteEncoder | null): void;
   setPartitionedKindCheck(check: ((kind: string) => boolean) | null): void;
+  /** bug-343 successor: observed, phase-resettable list-admission telemetry. */
+  getListAdmissionSnapshot(): AdmissionGateSnapshot;
+  resetListAdmissionObservations(): void;
 }
 
 /** Per-instance pool tuning (C1-R2 audit-4103). Both fall back to env / defaults when
@@ -60,6 +68,12 @@ export interface PostgresSubstrateOptions {
   /** ms a query waits for a free connection before erroring (default env
    *  POSTGRES_CONNECTION_TIMEOUT_MS, else undefined = wait indefinitely — prod unchanged). */
   connectionTimeoutMillis?: number;
+  /** Maximum concurrent substrate.list queries (default env POSTGRES_LIST_MAX_CONCURRENCY ?? 8). */
+  listMaxConcurrency?: number;
+  /** Maximum list callers queued behind the admission gate (default env POSTGRES_LIST_MAX_QUEUED ?? 128). */
+  listMaxQueued?: number;
+  /** Maximum queue wait before loud backpressure (default env POSTGRES_LIST_ADMISSION_TIMEOUT_MS ?? 30s). */
+  listAdmissionTimeoutMs?: number;
 }
 
 /**
@@ -69,8 +83,32 @@ export function createPostgresStorageSubstrate(connectionString: string, opts?: 
   return new PostgresStorageSubstrate(connectionString, opts);
 }
 
+interface LockedPgSession {
+  client: pg.PoolClient;
+  /** node-postgres permits one active query per client; serialize Promise.all callers. */
+  tail: Promise<void>;
+}
+
 class PostgresStorageSubstrate implements PostgresSubstrate {
   private readonly pool: pg.Pool;
+  /** Every bounded CRUD/CAS/list query inside withAdvisoryLock uses the lock-owning session. */
+  private readonly lockClientContext = new AsyncLocalStorage<LockedPgSession>();
+  /**
+   * bug-343: server-wide (per Hub process) admission boundary in front of list
+   * work. pg.Pool bounds connections but not its waiter queue; reconnect storms
+   * could therefore enqueue an unbounded number of scan-shaped requests. The
+   * gate is deliberately below repositories so list_missions, pending-action,
+   * agent/session rehydration, and every future reconnect read share one bound.
+   */
+  private readonly listAdmission: AdmissionGate;
+
+  private query<T extends pg.QueryResultRow = pg.QueryResultRow>(text: string, values?: unknown[]): Promise<pg.QueryResult<T>> {
+    const session = this.lockClientContext.getStore();
+    if (!session) return this.pool.query<T>(text, values);
+    const query = session.tail.then(() => session.client.query<T>(text, values));
+    session.tail = query.then(() => undefined, () => undefined);
+    return query;
+  }
 
   /**
    * mission-90 W2 (Design §2.3): bare-key → envelope-JSONB-path translator,
@@ -115,6 +153,26 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
     const connectionTimeoutMillis = opts?.connectionTimeoutMillis
       ?? (process.env.POSTGRES_CONNECTION_TIMEOUT_MS ? Number(process.env.POSTGRES_CONNECTION_TIMEOUT_MS) : undefined);
     this.pool = new Pool({ connectionString, max, ...(connectionTimeoutMillis ? { connectionTimeoutMillis } : {}) });
+    const boundedInteger = (candidate: number | undefined, fallback: number, minimum: number): number => {
+      const value = candidate ?? fallback;
+      return Number.isFinite(value) ? Math.max(minimum, Math.floor(value)) : fallback;
+    };
+    const listMaxConcurrency = boundedInteger(
+      opts?.listMaxConcurrency ?? Number(process.env.POSTGRES_LIST_MAX_CONCURRENCY),
+      8,
+      1,
+    );
+    const listMaxQueued = boundedInteger(
+      opts?.listMaxQueued ?? Number(process.env.POSTGRES_LIST_MAX_QUEUED),
+      128,
+      0,
+    );
+    const listAdmissionTimeoutMs = boundedInteger(
+      opts?.listAdmissionTimeoutMs ?? Number(process.env.POSTGRES_LIST_ADMISSION_TIMEOUT_MS),
+      30_000,
+      1,
+    );
+    this.listAdmission = new AdmissionGate(listMaxConcurrency, listMaxQueued, listAdmissionTimeoutMs);
     // bug-110 — without an 'error' listener an idle-connection backend error
     // is an uncaught exception that crashes the process (pg contract).
     attachPgErrorHandler(this.pool, "PostgresStorageSubstrate pool");
@@ -144,6 +202,14 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
    */
   setWriteEncoder(encoder: WriteEncoder | null): void {
     this.writeEncoder = encoder;
+  }
+
+  getListAdmissionSnapshot(): AdmissionGateSnapshot {
+    return this.listAdmission.snapshot();
+  }
+
+  resetListAdmissionObservations(): void {
+    this.listAdmission.resetObservations();
   }
 
   /** Encode an entity for storage (envelope-shape) via the injected write-encoder; no-op if unwired. */
@@ -191,7 +257,7 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
   // ── Entity CRUD (per Design v1.1 §2.1) ────────────────────────────────────
 
   async get<T>(kind: string, id: string): Promise<T | null> {
-    const r = await this.pool.query<{ data: T }>(
+    const r = await this.query<{ data: T }>(
       `SELECT data FROM entities WHERE kind = $1 AND id = $2`,
       [kind, id],
     );
@@ -205,7 +271,7 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
    * race-window).
    */
   async getWithRevision<T>(kind: string, id: string): Promise<{ entity: T; resourceVersion: string } | null> {
-    const r = await this.pool.query<{ data: T; resource_version: string }>(
+    const r = await this.query<{ data: T; resource_version: string }>(
       `SELECT data, resource_version FROM entities WHERE kind = $1 AND id = $2`,
       [kind, id],
     );
@@ -217,7 +283,7 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
   async put<T>(kind: string, entity: T): Promise<{ id: string; resourceVersion: string }> {
     const stored = this.encodeForWrite(kind, entity); // mission-90 W4: envelope-encode (idempotent)
     const id = extractId(stored, kind);
-    const r = await this.pool.query<{ resource_version: string }>(
+    const r = await this.query<{ resource_version: string }>(
       `INSERT INTO entities (kind, id, data, created_at, updated_at)
        VALUES ($1, $2, $3, NOW(), NOW())
        ON CONFLICT (kind, id) DO UPDATE
@@ -231,7 +297,7 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
   }
 
   async delete(kind: string, id: string): Promise<void> {
-    await this.pool.query(`DELETE FROM entities WHERE kind = $1 AND id = $2`, [kind, id]);
+    await this.query(`DELETE FROM entities WHERE kind = $1 AND id = $2`, [kind, id]);
   }
 
   async list<T>(kind: string, opts: ListOptions = {}): Promise<{ items: T[]; snapshotRevision: string }> {
@@ -255,10 +321,16 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
     }
 
     // Sort translation: bare key → envelope JSONB path (mission-90 W2, same hook),
-    // then dotted-path field → JSONB extract (jsonbField unchanged).
+    // then dotted-path field → JSONB extract. Reserved immutable `id` maps to
+    // the canonical column so stable complete paging uses entities_pkey instead
+    // of sorting on a JSON expression (bug-343 truncation-honesty successor).
     let orderSql = "";
     if (sort && sort.length > 0) {
-      const parts = sort.map(s => `${jsonbField(this.translateKey(kind, s.field))} ${s.order === "desc" ? "DESC" : "ASC"}`);
+      const parts = sort.map((s) => {
+        const translated = this.translateKey(kind, s.field);
+        const expression = translated === "id" ? "id" : jsonbField(translated);
+        return `${expression} ${s.order === "desc" ? "DESC" : "ASC"}`;
+      });
       orderSql = ` ORDER BY ${parts.join(", ")}`;
     }
 
@@ -266,11 +338,21 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
     const limitSql = ` LIMIT ${limitClamped}`;
     const offsetSql = offset !== undefined ? ` OFFSET ${Number(offset)}` : "";
 
-    // CTE: capture snapshot resource_version then SELECT items
-    // (Single round-trip; snapshotRevision = max(resource_version) over selected set
-    //  OR substrate-wide-max for empty results — gives gap-free watch resume)
+    // bug-343: capture the substrate high-water mark through the existing
+    // entities_rv_idx, never retain the planner-dependent MAX(resource_version)
+    // aggregate shape seen scanning the heap in the production incident.
+    // Concurrent reconnect state-sync multiplied that shape across
+    // list_missions, get_pending_actions, drain_pending_actions, and session
+    // rehydration. A backward LIMIT 1 on the monotonic rv index preserves the
+    // same committed high-water semantics in one round-trip while making the
+    // indexed O(log N) plan explicit.
     const sql = `
-      WITH snapshot AS (SELECT COALESCE(MAX(resource_version), 0) AS rv FROM entities),
+      WITH snapshot AS (
+             SELECT COALESCE((
+               SELECT resource_version FROM entities
+               ORDER BY resource_version DESC LIMIT 1
+             ), 0) AS rv
+           ),
            items AS (
              SELECT data, resource_version FROM entities
              WHERE ${where.join(" AND ")}
@@ -278,7 +360,14 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
            )
       SELECT (SELECT rv FROM snapshot) AS snapshot_rv,
              (SELECT json_agg(items.data) FROM items) AS items_json`;
-    const r = await this.pool.query<{ snapshot_rv: string; items_json: T[] | null }>(sql, params);
+    // bug-343: explicit bounded admission before pg.Pool's unbounded waiter
+    // queue. Excess reconnect reads wait FIFO up to the configured bound, then
+    // fail loud with StorageAdmissionError rather than stampeding PostgreSQL.
+    // Route the admitted query through query() so a WorkGraph advisory-lock
+    // transaction continues using the lock-owning PostgreSQL session.
+    const r = await this.listAdmission.run(() =>
+      this.query<{ snapshot_rv: string; items_json: T[] | null }>(sql, params),
+    );
     const row = r.rows[0]!;
     return {
       items: row.items_json ?? [],
@@ -291,7 +380,7 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
   async createOnly<T>(kind: string, entity: T): Promise<CreateOnlyResult> {
     const stored = this.encodeForWrite(kind, entity); // mission-90 W4: envelope-encode (idempotent)
     const id = extractId(stored, kind);
-    const r = await this.pool.query<{ resource_version: string }>(
+    const r = await this.query<{ resource_version: string }>(
       `INSERT INTO entities (kind, id, data, created_at, updated_at)
        VALUES ($1, $2, $3, NOW(), NOW())
        ON CONFLICT (kind, id) DO NOTHING
@@ -304,10 +393,51 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
     return { ok: true, id, resourceVersion: String(r.rows[0]!.resource_version) };
   }
 
+  async createBatchOnly(entries: readonly { kind: string; entity: unknown }[]): Promise<BatchCreateOnlyResult> {
+    if (entries.length === 0) return { ok: true, resourceVersions: {} };
+    const prepared = entries.map((entry) => {
+      const stored = this.encodeForWrite(entry.kind, entry.entity);
+      const id = extractId(stored, entry.kind);
+      return { ...entry, stored, id, key: `${entry.kind}/${id}` };
+    });
+    if (new Set(prepared.map((entry) => entry.key)).size !== prepared.length) throw new Error("createBatchOnly rejects duplicate kind/id entries");
+    const inherited = this.lockClientContext.getStore();
+    const ownsConnection = !inherited;
+    const client = inherited?.client ?? await this.pool.connect();
+    try {
+      if (inherited) await inherited.tail;
+      await client.query("BEGIN");
+      const existing: Array<{ kind: string; id: string }> = [];
+      for (const entry of prepared) {
+        const row = await client.query(`SELECT 1 FROM entities WHERE kind = $1 AND id = $2 FOR UPDATE`, [entry.kind, entry.id]);
+        if (row.rowCount !== 0) existing.push({ kind: entry.kind, id: entry.id });
+      }
+      if (existing.length > 0) {
+        await client.query("ROLLBACK");
+        return { ok: false, conflict: "existing", existing };
+      }
+      const resourceVersions: Record<string, string> = {};
+      for (const entry of prepared) {
+        const inserted = await client.query<{ resource_version: string }>(
+          `INSERT INTO entities (kind, id, data, created_at, updated_at) VALUES ($1, $2, $3, NOW(), NOW()) RETURNING resource_version`,
+          [entry.kind, entry.id, entry.stored as object],
+        );
+        resourceVersions[entry.key] = String(inserted.rows[0]!.resource_version);
+      }
+      await client.query("COMMIT");
+      return { ok: true, resourceVersions };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      if (ownsConnection) client.release();
+    }
+  }
+
   async putIfMatch<T>(kind: string, entity: T, expectedRevision: string): Promise<PutIfMatchResult> {
     const stored = this.encodeForWrite(kind, entity); // mission-90 W4: envelope-encode (idempotent)
     const id = extractId(stored, kind);
-    const r = await this.pool.query<{ resource_version: string }>(
+    const r = await this.query<{ resource_version: string }>(
       `UPDATE entities
          SET data = $3,
              updated_at = NOW(),
@@ -318,7 +448,7 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
     );
     if (r.rowCount === 0) {
       // Either row doesn't exist OR revision mismatch — fetch current for caller
-      const cur = await this.pool.query<{ resource_version: string }>(
+      const cur = await this.query<{ resource_version: string }>(
         `SELECT resource_version FROM entities WHERE kind = $1 AND id = $2`,
         [kind, id],
       );
@@ -332,6 +462,65 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
       };
     }
     return { ok: true, resourceVersion: String(r.rows[0]!.resource_version) };
+  }
+
+  async putBatchIfMatch(entries: readonly BatchPutIfMatchEntry[]): Promise<BatchPutIfMatchResult> {
+    if (entries.length === 0) return { ok: true, resourceVersions: {} };
+    const prepared = entries.map((entry) => {
+      const stored = this.encodeForWrite(entry.kind, entry.entity);
+      const id = extractId(stored, entry.kind);
+      return { ...entry, stored, id, key: `${entry.kind}/${id}` };
+    });
+    if (new Set(prepared.map((entry) => entry.key)).size !== prepared.length) {
+      throw new Error("putBatchIfMatch rejects duplicate kind/id entries");
+    }
+
+    const inherited = this.lockClientContext.getStore();
+    const ownsConnection = !inherited;
+    const client = inherited?.client ?? await this.pool.connect();
+    // All ordinary CRUD inside a WorkGraph writer fence already routes to this
+    // client. The batch uses it directly so BEGIN/validation/CAS/COMMIT cannot
+    // be split across pool sessions.
+    try {
+      if (inherited) await inherited.tail;
+      await client.query("BEGIN");
+      const conflicts: Array<{ kind: string; id: string; expectedRevision: string; actualRevision: string | null }> = [];
+      for (const entry of prepared) {
+        const row = await client.query<{ resource_version: string }>(
+          `SELECT resource_version FROM entities WHERE kind = $1 AND id = $2 FOR UPDATE`,
+          [entry.kind, entry.id],
+        );
+        const actualRevision = row.rowCount === 0 ? null : String(row.rows[0]!.resource_version);
+        if (actualRevision !== entry.expectedRevision) {
+          conflicts.push({ kind: entry.kind, id: entry.id, expectedRevision: entry.expectedRevision, actualRevision });
+        }
+      }
+      if (conflicts.length > 0) {
+        await client.query("ROLLBACK");
+        return { ok: false, conflict: "revision-mismatch", conflicts };
+      }
+      const resourceVersions: Record<string, string> = {};
+      for (const entry of prepared) {
+        const updated = await client.query<{ resource_version: string }>(
+          `UPDATE entities
+             SET data = $3,
+                 updated_at = NOW(),
+                 resource_version = nextval('entities_rv_seq')
+           WHERE kind = $1 AND id = $2 AND resource_version = $4
+           RETURNING resource_version`,
+          [entry.kind, entry.id, entry.stored as object, entry.expectedRevision],
+        );
+        if (updated.rowCount !== 1) throw new Error(`putBatchIfMatch lost locked row ${entry.key}`);
+        resourceVersions[entry.key] = String(updated.rows[0]!.resource_version);
+      }
+      await client.query("COMMIT");
+      return { ok: true, resourceVersions };
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally {
+      if (ownsConnection) client.release();
+    }
   }
 
   // ── Watch / change-notification (per Design §2.4 LISTEN/NOTIFY) ───────────
@@ -553,32 +742,36 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
     const startedAt = Date.now();
     const timeoutMs = opts?.timeoutMs;
     const latencyWarnMs = opts?.latencyWarnMs ?? 100;
+    const inheritedSession = this.lockClientContext.getStore();
+    const inheritedClient = inheritedSession?.client;
 
-    // Poll-acquire: take a conn, try-lock, release conn between failed polls.
-    // Only the SUCCESSFUL acquire pins its connection (the holder-conn).
+    // Nested locks MUST live on the inherited lock-owning session. This is
+    // load-bearing for the WorkGraph global lock + per-agent WIP lock nesting:
+    // every CRUD/CAS inside fn is routed by query() to this same session.
     let holderClient: pg.PoolClient | undefined;
+    const ownsConnection = !inheritedClient;
     while (true) {
-      const client = await this.pool.connect();
+      const client = inheritedClient ?? await this.pool.connect();
       try {
         const r = await client.query<{ acquired: boolean }>(
           `SELECT pg_try_advisory_lock($1, $2) AS acquired`,
           [lockClass, lockKey],
         );
         if (r.rows[0]?.acquired === true) {
-          holderClient = client;  // pin this conn until release
+          holderClient = client;
           break;
         }
       } catch (e) {
-        client.release();
+        if (!inheritedClient) client.release();
         throw e;
       }
-      client.release();  // failed poll → release conn so pool isn't starved
+      if (!inheritedClient) client.release();
       const elapsed = Date.now() - startedAt;
       if (timeoutMs !== undefined && elapsed >= timeoutMs) {
         const { LockAcquisitionTimeoutError } = await import("./advisory-lock.js");
         throw new LockAcquisitionTimeoutError(lockClass, String(lockKey), elapsed);
       }
-      await new Promise<void>((r) => setTimeout(r, 10));  // 10ms poll cadence
+      await new Promise<void>((r) => setTimeout(r, 10));
     }
 
     const acquireLatencyMs = Date.now() - startedAt;
@@ -589,15 +782,16 @@ class PostgresStorageSubstrate implements PostgresSubstrate {
       );
     }
 
+    const session: LockedPgSession = inheritedSession ?? { client: holderClient, tail: Promise.resolve() };
     try {
-      return await fn();
+      return await this.lockClientContext.run(session, fn);
     } finally {
       try {
         await holderClient.query(`SELECT pg_advisory_unlock($1, $2)`, [lockClass, lockKey]);
       } catch (e) {
         console.warn(`[advisory-lock] release error (class=${lockClass}, key=${lockKey}):`, e);
       }
-      holderClient.release();
+      if (ownsConnection) holderClient.release();
     }
   }
 

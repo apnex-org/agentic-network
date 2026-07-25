@@ -1,0 +1,6 @@
+failedAt=2026-07-23T18:34:28Z
+command=docker update --cpus=4 --memory=8g bug343-pg-aggregate
+exitCode=1
+stderr=Error response from daemon: Cannot update container c97b25658a46242bc6537c373699be189c92d658b220b34d0ade9aacaf730f2a: Memory limit should be smaller than already set memoryswap limit, update the memoryswap at the same time
+sourceOrHubMutation=false
+resolution=retry with --memory-swap=8g supplied atomically with --memory=8g

@@ -14,7 +14,11 @@ import {
 import { prWorkGraphBindingProofFromWorkItem } from "./pr-evidence-admission-binding.js";
 import { evaluatePrReviewRequestRule } from "./pr-review-request-static-rule.js";
 import { reconcilePrReviewProjection, projectPrReviewWorkItem, type ExistingPrReviewProjection } from "./pr-review-workitem-projection.js";
-import { APNEX_AGENTIC_NETWORK_REVIEW_POLICY } from "./pr-reviewer-eligibility-policy-fixture.js";
+import {
+  REPO_REVIEW_POLICY_SELECTION_SOURCE_REF,
+  REPO_REVIEW_POLICY_SELECTION_VERSION,
+  selectRepoReviewPolicy,
+} from "./pr-reviewer-eligibility-policy-fixture.js";
 import { projectReviewerGithubIdentities } from "./pr-reviewer-identity-source.js";
 import {
   evaluateReviewerEligibility,
@@ -195,6 +199,22 @@ async function buildReviewerEligibilitySummary(
   binding: PrWorkGraphBindingProof | null,
 ): Promise<ReviewerEligibilityProjectionSummary | undefined> {
   if (!binding) return undefined;
+  const policy = selectRepoReviewPolicy(payload.repo);
+  if (!policy) {
+    return {
+      contractVersion: PR_REVIEWER_ELIGIBILITY_CONTRACT_VERSION,
+      ok: false,
+      reason: "unsupported_policy",
+      requiredTeams: [],
+      pathClasses: binding.pathClasses ?? [],
+      selectedReviewers: [],
+      requestedReviewerStatus: payload.requestedReviewerLogin ? "insufficient_no_alternative" : "not_requested",
+      disqualified: [],
+      policyVersion: REPO_REVIEW_POLICY_SELECTION_VERSION,
+      policySourceRef: REPO_REVIEW_POLICY_SELECTION_SOURCE_REF,
+      lastPusherLogin: binding.lastPusherLogin,
+    };
+  }
   if (!binding.lastPusherLogin) {
     return {
       contractVersion: PR_REVIEWER_ELIGIBILITY_CONTRACT_VERSION,
@@ -205,8 +225,8 @@ async function buildReviewerEligibilitySummary(
       selectedReviewers: [],
       requestedReviewerStatus: payload.requestedReviewerLogin ? "insufficient_no_alternative" : "not_requested",
       disqualified: [],
-      policyVersion: APNEX_AGENTIC_NETWORK_REVIEW_POLICY.version,
-      policySourceRef: APNEX_AGENTIC_NETWORK_REVIEW_POLICY.provenance.sourceRef,
+      policyVersion: policy.version,
+      policySourceRef: policy.provenance.sourceRef,
     };
   }
   const agents = await ctx.stores.engineerRegistry.listAgents();
@@ -230,9 +250,9 @@ async function buildReviewerEligibilitySummary(
     paths: {
       changedPaths: binding.changedPaths,
       pathClasses: binding.pathClasses,
-      provenance: APNEX_AGENTIC_NETWORK_REVIEW_POLICY.provenance,
+      provenance: policy.provenance,
     },
-    policy: APNEX_AGENTIC_NETWORK_REVIEW_POLICY,
+    policy,
     agents: identityProjection.identities,
   }));
   return { ...summary, lastPusherLogin: binding.lastPusherLogin };

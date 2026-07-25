@@ -45,14 +45,59 @@ import type {
   AttestationVerdict,
   AttestationVerification,
   AttestationEvidenceRef,
+  FailedGatePreClearReceiptV2,
+  FailedGateSealV2,
+  PendingFailedSealNotice,
+  PauseWorkRequestV4,
+  UnpauseWorkRequestV4,
+  ReviseWorkRequestV4,
+  ReviseWorkResultV4,
+  CurrentWorkProjectionV4,
 } from "./work-item.js";
 import { DEFAULT_STATE_DURATIONS, evaluateCompletionGate } from "./work-item.js";
 import { SubstrateCounter } from "./substrate-counter.js";
 import { withAdvisoryLock, LOCK_CLASS } from "../storage-substrate/advisory-lock.js";
 import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 import { type Clock, systemClock } from "./clock.js";
+import {
+  NODE_CONTRACT_HASH_VERSION,
+  NODE_TOPOLOGY_HASH_VERSION,
+  ENTITY_STATE_HASH_VERSION,
+  bindWorkItemReferencesV4,
+  canonicalJson,
+  deriveLocalExecutionIdentityV4,
+  deriveNodeContractV4,
+  deriveNodeTopologyV4,
+  hashCanonicalDomain,
+  type FrozenRecallAuthorityV4,
+  type PendingRecallIntentV4,
+  type RecallBeforeStateV4,
+  type RecallHistoryEntryV4,
+  type AuthoritativeReferenceResolutionV4,
+  type BoundWorkItemReferenceV4,
+  type TargetBindingV4,
+} from "./work-item-contract-v4.js";
+import {
+  WorkGraphCurrentnessFenceV4,
+  WorkGraphCurrentnessRejected,
+  type WorkGraphPinV4,
+} from "./workgraph-currentness-fence-v4.js";
+import {
+  WORK_GRAPH_HEAD_ID,
+  WORK_REVISION_KINDS,
+  WorkRevisionStorageRepositoryV4,
+  WorkRevisionStorageError,
+  buildWorkRevisionStorageV4,
+  type WorkGraphRevisionOperationV4,
+  type WorkRevisionFamilyRowV4,
+} from "./work-revision-storage-v4.js";
 
 const KIND = "WorkItem";
+const ENTITY_REFERENCE_SCHEMA: Readonly<Record<string, string>> = Object.freeze({
+  workitem: "WorkItem", work: "WorkItem", bug: "Bug", idea: "Idea", mission: "Mission",
+  decision: "Decision", review: "WorkItem", incident: "Bug", calibration: "Document", skill: "Document",
+});
+const entityReferenceSchemaKind = (semanticKind: string): string => ENTITY_REFERENCE_SCHEMA[semanticKind.toLowerCase()] ?? semanticKind;
 const LIST_CAP = 500;
 /** The substrate hard-clamps list() to 500 rows; the ready-scan uses it as the cap and
  *  flags truncation when hit (list_ready_work is truncation-HONEST, audit-4070 #3). */
@@ -408,6 +453,21 @@ function cloneWorkItem(w: WorkItem): WorkItem {
   flat.attestationHistory = (flat.attestationHistory as unknown[] | undefined) ?? [];
   flat.attestations = (flat.attestations as Record<string, unknown> | undefined) ?? {};
   flat.executorHistory = (flat.executorHistory as string[] | undefined) ?? [];
+  // Mission-140 revision storage: append-only recall/outbox fields are
+  // preserve-not-inject status state. Legacy rows project empty without a
+  // write-on-read; later semantic writers alone append.
+  flat.recallHistory = (flat.recallHistory as unknown[] | undefined) ?? [];
+  flat.pendingRecallIntents = (flat.pendingRecallIntents as unknown[] | undefined) ?? [];
+  flat.recallNoticePending = flat.recallNoticePending ?? (flat.pendingRecallIntents as Array<{ projectedMessageId?: string | null }>).some((intent) => !intent.projectedMessageId);
+  // failed-gate-seal-v2: legacy rows default without a write-on-read. Effective
+  // terminality is DERIVED before every claim/sweep projection so a pre-v2 active
+  // verifier FAIL can never re-enter the ready queue while awaiting reconciliation.
+  flat.failedGateSeal = flat.failedGateSeal ?? null;
+  flat.pendingFailedSealNotices = (flat.pendingFailedSealNotices as unknown[] | undefined) ?? [];
+  flat.failedSealNoticePending = (flat.pendingFailedSealNotices as PendingFailedSealNotice[])
+    .some((notice) => notice.projectedMessageId === null);
+  const decoded = flat as unknown as WorkItem;
+  flat.effectiveDisposition = isFailedGateSealed(decoded) ? "failed_sealed" : null;
   return flat as unknown as WorkItem;
 }
 
@@ -466,14 +526,215 @@ const hashTargetRef = (tr: { kind: string; id: string } | null): string => sha25
 const hashEvidenceSet = (refs: AttestationEvidenceRef[]): string =>
   sha256Canonical([...refs].map((r) => `${r.kind}:${r.ref}`).sort());
 
+/** Active verifier FAIL derivation for legacy (pre-v2-receipt) rows. */
+export function hasActiveVerifierFail(item: WorkItem): boolean {
+  return item.evidenceRequirements.some((req) =>
+    req.evidenceAuthority === "verifier-attestation" && item.attestations?.[req.id]?.verdict === "fail");
+}
+
+/** Effective failed-sealed classification is authoritative before ANY raw phase check. */
+export function isFailedGateSealed(item: WorkItem): boolean {
+  return item.effectiveDisposition === "failed_sealed" || item.failedGateSeal != null || hasActiveVerifierFail(item);
+}
+
+/** Exported for exact-receipt/failpoint tests: complete persisted domain row, no substrate RV. */
+export function failedGateStateHash(item: WorkItem): string {
+  // JSON persistence omits undefined optional properties. Normalize to that exact
+  // domain before invoking foundation-v4's strict canonical hasher.
+  const persistedDomain = JSON.parse(JSON.stringify(item)) as unknown;
+  return hashCanonicalDomain("failed-gate-preclear-state-v2", persistedDomain);
+}
+
+/** Exact persisted pre-recall domain hash. The raw token affects the hash but is never exposed. */
+export function recallStateHash(item: WorkItem): string {
+  return hashCanonicalDomain("workitem-recall-before-state-v4", JSON.parse(JSON.stringify(item)) as unknown);
+}
+
+function recallTokenFingerprint(token: string): string {
+  return hashCanonicalDomain("workitem-recall-token-v4", { token });
+}
+
+function failedGateOperationId(
+  workId: string,
+  requirementId: string,
+  verifierId: string,
+  verdict: AttestationVerdict,
+  evidenceRefs: AttestationEvidenceRef[],
+): string {
+  return hashCanonicalDomain("failed-gate-operation-v2", {
+    workId, requirementId, verifierId, verdict, evidenceSetHash: hashEvidenceSet(evidenceRefs),
+  });
+}
+
+function tokenFingerprint(token: string | undefined): string | null {
+  return token ? hashCanonicalDomain("failed-gate-token-v2", { token }) : null;
+}
+
+function legacyRevisionIdentity(item: WorkItem): { logicalId: string; revision: number; topologyGeneration: number } {
+  const maybe = item as WorkItem & { logicalId?: string; revision?: number; topologyGeneration?: number };
+  return {
+    logicalId: maybe.logicalId ?? item.id,
+    revision: maybe.revision ?? 1,
+    topologyGeneration: maybe.topologyGeneration ?? 0,
+  };
+}
+
+function attestationIdentity(attestation: Attestation): string {
+  return `${attestation.requirementId}:${attestation.verifierId}:${attestation.producedAt}`;
+}
+
+function buildFailedGateSeal(input: {
+  item: WorkItem;
+  resourceVersion: string;
+  attestation: Attestation;
+  attestationHistoryIndex: number;
+  operationId: string;
+  sealedAt: string;
+}): { seal: FailedGateSealV2; notice: PendingFailedSealNotice | null } {
+  const { item, resourceVersion, attestation, attestationHistoryIndex, operationId, sealedAt } = input;
+  const identity = legacyRevisionIdentity(item);
+  const receipt: FailedGatePreClearReceiptV2 = {
+    workId: item.id,
+    ...identity,
+    requirementId: attestation.requirementId,
+    verifierId: attestation.verifierId,
+    verdict: "fail",
+    producedAt: attestation.producedAt,
+    operationId,
+    before: {
+      phase: item.status,
+      holder: item.lease?.holder ?? null,
+      claimedAt: item.lease?.claimedAt ?? null,
+      expiresAt: item.lease?.expiresAt ?? null,
+      heartbeatAt: item.lease?.heartbeatAt ?? null,
+      tokenFingerprint: tokenFingerprint(item.lease?.token),
+      blockedOn: item.blockedOn ? structuredClone(item.blockedOn) : null,
+      stateHash: failedGateStateHash(item),
+      evidenceSetHash: hashCanonicalDomain("failed-gate-work-evidence-set-v2", item.evidence),
+      activeAttestationProjectionHash: hashCanonicalDomain("failed-gate-active-attestation-projection-v2", item.attestations),
+      resourceVersion,
+    },
+    after: {
+      phase: "review",
+      effectiveDisposition: "failed_sealed",
+      leaseCleared: true,
+      blockedOnCleared: true,
+    },
+    attestationHistoryIndex,
+    attestationId: attestationIdentity(attestation),
+    requirementHash: attestation.requirementHash,
+    targetRefHash: attestation.targetRefHash,
+    attestationEvidenceSetHash: attestation.evidenceSetHash,
+    sealedAt,
+  };
+  const sealHash = hashCanonicalDomain("failed-gate-seal-v2", receipt);
+  const holder = item.lease?.holder ?? null;
+  const holderNoticeIntentId = holder
+    ? hashCanonicalDomain("failed-seal-holder-notice-v2", { workId: item.id, sealHash, holder })
+    : null;
+  const seal: FailedGateSealV2 = { version: 2, operationId, sealHash, receipt, holderNoticeIntentId };
+  const notice: PendingFailedSealNotice | null = holder && holderNoticeIntentId
+    ? {
+        intentId: holderNoticeIntentId,
+        sealHash,
+        workId: item.id,
+        requirementId: attestation.requirementId,
+        verifierId: attestation.verifierId,
+        verdict: "fail",
+        producedAt: attestation.producedAt,
+        exactHolderAgentId: holder,
+        createdAt: sealedAt,
+        projectedMessageId: null,
+        projectedAt: null,
+      }
+    : null;
+  return { seal, notice };
+}
+
+export class FailedGateSealedRejected extends TransitionRejected {
+  constructor(workId: string) {
+    super(`${workId} has effectiveDisposition=failed_sealed; same-row replay/claim/attestation is forbidden — create a distinct repair/revision`);
+    this.name = "FailedGateSealedRejected";
+  }
+}
+
+class IdempotentFailedSeal extends Error {
+  constructor(public readonly item: WorkItem) {
+    super("idempotent failed-gate seal replay");
+  }
+}
+
+class IdempotentRecall extends Error {
+  constructor(public readonly item: WorkItem) {
+    super("idempotent pause/recall replay");
+  }
+}
+
+const PAUSE_OPERATION_REPLAY = Symbol("workitem.pause-operation-replay");
+export function isPauseOperationReplay(item: WorkItem): boolean {
+  return (item as WorkItem & { [PAUSE_OPERATION_REPLAY]?: boolean })[PAUSE_OPERATION_REPLAY] === true;
+}
+
 export class WorkItemRepositorySubstrate implements IWorkItemStore {
+  private readonly currentness: WorkGraphCurrentnessFenceV4;
+  private readonly revisionStorage: WorkRevisionStorageRepositoryV4;
+
   constructor(
     private readonly substrate: HubStorageSubstrate,
     private readonly counter: SubstrateCounter,
     // idea-449 VirtualClock: every timestamp this repository writes routes through
     // the injected clock; defaults to real wall time so production is unchanged.
     private readonly clock: Clock = systemClock,
-  ) {}
+  ) {
+    this.currentness = new WorkGraphCurrentnessFenceV4(substrate);
+    this.revisionStorage = new WorkRevisionStorageRepositoryV4(substrate);
+  }
+
+  private async withWriterFence<T>(fn: (pin: WorkGraphPinV4) => Promise<T>): Promise<T> {
+    return this.currentness.withWriterFence(fn);
+  }
+
+  private async withReadPin<T>(fn: (pin: WorkGraphPinV4) => Promise<T>): Promise<T> {
+    return this.currentness.withReadPin(fn);
+  }
+
+  private observe(item: WorkItem, pin: WorkGraphPinV4): WorkItem {
+    return pin.mode === "generation"
+      ? { ...item, observedTopologyGeneration: pin.head.generation, observedTopologyHash: pin.head.topologyHash }
+      : item;
+  }
+
+  private async getCurrentProjectionItem(locator: string): Promise<WorkItem | null> {
+    const pin = this.currentness.currentPin();
+    if (!pin || pin.mode === "legacy") return this.getWorkItem(locator);
+    // Graph projections consume stable logical IDs. A legacy physical ID that
+    // is also the family's logical ID follows the current binding here; exact
+    // historical getWorkItem(physicalId) remains non-redirecting.
+    const binding = pin.generation.bindings[locator]
+      ?? Object.values(pin.generation.bindings).find((candidate) => candidate.physicalId === locator);
+    if (!binding) return null;
+    const item = await this.getWorkItem(binding.physicalId);
+    if (!item) throw new WorkGraphCurrentnessRejected(
+      "workgraph.currentness.integrity",
+      `current physical WorkItem ${binding.physicalId} is missing for locator ${locator}`,
+    );
+    try { this.currentness.assertCurrent(item, pin); return this.observe(item, pin); } catch (error) {
+      if (error instanceof WorkGraphCurrentnessRejected) return null;
+      throw error;
+    }
+  }
+
+  private async currentGenerationItems(pin: WorkGraphPinV4): Promise<WorkItem[] | null> {
+    if (pin.mode === "legacy") return null;
+    const items: WorkItem[] = [];
+    for (const binding of Object.values(pin.generation.bindings)) {
+      const row = await this.getWorkItem(binding.physicalId);
+      if (!row) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `current physical WorkItem ${binding.physicalId} is missing`);
+      this.currentness.assertCurrent(row, pin);
+      items.push(this.observe(row, pin));
+    }
+    return items.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  }
 
   async createWorkItem(input: {
     type: WorkItemType;
@@ -491,6 +752,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     nodeConfig?: NodeConfig;
     createdBy?: EntityProvenance;
   }): Promise<WorkItem> {
+    const activePin = this.currentness.currentPin();
+    if (!activePin) return this.withWriterFence((pin) => { this.currentness.assertCreateAllowed(pin); return this.createWorkItem(input); });
+    this.currentness.assertCreateAllowed(activePin);
     const num = await this.counter.next("workItemCounter");
     const id = `work-${num}`;
     const now = this.clock.now().toISOString();
@@ -521,6 +785,10 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       attestationHistory: [],
       attestations: {},
       executorHistory: [],
+      failedGateSeal: null,
+      pendingFailedSealNotices: [],
+      failedSealNoticePending: false,
+      effectiveDisposition: null,
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
@@ -544,8 +812,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    *      (status === "ready": the claimant's contract freezes at claim; a
    *      reaped item back in ready has no current claimant, so the next
    *      claimant claims the CURRENT definition);
-   *    - dependsOn appends only while ready (re-gating is the intended
-   *      effect); completionDependsOn appends until done (arc accretion);
+   *    - legacy dependsOn appends only while ready; legacy completionDependsOn
+   *      appends until done; paused or active-generation claimant/edge changes
+   *      reject with revision_required and must use semantic revision;
    *    - empty mutations reject (a no-op call is a caller bug, not a write);
    *    - SINGLE-SHOT CAS: a stale write rejects with the current version —
    *      the caller re-reads and re-decides (the contract's concurrency rule;
@@ -561,6 +830,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       appendReferences?: WorkItemReference[];
     },
   ): Promise<{ before: WorkItem; after: WorkItem }> {
+    const activePin = this.currentness.currentPin();
+    if (!activePin) return this.withWriterFence(() => this.updateWorkItem(workId, actor, mutation));
     const setKeys = Object.keys(mutation.set ?? {});
     const hasAppends = (mutation.appendDependsOn?.length ?? 0) + (mutation.appendCompletionDependsOn?.length ?? 0) + (mutation.appendReferences?.length ?? 0) > 0;
     if (setKeys.length === 0 && !hasAppends) {
@@ -569,12 +840,29 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const existing = await this.substrate.getWithRevision<WorkItem>(KIND, workId);
     if (!existing) throw new TransitionRejected(`update rejected: WorkItem ${workId} does not resolve`);
     const before = cloneWorkItem(existing.entity);
+    this.assertNotFailedSealed(before);
+    this.currentness.assertCurrent(before, activePin);
     // Authority: author or architect (the ratified model — no lease-holder writes in v1).
     if (before.createdBy?.agentId !== actor.agentId && actor.role !== "architect") {
       throw new TransitionRejected(`update rejected: ${actor.role}/${actor.agentId} is neither the item's author (${before.createdBy?.agentId}) nor an architect — the ratified authority model is author+architect`);
     }
     if (before.status === "done" || before.status === "abandoned") {
       throw new TransitionRejected(`update rejected: ${workId} is terminal (${before.status}) — terminal items reject all mutation`);
+    }
+    const changesClaimantAuthority = setKeys.some((key) => ["targetRef", "runbook", "payload", "roleEligibility"].includes(key))
+      || (mutation.appendDependsOn?.length ?? 0) > 0
+      || (mutation.appendCompletionDependsOn?.length ?? 0) > 0
+      || (mutation.appendReferences?.length ?? 0) > 0;
+    // Mission-140 repair2: once a topology generation is active, claimant-contract and
+    // edge edits are revisions, never scalar owner amendments. Paused rows retain the
+    // same freeze even in legacy/shadow mode so no alias of update_work can launder a
+    // changed row through creator unpause. updateWorkItem is the common repository seam
+    // behind the public tool and internal policy aliases; priority remains a scalar.
+    if (changesClaimantAuthority && (activePin.mode === "generation" || before.status === "paused")) {
+      throw new WorkGraphCurrentnessRejected(
+        "workgraph.currentness.revision_required",
+        `update rejected: ${workId} claimant contract/topology is frozen ${before.status === "paused" ? "while paused" : `by active generation ${activePin.mode === "generation" ? activePin.head.generation : "unknown"}`}; create a semantic revision`,
+      );
     }
     const preClaim = before.status === "ready";
     const next: WorkItem = { ...before };
@@ -639,6 +927,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     nodeConfig?: NodeConfig;
     createdBy?: EntityProvenance;
   }): Promise<{ item: WorkItem; created: boolean }> {
+    const activePin = this.currentness.currentPin();
+    if (!activePin) return this.withWriterFence((pin) => { this.currentness.assertCreateAllowed(pin); return this.createBlueprintNode(input); });
+    this.currentness.assertCreateAllowed(activePin);
     const now = this.clock.now().toISOString();
     const w: WorkItem = {
       id: input.id,
@@ -667,6 +958,10 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       attestationHistory: [],
       attestations: {},
       executorHistory: [],
+      failedGateSeal: null,
+      pendingFailedSealNotices: [],
+      failedSealNoticePending: false,
+      effectiveDisposition: null,
       createdBy: input.createdBy,
       createdAt: now,
       updatedAt: now,
@@ -695,12 +990,526 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    *  mid-expansion infra-failure. Not MCP-exposed; only called on ids the expander just minted
    *  (status=ready, unleased, unknown to any other caller), so no claim/lease race. */
   async deleteWorkItem(workId: string): Promise<void> {
+    const activePin = this.currentness.currentPin();
+    if (!activePin) return this.withWriterFence(() => this.deleteWorkItem(workId));
+    if (activePin.mode === "generation") {
+      throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", `direct WorkItem deletion is disabled after topology activation; revise the generation instead`);
+    }
     await this.substrate.delete(KIND, workId);
   }
 
   async getWorkItem(workId: string): Promise<WorkItem | null> {
     const w = await this.substrate.get<WorkItem>(KIND, workId);
     return w ? cloneWorkItem(w) : null;
+  }
+
+  async getCurrentWork(logicalId: string): Promise<CurrentWorkProjectionV4 | null> {
+    if (!this.currentness.currentPin()) return this.withReadPin(() => this.getCurrentWork(logicalId));
+    const pin = this.currentness.currentPin()!;
+    if (pin.mode === "legacy") {
+      const item = await this.getWorkItem(logicalId);
+      if (!item) return null;
+      return {
+        logicalId,
+        physicalId: item.id,
+        revision: item.revision ?? 1,
+        generation: 0,
+        topologyHash: "legacy",
+        predecessorPhysicalId: item.predecessorPhysicalId ?? null,
+        localExecutionIdentity: item.localExecutionIdentity ?? "legacy",
+        workItem: item,
+      };
+    }
+    const binding = pin.generation.bindings[logicalId];
+    if (!binding) return null;
+    const item = await this.getWorkItem(binding.physicalId);
+    if (!item) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `current binding ${logicalId} points at missing ${binding.physicalId}`);
+    const current = this.currentness.assertCurrent(item, pin)!;
+    return {
+      logicalId,
+      physicalId: binding.physicalId,
+      revision: binding.revision,
+      generation: pin.head.generation,
+      topologyHash: pin.head.topologyHash,
+      predecessorPhysicalId: item.predecessorPhysicalId ?? null,
+      localExecutionIdentity: current.localExecutionIdentity,
+      workItem: this.observe(item, pin),
+    };
+  }
+
+  private async resolveReferenceBindings(references: Readonly<NonNullable<WorkItem["references"]>>, snapshotToken: string): Promise<BoundWorkItemReferenceV4[]> {
+    const resolutions: AuthoritativeReferenceResolutionV4[] = [];
+    for (const reference of references) {
+      if (reference.storage === "inline") {
+        resolutions.push({ storage: "inline" });
+      } else if (reference.storage === "hub-doc") {
+        const row = await this.substrate.getWithRevision<Record<string, unknown>>("Document", reference.ref);
+        if (!row) throw new WorkGraphCurrentnessRejected("workgraph.currentness.identity_mismatch", `document ${reference.ref} does not resolve`);
+        const document = decodeEnvelopeToFlat(row.entity);
+        if (typeof document.content !== "string") throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `document ${reference.ref} has no string content`);
+        resolutions.push({ storage: "hub-doc", path: reference.ref, resourceVersion: row.resourceVersion, content: document.content, snapshotToken });
+      } else if (reference.storage === "entity") {
+        const row = await this.substrate.getWithRevision<Record<string, unknown>>(entityReferenceSchemaKind(reference.kind), reference.ref);
+        if (!row) throw new WorkGraphCurrentnessRejected("workgraph.currentness.identity_mismatch", `entity ${reference.kind}/${reference.ref} does not resolve`);
+        resolutions.push({ storage: "entity", kind: reference.kind, id: reference.ref, resourceVersion: row.resourceVersion, state: decodeEnvelopeToFlat(row.entity), snapshotToken });
+      } else {
+        // Git locators are immutable only when pinned, but deriving blobSha256
+        // requires authoritative repository bytes. The Hub repository layer is
+        // intentionally git-less; never accept a caller-asserted blob digest.
+        throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", `changed git reference ${reference.ref} requires authoritative blob resolution before revise_work`);
+      }
+    }
+    return bindWorkItemReferencesV4(references, resolutions, snapshotToken);
+  }
+
+  private async assertBoundReferencesFresh(item: WorkItem): Promise<void> {
+    const references = item.references ?? [];
+    const bound = item.boundReferences ?? [];
+    if (references.length !== bound.length) {
+      throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `${item.id} reference binding coverage changed`);
+    }
+    for (let index = 0; index < references.length; index += 1) {
+      const reference = references[index]!;
+      const identity = bound[index]!;
+      const descriptor = { kind: reference.kind, storage: reference.storage, mode: reference.mode, required: reference.required, locator: reference.ref };
+      const boundDescriptor = { kind: identity.kind, storage: identity.storage, mode: identity.mode, required: identity.required, locator: identity.locator };
+      if (canonicalJson(boundDescriptor) !== canonicalJson(descriptor)) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `${item.id} reference ${index} locator changed`);
+      if (reference.storage === "inline") {
+        const candidate = bindWorkItemReferencesV4([reference], [{ storage: "inline" }], "inline-currentness")[0]!;
+        if (canonicalJson(candidate.contentIdentity) !== canonicalJson(identity.contentIdentity)) {
+          throw new WorkGraphCurrentnessRejected("workgraph.currentness.identity_mismatch", `${item.id} inline reference ${index} changed`);
+        }
+      } else if (reference.storage === "hub-doc") {
+        const row = await this.substrate.getWithRevision<Record<string, unknown>>("Document", reference.ref);
+        if (!row) throw new WorkGraphCurrentnessRejected("workgraph.currentness.identity_mismatch", `${item.id} document ${reference.ref} vanished`);
+        const document = decodeEnvelopeToFlat(row.entity);
+        const content = typeof document.content === "string" ? document.content : "";
+        const actual = {
+          path: reference.ref,
+          resourceVersion: row.resourceVersion,
+          utf8Bytes: Buffer.byteLength(content, "utf8"),
+          sha256: createHash("sha256").update(content, "utf8").digest("hex"),
+        };
+        if (canonicalJson(actual) !== canonicalJson(identity.contentIdentity)) {
+          throw new WorkGraphCurrentnessRejected("workgraph.currentness.identity_mismatch", `${item.id} document ${reference.ref} moved`);
+        }
+      } else if (reference.storage === "entity") {
+        const boundEntity = identity.contentIdentity as { kind?: string; id?: string };
+        const kind = reference.kind;
+        const id = reference.ref;
+        if (boundEntity.kind !== kind || boundEntity.id !== id) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `${item.id} malformed entity binding ${kind}/${id}`);
+        const row = await this.substrate.getWithRevision<Record<string, unknown>>(entityReferenceSchemaKind(kind), id);
+        if (!row) throw new WorkGraphCurrentnessRejected("workgraph.currentness.identity_mismatch", `${item.id} entity ${kind}/${id} vanished`);
+        const state = decodeEnvelopeToFlat(row.entity);
+        const actual = { kind, id, resourceVersion: row.resourceVersion, stateHash: hashCanonicalDomain(ENTITY_STATE_HASH_VERSION, state) };
+        if (canonicalJson(actual) !== canonicalJson(identity.contentIdentity)) {
+          throw new WorkGraphCurrentnessRejected("workgraph.currentness.identity_mismatch", `${item.id} entity ${reference.ref} moved`);
+        }
+      } else if (reference.storage === "git") {
+        const gitIdentity = identity.contentIdentity as { full40CommitSha?: string };
+        if (!/^[0-9a-f]{40}$/i.test(gitIdentity.full40CommitSha ?? "")) {
+          throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `${item.id} git reference ${reference.ref} is not pinned`);
+        }
+      }
+    }
+  }
+
+  private async revisionResult(
+    operation: WorkGraphRevisionOperationV4,
+    rootLogicalId: string,
+    replay: boolean,
+  ): Promise<ReviseWorkResultV4> {
+    const generation = await this.revisionStorage.getGeneration(operation.generation);
+    if (!generation) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `operation ${operation.id} generation is missing`);
+    const affectedSet = [...(operation.recommitSet.length > 0 ? operation.recommitSet : operation.recommittedSet ?? [])].sort();
+    const current = await Promise.all(affectedSet.map(async (logicalId) => {
+      const binding = generation.bindings[logicalId]!;
+      const item = await this.getWorkItem(binding.physicalId);
+      if (!item?.localExecutionIdentity) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `successor ${binding.physicalId} has no local identity`);
+      return { logicalId, physicalId: binding.physicalId, revision: binding.revision, localExecutionIdentity: item.localExecutionIdentity };
+    }));
+    return {
+      operationId: operation.operationId,
+      requestHash: operation.requestHash,
+      generation: operation.generation,
+      previousGeneration: operation.previousGeneration,
+      topologyHash: operation.topologyHash,
+      rootLogicalId,
+      affectedSet,
+      recommitSet: [...operation.recommitSet],
+      current,
+      operationReplay: replay,
+    };
+  }
+
+  async reviseWork(request: ReviseWorkRequestV4, actor: { agentId: string; role: string }): Promise<ReviseWorkResultV4> {
+    // The same global writer fence used by lifecycle CAS and head publication:
+    // claim-vs-revise, pause-vs-revise, and two revise operations serialize from
+    // first current read through the one topology-head visibility CAS.
+    return withAdvisoryLock(this.substrate, LOCK_CLASS.workGraphGlobal, WORK_GRAPH_HEAD_ID, () =>
+      this.reviseWorkUnderFence(request, actor));
+  }
+
+  private async reviseWorkUnderFence(request: ReviseWorkRequestV4, actor: { agentId: string; role: string }): Promise<ReviseWorkResultV4> {
+    const hasWorkId = typeof request.workId === "string" && request.workId.length > 0;
+    const hasLogicalId = typeof request.logicalId === "string" && request.logicalId.length > 0;
+    if (hasWorkId === hasLogicalId) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "revise_work requires exactly one workId or logicalId");
+    if (!request.operationId?.trim() || !request.reason?.trim()) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "revise_work requires operationId and reason");
+    const hasSemanticPatch = (request.set && Object.keys(request.set).length > 0)
+      || request.dependsOn !== undefined || request.completionDependsOn !== undefined || request.references !== undefined;
+    if (!hasSemanticPatch) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "revise_work rejects an empty semantic mutation");
+
+    const normalizedRequest = JSON.parse(JSON.stringify({ ...request, actor })) as Record<string, unknown>;
+    const requestHash = hashCanonicalDomain("workgraph-revise-request-v4", normalizedRequest);
+    const existingOperation = await this.revisionStorage.getOperation(request.operationId);
+    if (existingOperation) {
+      if (existingOperation.requestHash !== requestHash) throw new WorkRevisionStorageError("storage.operation_conflict", `operation ${request.operationId} was reused with different bytes`);
+      let rootLogicalId = request.logicalId;
+      if (!rootLogicalId) {
+        const previous = existingOperation.previousGeneration > 0
+          ? await this.revisionStorage.getGeneration(existingOperation.previousGeneration)
+          : null;
+        rootLogicalId = previous
+          ? Object.entries(previous.bindings).find(([, binding]) => binding.physicalId === request.workId)?.[0]
+          : request.workId;
+      }
+      if (!rootLogicalId) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "replayed operation root cannot be resolved");
+      if (existingOperation.state === "prepared") {
+        const candidate = await this.revisionStorage.getGeneration(existingOperation.generation);
+        if (!candidate) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `prepared operation ${existingOperation.operationId} lost its generation`);
+        for (const binding of Object.values(candidate.bindings)) {
+          const item = await this.getWorkItem(binding.physicalId);
+          if (!item) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `prepared successor ${binding.physicalId} vanished`);
+          await this.assertBoundReferencesFresh(item);
+        }
+        await this.revisionStorage.activateGeneration(existingOperation.generation, existingOperation.operationId, this.clock.now().toISOString());
+      }
+      const refreshed = (await this.revisionStorage.getOperation(request.operationId))!;
+      return this.revisionResult(refreshed, rootLogicalId, true);
+    }
+
+    const head = await this.revisionStorage.getHead();
+    if (!head || head.head.generation !== request.expectedGeneration) {
+      throw new WorkGraphCurrentnessRejected("revision.currentness_mismatch", `expected generation ${request.expectedGeneration}; current is ${head?.head.generation ?? "absent"}`);
+    }
+    const activeHead = head.head;
+    const generation = await this.revisionStorage.getGeneration(activeHead.generation);
+    if (!generation || generation.topologyHash !== activeHead.topologyHash) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "active generation is missing or mismatched");
+    const rootBinding = hasLogicalId
+      ? generation.bindings[request.logicalId!]
+      : Object.values(generation.bindings).find((binding) => binding.physicalId === request.workId);
+    if (!rootBinding) throw new WorkGraphCurrentnessRejected("revision.currentness_mismatch", "revision root is not current");
+    const rootLogicalId = hasLogicalId
+      ? request.logicalId!
+      : Object.entries(generation.bindings).find(([, binding]) => binding.physicalId === request.workId)![0];
+
+    const edges = await this.revisionStorage.loadEdgesComplete(generation.generation);
+    const reverse = new Map<string, string[]>();
+    for (const edge of edges) {
+      const list = reverse.get(edge.targetLogicalId) ?? [];
+      list.push(edge.sourceLogicalId);
+      reverse.set(edge.targetLogicalId, list);
+    }
+    const affected = new Set<string>([rootLogicalId]);
+    const queue = [rootLogicalId];
+    while (queue.length > 0) {
+      for (const source of reverse.get(queue.shift()!) ?? []) if (!affected.has(source)) { affected.add(source); queue.push(source); }
+    }
+    const affectedSet = [...affected].sort();
+    const expectedAffected = request.expectedAffectedSet ? [...request.expectedAffectedSet].sort() : undefined;
+    if (expectedAffected && canonicalJson(expectedAffected) !== canonicalJson(affectedSet)) {
+      throw new WorkGraphCurrentnessRejected("revision.affected_set_mismatch", `affected closure changed; expected ${expectedAffected.join(",")}, got ${affectedSet.join(",")}`);
+    }
+
+    const itemsByLogical = new Map<string, WorkItem>();
+    const familiesByLogical = new Map<string, WorkRevisionFamilyRowV4>();
+    for (const binding of Object.values(generation.bindings)) {
+      const item = await this.getWorkItem(binding.physicalId);
+      const [logicalId] = Object.entries(generation.bindings).find(([, candidate]) => candidate === binding)!;
+      const family = await this.revisionStorage.getFamily(logicalId);
+      if (!item || !family) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `binding ${logicalId} has missing row/family`);
+      this.currentness.assertCurrent(item, { mode: "generation", head: activeHead, generation, headResourceVersion: head.resourceVersion });
+      await this.assertBoundReferencesFresh(item);
+      itemsByLogical.set(logicalId, item);
+      familiesByLogical.set(logicalId, family);
+    }
+    for (const logicalId of affectedSet) {
+      const item = itemsByLogical.get(logicalId)!;
+      if (item.failedGateSeal) {
+        throw new WorkGraphCurrentnessRejected("revision.failed_gate_sealed", `affected ${logicalId} has an immutable failed-gate seal`);
+      }
+      if (!(["ready", "paused"] as string[]).includes(item.status) || item.lease || item.evidence.length > 0 || item.attestationHistory?.length) {
+        throw new WorkGraphCurrentnessRejected("revision.affected_state_forbidden", `affected ${logicalId} is not quiescent and evidence-free`);
+      }
+    }
+    const root = itemsByLogical.get(rootLogicalId)!;
+    const family = familiesByLogical.get(rootLogicalId)!;
+    const isArchitect = actor.role === "architect";
+    const isDirector = actor.role === "director";
+    const isOriginalCreator = actor.agentId === family.originalCreatedBy.agentId
+      && actor.role === family.originalCreatedBy.role;
+    if (!isArchitect && !isDirector && !isOriginalCreator) {
+      const holderOnly = affectedSet.some((logicalId) => {
+        const item = itemsByLogical.get(logicalId)!;
+        return item.lease?.holder === actor.agentId || item.executorHistory.includes(actor.agentId);
+      });
+      // The immutable creator stamp is anchored on agentId. An actor who merely shares the
+      // creator's ROLE is unrelated to the family, not a partial owner match, so classifying
+      // them as family_owner_mismatch overstates the relationship. Keying on agentId alone
+      // keeps same-agentId/wrong-role as family_owner_mismatch and sends every unrelated
+      // agentId to actor_forbidden. Both branches still throw: the denial is unchanged and
+      // no authority is widened — only the emitted CODE becomes precise.
+      const creatorIdentityMismatch = actor.agentId === family.originalCreatedBy.agentId;
+      const denialCode = holderOnly
+        ? "revision.holder_has_no_authority"
+        : creatorIdentityMismatch
+          ? "revision.family_owner_mismatch"
+          : "revision.actor_forbidden";
+      throw new WorkGraphCurrentnessRejected(
+        denialCode,
+        holderOnly
+          ? `lease-holder history grants no revision authority for family ${family.id}`
+          : creatorIdentityMismatch
+            ? `actor does not match the immutable creator stamp for family ${family.id}`
+            : `actor lacks server-derived authority for family ${family.id}`,
+      );
+    }
+    if (isOriginalCreator && !isArchitect && !isDirector && family.familyScope.kind !== "standalone") {
+      throw new WorkGraphCurrentnessRejected("revision.architect_required", `creator revision is limited to standalone families; ${family.id} is ${family.familyScope.kind}/${family.familyScope.id}`);
+    }
+    if (isArchitect || isDirector) {
+      const scopes = affectedSet.map((logicalId) => familiesByLogical.get(logicalId)!.familyScope);
+      if (scopes.length > 1) {
+        const missionId = scopes[0]?.kind === "mission" ? scopes[0].id : null;
+        if (!missionId || scopes.some((scope) => scope.kind !== "mission" || scope.id !== missionId)) {
+          throw new WorkGraphCurrentnessRejected("revision.cross_scope_forbidden", "cross-family revision requires every affected family to share one mission scope");
+        }
+      }
+    }
+
+    const normalizeEdges = (values: string[] | undefined, fallback: string[]): string[] => {
+      if (values === undefined) return [...fallback];
+      if (new Set(values).size !== values.length) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "revision edge list contains duplicates");
+      for (const value of values) if (!generation.bindings[value]) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `revision edge target ${value} is not in the current generation`);
+      return [...values].sort();
+    };
+    const nextDependsOn = normalizeEdges(request.dependsOn, root.dependsOn);
+    const nextCompletionDependsOn = normalizeEdges(request.completionDependsOn, root.completionDependsOn);
+    let nextReferences = root.references;
+    let nextBoundReferences = root.boundReferences;
+    if (request.references !== undefined) {
+      nextReferences = request.references;
+      if (canonicalJson(nextReferences) !== canonicalJson(root.references)) {
+        nextBoundReferences = await this.resolveReferenceBindings(nextReferences, `revision:${request.operationId}`);
+      }
+    }
+    const preview = cloneWorkItem(root);
+    if (request.set) {
+      if (Object.prototype.hasOwnProperty.call(request.set, "runbook")) preview.runbook = request.set.runbook;
+      if (Object.prototype.hasOwnProperty.call(request.set, "payload")) preview.payload = request.set.payload;
+      if (Object.prototype.hasOwnProperty.call(request.set, "targetRef")) preview.targetRef = request.set.targetRef ?? null;
+      if (Object.prototype.hasOwnProperty.call(request.set, "roleEligibility")) preview.roleEligibility = [...(request.set.roleEligibility ?? [])];
+      if (Object.prototype.hasOwnProperty.call(request.set, "leaseWindowMs")) preview.leaseWindowMs = request.set.leaseWindowMs ?? undefined;
+      if (Object.prototype.hasOwnProperty.call(request.set, "nodeConfig")) preview.nodeConfig = request.set.nodeConfig ?? undefined;
+    }
+    preview.references = [...(nextReferences ?? [])];
+
+    // D3 authority is checked over the server-derived actor, the complete affected
+    // closure, and the fully normalized proposed contract before allocating even
+    // one successor revision. Creator compatibility is deliberately narrow: one
+    // standalone family, no topology or target change, and no authority weakening
+    // or lease/pulse escalation.
+    if (isOriginalCreator && !isArchitect && !isDirector) {
+      if (affectedSet.length !== 1) {
+        throw new WorkGraphCurrentnessRejected("revision.architect_required", "original creator cannot revise a reverse-dependent closure");
+      }
+      if (canonicalJson(nextDependsOn) !== canonicalJson(root.dependsOn)
+          || canonicalJson(nextCompletionDependsOn) !== canonicalJson(root.completionDependsOn)) {
+        throw new WorkGraphCurrentnessRejected("revision.architect_required", "original creator cannot replace topology edges");
+      }
+      const nextRoles = preview.roleEligibility;
+      const allowedRoles = new Set([...root.roleEligibility, actor.role]);
+      if (nextRoles.some((role) => !allowedRoles.has(role))) {
+        throw new WorkGraphCurrentnessRejected("revision.authority_expansion_forbidden", "original creator cannot expand role eligibility");
+      }
+      if (canonicalJson(preview.targetRef) !== canonicalJson(root.targetRef)) {
+        throw new WorkGraphCurrentnessRejected("revision.authority_expansion_forbidden", "original creator cannot change target scope");
+      }
+      const requiredReferenceKeys = new Set((root.references ?? [])
+        .filter((reference) => reference.required)
+        .map((reference) => canonicalJson({ kind: reference.kind, ref: reference.ref, storage: reference.storage, mode: reference.mode })));
+      const retainedRequiredKeys = new Set((preview.references ?? [])
+        .filter((reference) => reference.required)
+        .map((reference) => canonicalJson({ kind: reference.kind, ref: reference.ref, storage: reference.storage, mode: reference.mode })));
+      if ([...requiredReferenceKeys].some((key) => !retainedRequiredKeys.has(key))) {
+        throw new WorkGraphCurrentnessRejected("revision.authority_expansion_forbidden", "original creator cannot remove or weaken a required reference");
+      }
+      const oldLeaseWindow = root.leaseWindowMs;
+      const nextLeaseWindow = preview.leaseWindowMs;
+      if ((oldLeaseWindow === undefined && nextLeaseWindow !== undefined)
+          || (oldLeaseWindow !== undefined && nextLeaseWindow !== undefined && nextLeaseWindow > oldLeaseWindow)) {
+        throw new WorkGraphCurrentnessRejected("revision.authority_expansion_forbidden", "original creator cannot escalate the lease window");
+      }
+      if (canonicalJson(preview.nodeConfig ?? null) !== canonicalJson(root.nodeConfig ?? null)) {
+        throw new WorkGraphCurrentnessRejected("revision.authority_expansion_forbidden", "original creator cannot change pulse authority");
+      }
+    }
+
+    const proposedTarget = preview.targetRef;
+    if (family.familyScope.kind === "mission"
+        && proposedTarget?.kind === "mission"
+        && proposedTarget.id !== family.familyScope.id) {
+      throw new WorkGraphCurrentnessRejected("revision.cross_scope_forbidden", "targetRef would cross the family's mission scope");
+    }
+    if (family.familyScope.kind === "standalone" && proposedTarget?.kind === "mission") {
+      throw new WorkGraphCurrentnessRejected("revision.cross_scope_forbidden", "standalone family cannot expand into mission scope");
+    }
+
+    const contractView = (item: WorkItem) => ({
+      type: item.type,
+      roleEligibility: item.roleEligibility,
+      ...(item.runbook !== undefined ? { runbook: item.runbook } : {}),
+      ...(Object.prototype.hasOwnProperty.call(item, "payload") ? { payload: item.payload } : {}),
+      targetRef: item.targetRef,
+      evidenceRequirements: item.evidenceRequirements,
+      references: item.references,
+      ...(item.leaseWindowMs !== undefined ? { leaseWindowMs: item.leaseWindowMs } : {}),
+      ...(item.nodeConfig !== undefined ? { nodeConfig: item.nodeConfig } : {}),
+    });
+    const beforeContract = deriveNodeContractV4(contractView(root), root.boundReferences ?? []).hash;
+    const afterContract = deriveNodeContractV4(contractView(preview), nextBoundReferences ?? []).hash;
+    if (beforeContract === afterContract
+        && canonicalJson(root.dependsOn) === canonicalJson(nextDependsOn)
+        && canonicalJson(root.completionDependsOn) === canonicalJson(nextCompletionDependsOn)) {
+      throw new WorkGraphCurrentnessRejected("revision.currentness_mismatch", "revise_work semantic bytes are unchanged");
+    }
+
+    const revisions = new Map<string, number>();
+    for (const logicalId of affectedSet) {
+      const currentFamily = familiesByLogical.get(logicalId)!;
+      const allocation = await this.revisionStorage.allocateNextRevision({
+        logicalId,
+        originPhysicalId: currentFamily.originPhysicalId,
+        originalCreatedBy: currentFamily.originalCreatedBy,
+        familyScope: currentFamily.familyScope,
+        createdAt: currentFamily.createdAt,
+      });
+      familiesByLogical.set(logicalId, allocation.family);
+      revisions.set(logicalId, allocation.revision);
+    }
+    const now = this.clock.now().toISOString();
+    const successorByLogical = new Map<string, WorkItem>();
+    for (const logicalId of affectedSet) {
+      const old = itemsByLogical.get(logicalId)!;
+      const revision = revisions.get(logicalId)!;
+      const successor = cloneWorkItem(old);
+      successor.id = `work-rev-${createHash("sha256").update(`${logicalId}\0${revision}`).digest("hex").slice(0, 32)}`;
+      successor.revision = revision;
+      successor.predecessorPhysicalId = old.id;
+      successor.revisedBy = { role: actor.role, agentId: actor.agentId };
+      successor.revisionReason = request.reason;
+      successor.revisionGeneration = activeHead.generation + 1;
+      successor.status = "paused";
+      successor.lease = null;
+      successor.blockedOn = null;
+      successor.evidence = [];
+      successor.attestations = {};
+      successor.attestationHistory = [];
+      successor.executorHistory = [];
+      successor.frictionReflections = [];
+      successor.recallHistory = [];
+      successor.pendingRecallIntents = [];
+      successor.recallNoticePending = false;
+      successor.failedGateSeal = null;
+      successor.pendingFailedSealNotices = [];
+      successor.failedSealNoticePending = false;
+      successor.effectiveDisposition = null;
+      if (successor.nodeConfig?.pulse) {
+        const pulse = successor.nodeConfig.pulse;
+        successor.nodeConfig = { pulse: {
+          intervalSeconds: pulse.intervalSeconds,
+          message: pulse.message,
+          responseShape: pulse.responseShape,
+          missedThreshold: pulse.missedThreshold,
+          ...(pulse.firstFireDelaySeconds !== undefined ? { firstFireDelaySeconds: pulse.firstFireDelaySeconds } : {}),
+        } };
+      }
+      successor.enteredCurrentStateAt = now;
+      successor.stateDurations = { ready: 0, claimed: 0, in_progress: 0, blocked: 0, review: 0, paused: 0 };
+      successor.leaseExpiryCount = 0;
+      successor.createdAt = now;
+      successor.updatedAt = now;
+      successor.createdBy = { role: actor.role, agentId: actor.agentId };
+      successor.dependsOn = logicalId === rootLogicalId ? nextDependsOn : [...old.dependsOn];
+      successor.completionDependsOn = logicalId === rootLogicalId ? nextCompletionDependsOn : [...old.completionDependsOn];
+      if (logicalId === rootLogicalId) {
+        if (request.set) {
+          if (Object.prototype.hasOwnProperty.call(request.set, "runbook")) successor.runbook = request.set.runbook;
+          if (Object.prototype.hasOwnProperty.call(request.set, "payload")) successor.payload = request.set.payload;
+          if (Object.prototype.hasOwnProperty.call(request.set, "targetRef")) successor.targetRef = request.set.targetRef ?? null;
+          if (Object.prototype.hasOwnProperty.call(request.set, "roleEligibility")) successor.roleEligibility = [...(request.set.roleEligibility ?? [])];
+          if (Object.prototype.hasOwnProperty.call(request.set, "leaseWindowMs")) successor.leaseWindowMs = request.set.leaseWindowMs ?? undefined;
+          if (Object.prototype.hasOwnProperty.call(request.set, "nodeConfig")) successor.nodeConfig = request.set.nodeConfig ?? undefined;
+        }
+        successor.references = [...(nextReferences ?? [])];
+        successor.boundReferences = [...(nextBoundReferences ?? [])];
+      }
+      if (successor.nodeConfig?.pulse) {
+        const pulse = successor.nodeConfig.pulse;
+        successor.nodeConfig = { pulse: {
+          intervalSeconds: pulse.intervalSeconds,
+          message: pulse.message,
+          responseShape: pulse.responseShape,
+          missedThreshold: pulse.missedThreshold,
+          ...(pulse.firstFireDelaySeconds !== undefined ? { firstFireDelaySeconds: pulse.firstFireDelaySeconds } : {}),
+        } };
+      }
+      delete successor.nodeContractHashVersion;
+      delete successor.nodeContractHash;
+      delete successor.nodeTopologyHashVersion;
+      delete successor.nodeTopologyHash;
+      delete successor.localExecutionIdentity;
+      delete successor.topologyGeneration;
+      delete successor.observedTopologyGeneration;
+      delete successor.observedTopologyHash;
+      successorByLogical.set(logicalId, successor);
+    }
+
+    const candidateItems = Object.keys(generation.bindings).sort().map((logicalId) => successorByLogical.get(logicalId) ?? itemsByLogical.get(logicalId)!);
+    const boundReferencesByPhysicalId: Record<string, readonly BoundWorkItemReferenceV4[]> = {};
+    const familyScopesByPhysicalId: Record<string, { kind: "mission" | "standalone"; id: string }> = {};
+    for (const item of candidateItems) {
+      boundReferencesByPhysicalId[item.id] = item.boundReferences ?? [];
+      const logicalId = item.logicalId ?? item.id;
+      familyScopesByPhysicalId[item.id] = familiesByLogical.get(logicalId)!.familyScope;
+    }
+    const prepared = buildWorkRevisionStorageV4({
+      operationId: request.operationId,
+      requestHash,
+      previousGeneration: activeHead.generation,
+      generation: activeHead.generation + 1,
+      createdAt: now,
+      workItems: candidateItems,
+      existingFamiliesByLogicalId: Object.fromEntries(familiesByLogical),
+      boundReferencesByPhysicalId,
+      familyScopesByPhysicalId,
+      recommitSet: affectedSet,
+    });
+    // Materialize every new physical successor atomically BEFORE publishing
+    // the prepared operation lookup. A crash before the lookup leaves harmless
+    // unreachable drafts; a visible prepared operation is always recoverable.
+    await this.revisionStorage.persistProjectedWorkItems(prepared);
+    await this.revisionStorage.persistPrepared(prepared);
+    // Re-resolve every mutable binding immediately before the one visibility CAS.
+    for (const item of candidateItems) await this.assertBoundReferencesFresh(item);
+    await this.revisionStorage.activateGeneration(prepared.generation.generation, request.operationId, now);
+    const committed = (await this.revisionStorage.getOperation(request.operationId))!;
+    return this.revisionResult(committed, rootLogicalId, false);
+  }
+
+  /** Compose event/watchdog/PR integrations under one immutable topology observation. */
+  async withTopologyReadPin<T>(fn: () => Promise<T>): Promise<T> {
+    return this.withReadPin(() => fn());
   }
 
   /**
@@ -716,8 +1525,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   private async computeCompletionProgress(completionDependsOn: string[]): Promise<{ done: number; total: number; pending: string[] }> {
     const pending: string[] = [];
     for (const childId of completionDependsOn) {
-      const child = await this.substrate.get<WorkItem>(KIND, childId);
-      if (!child || cloneWorkItem(child).status !== "done") pending.push(childId);
+      const child = await this.getCurrentProjectionItem(childId);
+      if (!child || child.status !== "done") pending.push(childId);
     }
     return { done: completionDependsOn.length - pending.length, total: completionDependsOn.length, pending };
   }
@@ -725,7 +1534,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   /** The opt-in get_work projection (FR — feeds the cold-start get_current_stint). Reads
    *  the arc fresh, then projects its completion-gate progress. null if the arc is gone. */
   async getCompletionProgress(workId: string): Promise<{ done: number; total: number; pending: string[] } | null> {
-    const w = await this.getWorkItem(workId);
+    if (!this.currentness.currentPin()) return this.withReadPin(() => this.getCompletionProgress(workId));
+    const w = await this.getCurrentProjectionItem(workId);
     if (!w) return null;
     return this.computeCompletionProgress(w.completionDependsOn);
   }
@@ -755,8 +1565,11 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    *  the ready-status check. The agent-scoped WIP-cap short-circuits FIRST (a maxed caller can
    *  claim nothing → non-dark `wip_capped`); quarantine is the policy layer's caller gate. */
   async getNextAction(arcId: string, role?: string, agentId?: string): Promise<NextActionProjection | null> {
-    const arc = await this.getWorkItem(arcId);
+    if (!this.currentness.currentPin()) return this.withReadPin(() => this.getNextAction(arcId, role, agentId));
+    const arc = await this.getCurrentProjectionItem(arcId);
     if (!arc) return null;
+    const pin = this.currentness.currentPin()!;
+    const observation = pin.mode === "generation" ? { observedTopologyGeneration: pin.head.generation, observedTopologyHash: pin.head.topologyHash } : {};
     const childIds = arc.completionDependsOn ?? [];
     const hasChildren = childIds.length > 0;
     // Agent-scoped WIP-cap: a maxed caller can claim NOTHING — mirror listReadyForRole's
@@ -766,7 +1579,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     if (agentId !== undefined) {
       const cap = wipCap(role);
       if ((await this.inFlightCount(agentId, cap)) >= cap) {
-        return { arcId, nextAction: null, readyCandidates: 0, hasChildren, emptyReason: "wip_capped" };
+        return { arcId, ...observation, nextAction: null, readyCandidates: 0, hasChildren, emptyReason: "wip_capped" };
       }
     }
     // Per-child point-get + claim predicate. Mirrors claimWorkItem's authority checks:
@@ -774,8 +1587,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // (dependsOn all done). A vanished child is simply not claimable (skipped, never hidden).
     const readyChildren: WorkItem[] = [];
     for (const childId of childIds) {
-      const child = await this.getWorkItem(childId);
-      if (!child || child.status !== "ready") continue;
+      const child = await this.getCurrentProjectionItem(childId);
+      if (!child || isFailedGateSealed(child) || child.status !== "ready") continue;
       if (role && child.roleEligibility.length > 0 && !child.roleEligibility.includes(role)) continue;
       if (child.dependsOn.length > 0 && (await this.unmetDependencies(child.dependsOn)).length > 0) continue;
       readyChildren.push(child);
@@ -785,20 +1598,22 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       const pr = (RANK[a.priority] ?? 9) - (RANK[b.priority] ?? 9);
       return pr !== 0 ? pr : a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
     });
-    return { arcId, nextAction: readyChildren[0] ?? null, readyCandidates: readyChildren.length, hasChildren };
+    return { arcId, ...observation, nextAction: readyChildren[0] ?? null, readyCandidates: readyChildren.length, hasChildren };
   }
 
   async getStintProjection(workId: string): Promise<StintProjection | null> {
-    const arc = await this.getWorkItem(workId);
+    if (!this.currentness.currentPin()) return this.withReadPin(() => this.getStintProjection(workId));
+    const arc = await this.getCurrentProjectionItem(workId);
     if (!arc) return null;
+    const pin = this.currentness.currentPin()!;
+    const observation = pin.mode === "generation" ? { observedTopologyGeneration: pin.head.generation, observedTopologyHash: pin.head.topologyHash } : {};
     const children: StintChild[] = [];
     for (const childId of arc.completionDependsOn) {
-      const child = await this.substrate.get<WorkItem>(KIND, childId);
+      const child = await this.getCurrentProjectionItem(childId);
       if (!child) {
         children.push({ id: childId, status: "missing", leaseHolder: null, stateDurations: { ...DEFAULT_STATE_DURATIONS } });
       } else {
-        const flat = cloneWorkItem(child);
-        children.push({ id: childId, status: flat.status, leaseHolder: flat.lease?.holder ?? null, stateDurations: flat.stateDurations });
+        children.push({ id: childId, status: child.status, leaseHolder: child.lease?.holder ?? null, stateDurations: child.stateDurations });
       }
     }
     const countOf = (s: string) => children.filter((c) => c.status === s).length;
@@ -819,6 +1634,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const parallelism = ownActiveMs > 0 ? rolledUpDurations.in_progress / ownActiveMs : null;
     return {
       arcId: arc.id,
+      ...observation,
       arcStatus: arc.status,
       // pending = NOT done. This k/N is PARALLEL-COMPUTED from the per-child read above (NOT a
       // call to computeCompletionProgress) — it is PARITY-ASSERTED against the gate by a test
@@ -851,9 +1667,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const walk = async (id: string): Promise<void> => {
       if (visited.has(id)) return;
       visited.add(id);
-      const node = await this.substrate.get<WorkItem>(KIND, id);
-      if (!node) return;
-      const flat = cloneWorkItem(node);
+      const flat = await this.getCurrentProjectionItem(id);
+      if (!flat) return;
       if (flat.completionDependsOn.length === 0) {
         addFrictionToRollup(acc, flat.frictionReflections);
       } else {
@@ -885,9 +1700,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const walk = async (id: string): Promise<void> => {
       if (visited.has(id)) return; // DAG-dedup + cycle-guard (an already-summed node is idempotent)
       visited.add(id);
-      const node = await this.substrate.get<WorkItem>(KIND, id);
-      if (!node) return; // vanished — skip; never silently mis-attribute
-      const flat = cloneWorkItem(node);
+      const flat = await this.getCurrentProjectionItem(id);
+      if (!flat) return; // vanished/old/draft — skip; never silently mis-attribute
       if (flat.completionDependsOn.length === 0) {
         for (const k of keys) acc[k] += flat.stateDurations[k]; // LEAF — contribute its own span
       } else {
@@ -909,10 +1723,29 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * COMPLETABLE/RELEASABLE/LEASE_HELD phase sets the verbs enforce). null if the id is absent.
    */
   async getLegalMoves(workId: string, caller: { agentId: string; role?: string }): Promise<LegalMoves | null> {
+    if (!this.currentness.currentPin()) return this.withReadPin(() => this.getLegalMoves(workId, caller));
     const w = await this.getWorkItem(workId);
     if (!w) return null;
     const status = w.status;
     const isHolder = !!w.lease && w.lease.holder === caller.agentId;
+    const pin = this.currentness.currentPin()!;
+    const observation = pin.mode === "generation" ? { observedTopologyGeneration: pin.head.generation, observedTopologyHash: pin.head.topologyHash } : {};
+    if (pin.mode === "generation") {
+      try { this.currentness.assertCurrent(w, pin); } catch (error) {
+        if (!(error instanceof WorkGraphCurrentnessRejected)) throw error;
+        const current = error.current
+          ? `; current=${error.current.physicalId}@${error.current.revision} generation=${error.current.generation}`
+          : `; no current binding in generation ${pin.head.generation}`;
+        const reason = `${error.code}: exact physical ${workId} is historical/draft and cannot mutate${current}`;
+        const verbs: WorkItemVerb[] = ["claim", "start", "block", "resume", "renew", "release", "abandon", "complete", "pause", "unpause"];
+        return { workId: w.id, ...observation, status, isHolder, gateMet: false, moves: verbs.map((verb) => ({ verb, legal: false, reason })) };
+      }
+    }
+    if (isFailedGateSealed(w)) {
+      const reason = "effectiveDisposition=failed_sealed; no same-row lifecycle verb is legal — create a distinct repair/revision";
+      const verbs: WorkItemVerb[] = ["claim", "start", "block", "resume", "renew", "release", "abandon", "complete", "pause", "unpause"];
+      return { workId: w.id, ...observation, status, isHolder, gateMet: false, moves: verbs.map((verb) => ({ verb, legal: false, reason })) };
+    }
     const isCreator = w.createdBy?.agentId === caller.agentId;
     const notHolder = "the caller is not the lease-holder";
 
@@ -976,14 +1809,21 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // complete: holder + COMPLETABLE + the completion-gate met.
     add("complete", isHolder && COMPLETABLE_PHASES.includes(status) && gateMet,
       !isHolder ? notHolder : !COMPLETABLE_PHASES.includes(status) ? `complete requires in_progress or review, was ${status}` : "completion-gate unmet — downstream completionDependsOn children are not all done");
-    // S3 (idea-454): pause (ready → paused) / unpause (paused → ready) — CREATOR-only or Director.
-    const canSuspend = isCreator || caller.role === "director";
-    add("pause", canSuspend && status === "ready",
-      !canSuspend ? "pause requires the item's creator or Director" : `pause requires ready, was ${status}`);
-    add("unpause", canSuspend && status === "paused",
-      !canSuspend ? "unpause requires the item's creator or Director" : `unpause requires paused, was ${status}`);
+    // Mission-140 pause/recall authority. Resolve immutable family creator rather than
+    // trusting successor createdBy/revisedBy; holder status alone grants neither verb.
+    const isOriginalCreator = await this.originalCreatorAgentId(w) === caller.agentId;
+    const isSteward = caller.role === "architect" || caller.role === "director";
+    const pausePhase = ["ready", "claimed", "in_progress", "blocked"].includes(status);
+    const canPause = status === "ready" ? (isOriginalCreator || isSteward) : isSteward;
+    add("pause", canPause && pausePhase,
+      !canPause ? "pause requires original creator/architect/Director at ready or architect/Director for active recall" : `pause requires ready|claimed|in_progress|blocked, was ${status}`);
+    const lastRecall = (w.recallHistory ?? []).at(-1);
+    const canCreatorUnpause = isOriginalCreator && !w.predecessorPhysicalId && lastRecall?.actor.agentId === caller.agentId;
+    const canUnpause = isSteward || canCreatorUnpause;
+    add("unpause", canUnpause && status === "paused",
+      !canUnpause ? "unpause requires the original creator who paused this unchanged row, architect, or Director" : `unpause requires paused, was ${status}`);
 
-    return { workId: w.id, status, isHolder, gateMet, moves };
+    return { workId: w.id, ...observation, status, isHolder, gateMet, moves };
   }
 
   // work-86 (idea-380): generic substrate existence check for a storage=entity reference.
@@ -1013,6 +1853,15 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * here, never inferred at the policy layer from a coincidental length==cap.
    */
   async listWorkItems(filter?: { status?: WorkItemPhase; role?: string; holder?: string }): Promise<{ items: WorkItem[]; truncated: boolean }> {
+    if (!this.currentness.currentPin()) return this.withReadPin(() => this.listWorkItems(filter));
+    const current = await this.currentGenerationItems(this.currentness.currentPin()!);
+    if (current) {
+      const matched = current.filter((item) =>
+        (!filter?.status || item.status === filter.status) &&
+        (!filter?.role || item.roleEligibility.includes(filter.role)) &&
+        (!filter?.holder || item.lease?.holder === filter.holder));
+      return { items: matched.slice(0, LIST_CAP), truncated: matched.length > LIST_CAP };
+    }
     const substrateFilter: Filter = {};
     if (filter?.status) substrateFilter.status = filter.status;
     if (filter?.role) substrateFilter.roleEligibility = { $contains: filter.role };
@@ -1030,6 +1879,15 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * paths rather than relying on a capped unfiltered scan.
    */
   async listPrReviewBindingWorkItems(repo: string, prNumber: number): Promise<{ items: WorkItem[]; truncated: boolean }> {
+    if (!this.currentness.currentPin()) return this.withReadPin(() => this.listPrReviewBindingWorkItems(repo, prNumber));
+    const current = await this.currentGenerationItems(this.currentness.currentPin()!);
+    if (current) {
+      const matched = current.filter((item) => {
+        const payload = item.payload as Record<string, unknown> | undefined;
+        return payload?.obligationKind === "github_pr_workgraph_binding" && payload.repo === repo && payload.prNumber === prNumber;
+      });
+      return { items: matched.slice(0, LIST_CAP), truncated: matched.length > LIST_CAP };
+    }
     const { items } = await this.substrate.list<WorkItem>(KIND, {
       filter: {
         "spec.payload.obligationKind": "github_pr_workgraph_binding",
@@ -1043,6 +1901,12 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
 
   /** Narrow payload-key lookup for existing PR-review projections. */
   async listWorkItemsByProjectionKey(projectionKey: string): Promise<{ items: WorkItem[]; truncated: boolean }> {
+    if (!this.currentness.currentPin()) return this.withReadPin(() => this.listWorkItemsByProjectionKey(projectionKey));
+    const current = await this.currentGenerationItems(this.currentness.currentPin()!);
+    if (current) {
+      const matched = current.filter((item) => (item.payload as Record<string, unknown> | undefined)?.projectionKey === projectionKey);
+      return { items: matched.slice(0, LIST_CAP), truncated: matched.length > LIST_CAP };
+    }
     const { items } = await this.substrate.list<WorkItem>(KIND, {
       filter: { "spec.payload.projectionKey": projectionKey },
       limit: LIST_CAP,
@@ -1065,6 +1929,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * operator) is a later optimization; the loud flag keeps v1 honest.
    */
   async listReadyForRole(role: string | undefined, limit: number, agentId?: string): Promise<{ items: WorkItem[]; truncated: boolean; emptyReason?: ReadyEmptyReason }> {
+    if (!this.currentness.currentPin()) return this.withReadPin(() => this.listReadyForRole(role, limit, agentId));
     // idea-353 WI-2.1 (AC5 strict parity / audit-4265): the AGENT-SCOPED projection
     // (agentId supplied — used by the claimable digest) must count only what THIS
     // caller can actually claim, so it mirrors claim_work's per-agent WIP-cap. A
@@ -1080,12 +1945,16 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         return { items: [], truncated: false, emptyReason: "wip_capped" };
       }
     }
-    const { items } = await this.substrate.list<WorkItem>(KIND, { filter: { status: "ready" }, limit: READY_SCAN_CAP });
-    const truncated = items.length >= READY_SCAN_CAP;
-    const ready = items.map(cloneWorkItem);
+    const current = await this.currentGenerationItems(this.currentness.currentPin()!);
+    const listed = current
+      ? current.filter((item) => item.status === "ready")
+      : (await this.substrate.list<WorkItem>(KIND, { filter: { status: "ready" }, limit: READY_SCAN_CAP })).items.map(cloneWorkItem);
+    const truncated = !current && listed.length >= READY_SCAN_CAP;
+    const ready = listed;
+    const nonFailed = ready.filter((w) => !isFailedGateSealed(w));
     const eligible = role
-      ? ready.filter((w) => w.roleEligibility.length === 0 || w.roleEligibility.includes(role))
-      : ready;
+      ? nonFailed.filter((w) => w.roleEligibility.length === 0 || w.roleEligibility.includes(role))
+      : nonFailed;
     // bug-181 (idea-353 fold): the `ready` phase + role-eligibility alone is NOT
     // claimability. claimWorkItem is the AUTHORITY and re-checks dependency-readiness
     // fail-CLOSED (lines ~392-401): an item whose dependsOn are not all `done` rejects
@@ -1121,6 +1990,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * Lock-acquire timeout REJECTS the claim (fail-CLOSED), never proceeds unlocked.
    */
   async claimWorkItem(workId: string, agentId: string, role?: string): Promise<WorkItem | null> {
+    if (!this.currentness.currentPin()) return this.withWriterFence(() => this.claimWorkItem(workId, agentId, role));
     return withAdvisoryLock(
       this.substrate,
       LOCK_CLASS.workItemWip,
@@ -1145,6 +2015,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         const depsNotDone = await this.unmetDependencies(cloneWorkItem(pre).dependsOn);
 
         return this.tryCasUpdate(workId, (w) => {
+          this.assertNotFailedSealed(w);
           if (w.status !== "ready") throw new TransitionRejected(`claim requires ready, was ${w.status}`);
           assertRoleEligible(w, role); // (a) role ∈ roleEligibility (empty = any-role)
           if (depsNotDone.length > 0) { // (b) all dependsOn must be phase=done
@@ -1196,41 +2067,476 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     });
   }
 
-  // ── S3 (idea-454) — paused/disabled dormancy state ────────────────────────
-  async pauseWork(workId: string, actor: { agentId: string; role: string }, _reason?: string): Promise<WorkItem | null> {
-    return this.tryCasUpdate(workId, (w) => {
-      // AUTHZ (high-stakes lifecycle-suspension): CREATOR-only (server-stamped createdBy) OR Director.
-      const isCreator = w.createdBy?.agentId === actor.agentId;
-      if (!isCreator && actor.role !== "director") {
-        throw new TransitionRejected(`pause requires the item's creator (${w.createdBy?.agentId ?? "unknown"}) or Director, not ${actor.role}/${actor.agentId}`);
+  // ── Mission-140 pause/recall + scalar recommit ────────────────────────────
+  private async resolvePauseLocator(request: { workId?: string; logicalId?: string }): Promise<string> {
+    const hasPhysical = typeof request.workId === "string" && request.workId.length > 0;
+    const hasLogical = typeof request.logicalId === "string" && request.logicalId.length > 0;
+    if (hasPhysical === hasLogical) throw new TransitionRejected("exactly one of workId or logicalId is required");
+    if (hasPhysical) return request.workId!; // exact historical IDs never follow successors
+    const logicalId = request.logicalId!;
+    const pin = this.currentness.currentPin();
+    if (pin?.mode === "generation") {
+      const binding = pin.generation.bindings[logicalId];
+      if (!binding) throw new TransitionRejected(`logical WorkItem ${logicalId} has no current binding in generation ${pin.head.generation}`);
+      return binding.physicalId;
+    }
+    return logicalId; // deterministic legacy projection
+  }
+
+  private async originalCreatorAgentId(item: WorkItem): Promise<string | undefined> {
+    const pin = this.currentness.currentPin();
+    if (pin?.mode !== "generation") return item.createdBy?.agentId;
+    const logicalId = item.logicalId ?? item.id;
+    const raw = await this.substrate.get<Record<string, unknown>>("WorkRevisionFamily", logicalId);
+    if (!raw) throw new TransitionRejected(`revision family ${logicalId} is missing; original-creator authority cannot be resolved`);
+    const family = decodeEnvelopeToFlat(raw, "WorkRevisionFamily") as unknown as { originalCreatedBy?: { agentId?: string } };
+    const creator = family.originalCreatedBy?.agentId;
+    if (!creator) throw new TransitionRejected(`revision family ${logicalId} has no server-derived original creator`);
+    return creator;
+  }
+
+  private assertPauseExpectations(item: WorkItem, request: { expectedRevision?: number; expectedGeneration?: number }): void {
+    const pin = this.currentness.currentPin();
+    const revision = item.revision ?? 1;
+    const generation = pin?.mode === "generation" ? pin.head.generation : 0;
+    if (request.expectedRevision !== undefined && request.expectedRevision !== revision) {
+      throw new TransitionRejected(`pause currentness mismatch: expected revision ${request.expectedRevision}, current ${revision}`);
+    }
+    if (request.expectedGeneration !== undefined && request.expectedGeneration !== generation) {
+      throw new TransitionRejected(`pause currentness mismatch: expected generation ${request.expectedGeneration}, current ${generation}`);
+    }
+  }
+
+  /** Recompute claimant and edge authority from the persisted row plus the pinned
+   *  immutable generation. Stored node* hashes are outputs to cross-check, never
+   *  inputs trusted as proof. This is invoked at BOTH pause and unpause. */
+  private deriveFrozenRecallAuthority(item: WorkItem): FrozenRecallAuthorityV4 {
+    const pin = this.currentness.currentPin();
+    if (!pin) throw new TransitionRejected("pause authority requires a pinned WorkGraph snapshot");
+    const logicalId = item.logicalId ?? item.id;
+    const revision = item.revision ?? 1;
+    let nodeContractHash: string;
+    let dependsOnLogicalIds: string[];
+    let completionDependsOnLogicalIds: string[];
+    let localExecutionIdentity: string | null = null;
+
+    if (pin.mode === "generation") {
+      const binding = pin.generation.bindings[logicalId];
+      if (!binding || binding.physicalId !== item.id || binding.revision !== revision) {
+        throw new WorkGraphCurrentnessRejected(
+          "workgraph.currentness.old_or_draft",
+          `persisted row ${item.id} is not the active binding for ${logicalId}@${revision}`,
+        );
       }
-      // READY-ONLY: a claimed/in_progress/blocked item holds a lease — pausing would zombie the
-      // claimant. Use release/abandon for leased work (v1: no force-release).
-      if (w.status !== "ready") {
-        throw new TransitionRejected(`pause requires ready (no lease to zombie), was ${w.status} — use release/abandon for leased work`);
+      const physicalToLogical = new Map(Object.entries(pin.generation.bindings)
+        .map(([id, target]) => [target.physicalId, id] as const));
+      const resolveEdge = (locator: string): string => {
+        if (pin.generation.bindings[locator]) return locator;
+        const resolved = physicalToLogical.get(locator);
+        if (!resolved) {
+          throw new WorkGraphCurrentnessRejected(
+            "workgraph.currentness.integrity",
+            `persisted row ${item.id} carries an edge to non-generation target ${locator}`,
+          );
+        }
+        return resolved;
+      };
+      dependsOnLogicalIds = (item.dependsOn ?? []).map(resolveEdge).sort();
+      completionDependsOnLogicalIds = (item.completionDependsOn ?? []).map(resolveEdge).sort();
+      if (new Set(dependsOnLogicalIds).size !== dependsOnLogicalIds.length ||
+          new Set(completionDependsOnLogicalIds).size !== completionDependsOnLogicalIds.length) {
+        throw new WorkGraphCurrentnessRejected(
+          "workgraph.currentness.identity_mismatch",
+          `persisted row ${item.id} carries duplicate topology edges`,
+        );
+      }
+      const expectedDependsOn = [...(pin.generation.dependsOn[logicalId] ?? [])].sort();
+      const expectedCompletion = [...(pin.generation.completionDependsOn[logicalId] ?? [])].sort();
+      if (JSON.stringify(dependsOnLogicalIds) !== JSON.stringify(expectedDependsOn) ||
+          JSON.stringify(completionDependsOnLogicalIds) !== JSON.stringify(expectedCompletion)) {
+        throw new WorkGraphCurrentnessRejected(
+          "workgraph.currentness.revision_required",
+          `persisted row ${item.id} edges changed outside active generation ${pin.head.generation}; semantic revision required`,
+        );
+      }
+      try {
+        const contract = deriveNodeContractV4({
+          type: item.type,
+          roleEligibility: item.roleEligibility ?? [],
+          ...(item.runbook !== undefined ? { runbook: item.runbook } : {}),
+          ...(item.payload !== undefined ? { payload: item.payload } : {}),
+          targetRef: item.targetRef ?? null,
+          evidenceRequirements: item.evidenceRequirements ?? [],
+          references: item.references ?? [],
+          ...(item.leaseWindowMs !== undefined ? { leaseWindowMs: item.leaseWindowMs } : {}),
+          ...(item.nodeConfig !== undefined ? { nodeConfig: item.nodeConfig } : {}),
+        }, item.boundReferences ?? []);
+        nodeContractHash = contract.hash;
+      } catch (error) {
+        throw new WorkGraphCurrentnessRejected(
+          "workgraph.currentness.identity_mismatch",
+          `persisted row ${item.id} claimant contract cannot be exactly recomputed: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+      if (nodeContractHash !== binding.nodeContractHash || item.nodeContractHashVersion !== NODE_CONTRACT_HASH_VERSION ||
+          item.nodeContractHash !== binding.nodeContractHash) {
+        throw new WorkGraphCurrentnessRejected(
+          "workgraph.currentness.revision_required",
+          `persisted row ${item.id} claimant contract changed outside active generation ${pin.head.generation}; semantic revision required`,
+        );
+      }
+      const topology = deriveNodeTopologyV4(logicalId, dependsOnLogicalIds, completionDependsOnLogicalIds);
+      if (topology.hash !== binding.nodeTopologyHash || item.nodeTopologyHashVersion !== NODE_TOPOLOGY_HASH_VERSION ||
+          item.nodeTopologyHash !== binding.nodeTopologyHash) {
+        throw new WorkGraphCurrentnessRejected(
+          "workgraph.currentness.revision_required",
+          `persisted row ${item.id} topology changed outside active generation ${pin.head.generation}; semantic revision required`,
+        );
+      }
+      const outgoing: TargetBindingV4[] = [
+        ...dependsOnLogicalIds.map((targetLogicalId) => ({ edgeClass: "dependsOn" as const, targetLogicalId })),
+        ...completionDependsOnLogicalIds.map((targetLogicalId) => ({ edgeClass: "completionDependsOn" as const, targetLogicalId })),
+      ].map(({ edgeClass, targetLogicalId }) => {
+        const target = pin.generation.bindings[targetLogicalId]!;
+        return {
+          edgeClass,
+          targetLogicalId,
+          targetPhysicalId: target.physicalId,
+          targetRevision: target.revision,
+          targetNodeContractHashVersion: target.nodeContractHashVersion,
+          targetNodeContractHash: target.nodeContractHash,
+        };
+      });
+      localExecutionIdentity = deriveLocalExecutionIdentityV4({
+        logicalId,
+        physicalId: item.id,
+        revision,
+        nodeContractHashVersion: NODE_CONTRACT_HASH_VERSION,
+        nodeContractHash,
+        nodeTopologyHashVersion: NODE_TOPOLOGY_HASH_VERSION,
+        nodeTopologyHash: topology.hash,
+        outgoingTargetBindings: outgoing,
+      });
+      if (item.localExecutionIdentity !== localExecutionIdentity) {
+        throw new WorkGraphCurrentnessRejected(
+          "workgraph.currentness.revision_required",
+          `persisted row ${item.id} local execution identity changed outside active generation ${pin.head.generation}; semantic revision required`,
+        );
+      }
+    } else {
+      // Legacy/shadow has no immutable generation to bind content identities against.
+      // Freeze the exact persisted claimant projection so a paused row still cannot
+      // be mutated and laundered through creator scalar unpause.
+      const claimantProjection = JSON.parse(JSON.stringify({
+        type: item.type,
+        roleEligibility: item.roleEligibility ?? [],
+        runbook: item.runbook,
+        payload: item.payload,
+        targetRef: item.targetRef ?? null,
+        evidenceRequirements: item.evidenceRequirements ?? [],
+        references: item.references ?? [],
+        boundReferences: item.boundReferences ?? [],
+        leaseWindowMs: item.leaseWindowMs,
+        nodeConfig: item.nodeConfig ? {
+          pulse: item.nodeConfig.pulse ? {
+            intervalSeconds: item.nodeConfig.pulse.intervalSeconds,
+            message: item.nodeConfig.pulse.message,
+            responseShape: item.nodeConfig.pulse.responseShape,
+            missedThreshold: item.nodeConfig.pulse.missedThreshold,
+            firstFireDelaySeconds: item.nodeConfig.pulse.firstFireDelaySeconds,
+          } : null,
+        } : undefined,
+      })) as unknown;
+      nodeContractHash = hashCanonicalDomain("legacy-frozen-claimant-contract-v4", claimantProjection);
+      dependsOnLogicalIds = [...(item.dependsOn ?? [])].sort();
+      completionDependsOnLogicalIds = [...(item.completionDependsOn ?? [])].sort();
+    }
+
+    const topology = deriveNodeTopologyV4(logicalId, dependsOnLogicalIds, completionDependsOnLogicalIds);
+    const authority = {
+      version: "frozen-recall-authority-v4" as const,
+      mode: pin.mode,
+      logicalId,
+      physicalId: item.id,
+      revision,
+      generation: pin.mode === "generation" ? pin.head.generation : null,
+      nodeContractHash,
+      nodeTopologyHash: topology.hash,
+      dependsOnLogicalIds,
+      completionDependsOnLogicalIds,
+      localExecutionIdentity,
+    };
+    return {
+      ...authority,
+      authorityHash: hashCanonicalDomain("frozen-recall-authority-v4", authority),
+    };
+  }
+
+  private assertFrozenRecallAuthorityUnchanged(
+    frozen: FrozenRecallAuthorityV4 | undefined,
+    current: FrozenRecallAuthorityV4,
+    workId: string,
+  ): void {
+    if (!frozen) {
+      throw new WorkGraphCurrentnessRejected(
+        "workgraph.currentness.revision_required",
+        `unpause rejected: ${workId} has no frozen paused-row authority; create a semantic revision`,
+      );
+    }
+    const { authorityHash: storedHash, ...storedPayload } = frozen;
+    if (hashCanonicalDomain("frozen-recall-authority-v4", storedPayload) !== storedHash ||
+        storedHash !== current.authorityHash) {
+      throw new WorkGraphCurrentnessRejected(
+        "workgraph.currentness.revision_required",
+        `unpause rejected: ${workId} claimant row or generation edges changed while paused; create a semantic revision`,
+      );
+    }
+  }
+
+  async pauseWork(request: PauseWorkRequestV4, actor: { agentId: string; role: string }): Promise<WorkItem | null> {
+    if (!this.currentness.currentPin()) return this.withWriterFence(() => this.pauseWork(request, actor));
+    if (!request.operationId?.trim()) throw new TransitionRejected("pause operationId is required");
+    if (!request.reason?.trim()) throw new TransitionRejected("pause reason is required");
+    const workId = await this.resolvePauseLocator(request);
+    const requestHash = hashCanonicalDomain("workitem-pause-request-v4", {
+      workId, operationId: request.operationId, reason: request.reason,
+      expectedRevision: request.expectedRevision ?? null,
+      expectedGeneration: request.expectedGeneration ?? null,
+      actor,
+    });
+    try {
+      return await this.tryCasUpdate(workId, async (w, resourceVersion) => {
+        const replay = (w.recallHistory ?? []).find((entry) => entry.operationId === request.operationId);
+        if (replay) {
+          if (replay.requestHash !== requestHash) throw new TransitionRejected(`pause operation ${request.operationId} was already used with different bytes`);
+          throw new IdempotentRecall(w);
+        }
+        this.assertNotFailedSealed(w);
+        this.assertPauseExpectations(w, request);
+        if (!["ready", "claimed", "in_progress", "blocked"].includes(w.status)) {
+          throw new TransitionRejected(`pause requires ready|claimed|in_progress|blocked, was ${w.status}`);
+        }
+        if (w.status === "ready" && w.lease) throw new TransitionRejected(`pause rejected corrupt ready row ${w.id}: unexpected live lease`);
+        if (w.status !== "ready" && !w.lease) throw new TransitionRejected(`pause rejected corrupt active row ${w.id}: exact holder lease is missing`);
+        if (w.status === "blocked" && !w.blockedOn) throw new TransitionRejected(`pause rejected corrupt blocked row ${w.id}: blocker projection is missing`);
+        const isCreator = await this.originalCreatorAgentId(w) === actor.agentId;
+        const isSteward = actor.role === "architect" || actor.role === "director";
+        if (w.status === "ready" ? (!isCreator && !isSteward) : !isSteward) {
+          const requirement = w.status === "ready" ? "original creator, architect, or Director" : "architect or Director for active recall";
+          throw new TransitionRejected(`pause requires ${requirement}, not ${actor.role}/${actor.agentId}`);
+        }
+
+        const nowISO = this.clock.now().toISOString();
+        const identity = legacyRevisionIdentity(w);
+        const frozenAuthority = this.deriveFrozenRecallAuthority(w);
+        const stateHash = recallStateHash(w);
+        const before: RecallBeforeStateV4 = {
+          physicalId: w.id,
+          logicalId: identity.logicalId,
+          revision: identity.revision,
+          topologyGeneration: w.topologyGeneration ?? null,
+          phase: w.status as RecallBeforeStateV4["phase"],
+          resourceVersion,
+          stateHash,
+          blockedOn: w.blockedOn ? {
+            blockerKind: w.blockedOn.blockerKind,
+            blockerIds: [...(w.blockedOn.blockerIds ?? [])],
+            reason: w.blockedOn.reason,
+          } : null,
+          lease: w.lease ? {
+            holder: w.lease.holder,
+            claimedAt: w.lease.claimedAt,
+            expiresAt: w.lease.expiresAt,
+            heartbeatAt: w.lease.heartbeatAt,
+            tokenFingerprint: recallTokenFingerprint(w.lease.token),
+          } : null,
+        };
+        const holderNoticeIntentId = w.lease
+          ? hashCanonicalDomain("workitem-recall-notice-v4", {
+              physicalId: w.id, operationId: request.operationId,
+              exactHolder: w.lease.holder, beforeStateHash: stateHash,
+            })
+          : null;
+        const history: RecallHistoryEntryV4 = {
+          operationId: request.operationId,
+          requestHash,
+          actor: { role: actor.role, agentId: actor.agentId },
+          reason: request.reason,
+          recalledAt: nowISO,
+          beforeStateHash: stateHash,
+          before,
+          frozenAuthority,
+          holderNoticeIntentId,
+        };
+        const notice: PendingRecallIntentV4 | null = w.lease ? {
+          intentId: holderNoticeIntentId!,
+          operationId: request.operationId,
+          exactHolderAgentId: w.lease.holder,
+          beforeStateHash: stateHash,
+          createdAt: nowISO,
+          projectedMessageId: null,
+          projectedAt: null,
+        } : null;
+        return {
+          ...w,
+          status: "paused" as const,
+          lease: null,
+          blockedOn: null,
+          recallHistory: [...(w.recallHistory ?? []), history],
+          pendingRecallIntents: notice ? [...(w.pendingRecallIntents ?? []), notice] : (w.pendingRecallIntents ?? []),
+          recallNoticePending: notice ? true : (w.recallNoticePending ?? false),
+          ...accrueExitingState(w, nowISO),
+          updatedAt: nowISO,
+        };
+      });
+    } catch (error) {
+      if (error instanceof IdempotentRecall) {
+        Object.defineProperty(error.item, PAUSE_OPERATION_REPLAY, { value: true, enumerable: false });
+        return error.item;
+      }
+      throw error;
+    }
+  }
+
+  async recommitRevisionSet(
+    request: UnpauseWorkRequestV4,
+    actor: { agentId: string; role: string },
+  ): Promise<{ workItems: WorkItem[]; operationReplay: boolean }> {
+    if (actor.role !== "architect" && actor.role !== "director") {
+      throw new WorkGraphCurrentnessRejected("revision.director_or_architect_required", "revision-set recommit requires architect or Director");
+    }
+    const logicalIds = [...(request.logicalIds ?? [])].sort();
+    if (logicalIds.length === 0 || new Set(logicalIds).size !== logicalIds.length || !request.operationId?.trim() || !request.reason?.trim()) {
+      throw new TransitionRejected("revision-set recommit requires unique logicalIds, operationId, and reason");
+    }
+    if (request.expectedGeneration === undefined || !request.expectedRevisions) throw new TransitionRejected("revision-set recommit requires expectedGeneration and expectedRevisions");
+    const expectedRevisions = request.expectedRevisions;
+    if (canonicalJson(Object.keys(expectedRevisions).sort()) !== canonicalJson(logicalIds)) throw new TransitionRejected("expectedRevisions must exactly cover logicalIds");
+    const requestHash = hashCanonicalDomain("workgraph-recommit-request-v4", JSON.parse(JSON.stringify({
+      logicalIds, expectedRevisions, expectedGeneration: request.expectedGeneration,
+      operationId: request.operationId, reason: request.reason, actor,
+    })));
+
+    return this.currentness.withWriterFence(async (pin) => {
+      if (pin.mode !== "generation" || pin.head.generation !== request.expectedGeneration) throw new WorkGraphCurrentnessRejected("revision.currentness_mismatch", "recommit generation changed");
+      const operationRow = await this.substrate.getWithRevision<WorkGraphRevisionOperationV4>(WORK_REVISION_KINDS.operation, pin.generation.operationId);
+      if (!operationRow) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "active revision operation is missing");
+      const operation = decodeEnvelopeToFlat(operationRow.entity);
+      if (operation.recommitSet.length === 0) {
+        if (operation.recommitOperationId !== request.operationId || operation.recommitRequestHash !== requestHash) throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", "no matching pending recommit set");
+        const workItems: WorkItem[] = [];
+        for (const logicalId of logicalIds) {
+          const binding = pin.generation.bindings[logicalId];
+          const item = binding ? await this.getWorkItem(binding.physicalId) : null;
+          if (!item || item.status !== "ready") throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `recommitted ${logicalId} is not ready`);
+          workItems.push(this.observe(item, pin));
+        }
+        return { workItems, operationReplay: true };
+      }
+      if (canonicalJson([...operation.recommitSet].sort()) !== canonicalJson(logicalIds)) throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", "recommit set is not exact");
+      const rows: Array<{ item: WorkItem; resourceVersion: string }> = [];
+      for (const logicalId of logicalIds) {
+        const binding = pin.generation.bindings[logicalId];
+        if (!binding || binding.revision !== expectedRevisions[logicalId]) throw new WorkGraphCurrentnessRejected("revision.currentness_mismatch", `recommit revision mismatch for ${logicalId}`);
+        const row = await this.substrate.getWithRevision<WorkItem>(KIND, binding.physicalId);
+        if (!row) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `recommit row ${binding.physicalId} missing`);
+        const item = cloneWorkItem(row.entity);
+        this.currentness.assertCurrent(item, pin);
+        if (item.status !== "paused" || item.lease) throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", `recommit ${logicalId} is not paused and unleased`);
+        rows.push({ item, resourceVersion: row.resourceVersion });
       }
       const nowISO = this.clock.now().toISOString();
-      return { ...w, status: "paused" as const, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
+      const nextRows = rows.map(({ item, resourceVersion }) => ({ next: { ...item, status: "ready" as const, ...accrueExitingState(item, nowISO), updatedAt: nowISO }, resourceVersion }));
+      const nextOperation: WorkGraphRevisionOperationV4 = { ...operation, recommittedSet: [...operation.recommitSet], recommitSet: [], recommitOperationId: request.operationId, recommitRequestHash: requestHash, recommittedAt: nowISO };
+      const batch = await this.substrate.putBatchIfMatch([
+        ...nextRows.map((row) => ({ kind: KIND, entity: row.next, expectedRevision: row.resourceVersion })),
+        { kind: WORK_REVISION_KINDS.operation, entity: nextOperation, expectedRevision: operationRow.resourceVersion },
+      ]);
+      if (!batch.ok) throw new WorkGraphCurrentnessRejected("workgraph.currentness.head_changed", `atomic recommit CAS conflict: ${batch.conflicts.map((entry) => `${entry.kind}/${entry.id}`).join(",")}`);
+      return { workItems: nextRows.map((row) => this.observe(row.next, pin)), operationReplay: false };
     });
   }
 
-  async unpauseWork(workId: string, actor: { agentId: string; role: string }): Promise<WorkItem | null> {
-    return this.tryCasUpdate(workId, (w) => {
-      const isCreator = w.createdBy?.agentId === actor.agentId;
-      if (!isCreator && actor.role !== "director") {
-        throw new TransitionRejected(`unpause requires the item's creator (${w.createdBy?.agentId ?? "unknown"}) or Director, not ${actor.role}/${actor.agentId}`);
-      }
+  async unpauseWork(request: UnpauseWorkRequestV4, actor: { agentId: string; role: string }): Promise<WorkItem | null> {
+    if (request.logicalIds !== undefined) throw new TransitionRejected("batch unpause must use recommitRevisionSet");
+    if (!this.currentness.currentPin()) return this.withWriterFence(() => this.unpauseWork(request, actor));
+    const workId = await this.resolvePauseLocator(request);
+    return this.tryCasUpdate(workId, async (w) => {
+      this.assertNotFailedSealed(w);
+      this.assertPauseExpectations(w, request);
       if (w.status !== "paused") throw new TransitionRejected(`unpause requires paused, was ${w.status}`);
-      // → ready: re-enters the NORMAL claim gate — deps + roleEligibility are re-validated fail-closed
-      // at the subsequent claim (claimWorkItem's authority). Start-gates are NOT bypassed.
+      const lastRecall = (w.recallHistory ?? []).at(-1);
+      const currentAuthority = this.deriveFrozenRecallAuthority(w);
+      this.assertFrozenRecallAuthorityUnchanged(lastRecall?.frozenAuthority, currentAuthority, w.id);
+      const isCreator = await this.originalCreatorAgentId(w) === actor.agentId;
+      const creatorCompatibility = isCreator
+        && !w.predecessorPhysicalId
+        && lastRecall?.actor.agentId === actor.agentId;
+      const isSteward = actor.role === "architect" || actor.role === "director";
+      if (!creatorCompatibility && !isSteward) {
+        const originalCreator = await this.originalCreatorAgentId(w);
+        const holderOnly = w.lease?.holder === actor.agentId || w.executorHistory.includes(actor.agentId);
+        const code = holderOnly
+          ? "revision.holder_has_no_authority"
+          : originalCreator === actor.agentId
+            ? "revision.architect_required"
+            : "revision.actor_forbidden";
+        throw new WorkGraphCurrentnessRejected(code, "unpause requires the original creator who paused this unchanged row, architect, or Director; holder/reviser status grants no authority");
+      }
       const nowISO = this.clock.now().toISOString();
       return { ...w, status: "ready" as const, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
+    });
+  }
+
+  async listPendingRecallNoticeItems(limit = LIST_CAP): Promise<{ items: WorkItem[]; truncated: boolean }> {
+    if (!this.currentness.currentPin()) return this.withReadPin(() => this.listPendingRecallNoticeItems(limit));
+    const cap = Math.min(Math.max(1, limit), LIST_CAP);
+    const { items } = await this.substrate.list<WorkItem>(KIND, {
+      filter: { "status.recallNoticePending": true },
+      limit: cap,
+    });
+    const pending = items.map(cloneWorkItem).filter((item) =>
+      (item.pendingRecallIntents ?? []).some((intent) => !intent.projectedMessageId));
+    return { items: pending, truncated: items.length >= cap };
+  }
+
+  async markRecallNoticeProjected(workId: string, intentId: string, messageId: string): Promise<WorkItem | null> {
+    return this.withWriterFence(async () => {
+      for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
+        const env = await this.substrate.getWithRevision<WorkItem>(KIND, workId);
+        if (!env) return null;
+        const item = cloneWorkItem(env.entity);
+        const intents = item.pendingRecallIntents ?? [];
+        const index = intents.findIndex((intent) => intent.intentId === intentId);
+        if (index < 0) throw new TransitionRejected(`recall notice intent ${intentId} not found on ${workId}`);
+        const existing = intents[index];
+        if (existing.projectedMessageId) {
+          if (existing.projectedMessageId !== messageId) {
+            throw new TransitionRejected(`recall notice intent ${intentId} already projected as ${existing.projectedMessageId}`);
+          }
+          return item;
+        }
+        const nowISO = this.clock.now().toISOString();
+        const updatedIntents = intents.map((intent, i) => i === index
+          ? { ...intent, projectedMessageId: messageId, projectedAt: nowISO }
+          : intent);
+        const updated: WorkItem = {
+          ...item,
+          pendingRecallIntents: updatedIntents,
+          recallNoticePending: updatedIntents.some((intent) => !intent.projectedMessageId),
+          updatedAt: nowISO,
+        };
+        const saved = await this.substrate.putIfMatch(KIND, updated, env.resourceVersion);
+        if (saved.ok) return cloneWorkItem(updated);
+      }
+      throw new Error(`CAS retry limit exceeded marking recall notice ${intentId}`);
     });
   }
 
   /** Heartbeat-extend the lease without changing phase (crash-gap vs slow-progress
    *  stays orthogonal to state). Legal in any lease-held phase. */
   async renewLease(workId: string, agentId: string, leaseToken: string): Promise<WorkItem | null> {
+    if (!this.currentness.currentPin()) return this.withWriterFence(() => this.renewLease(workId, agentId, leaseToken));
     const renewed = await this.tryCasUpdate(workId, (w) => {
       this.assertLease(w, agentId, leaseToken, "renew");
       if (!LEASE_HELD_PHASES.includes(w.status)) throw new TransitionRejected(`renew requires a held lease, was ${w.status}`);
@@ -1308,6 +2614,21 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * truncation log is a pure honesty belt (tele-4).
    */
   private async parentsAwaitingCompletion(childId: string): Promise<WorkItem[]> {
+    const pin = this.currentness.currentPin();
+    if (pin?.mode === "generation") {
+      const child = await this.getCurrentProjectionItem(childId);
+      if (!child?.logicalId) return [];
+      const parentLogicalIds = pin.generation.reverseCompletionDependsOn[child.logicalId] ?? [];
+      const parents: WorkItem[] = [];
+      for (const logicalId of parentLogicalIds) {
+        const binding = pin.generation.bindings[logicalId];
+        if (!binding) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `reverse completion edge names absent binding ${logicalId}`);
+        const parent = await this.getCurrentProjectionItem(binding.physicalId);
+        if (!parent) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `current reverse-completion parent ${binding.physicalId} is missing`);
+        parents.push(parent);
+      }
+      return parents;
+    }
     const { items } = await this.substrate.list<WorkItem>(KIND, {
       filter: { completionDependsOn: { $contains: childId } },
       limit: READY_SCAN_CAP,
@@ -1329,7 +2650,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * lease that lapses between the pre-read and the CAS is still not resurrected).
    */
   private async tryBumpAncestorHeartbeat(arcId: string): Promise<void> {
-    const pre = await this.getWorkItem(arcId);
+    const pre = await this.getCurrentProjectionItem(arcId);
     if (!pre?.lease) return; // nothing held to keep alive
     if (pre.lease.expiresAt < this.clock.now().toISOString()) return; // already-expired → sweeper's; never resurrect
     await this.tryCasUpdate(arcId, (w) => {
@@ -1370,6 +2691,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    */
   async systemUnblock(workId: string, decisionRef: string): Promise<WorkItem | null> {
     return this.tryCasUpdate(workId, (w) => {
+      this.assertNotFailedSealed(w);
       if (w.status !== "blocked") {
         throw new TransitionRejected(`systemUnblock requires blocked, was ${w.status}`);
       }
@@ -1383,6 +2705,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
 
   async abandonWork(workId: string, agentId: string, opts?: { reason?: string; leaseToken?: string }): Promise<WorkItem | null> {
     return this.tryCasUpdate(workId, (w) => {
+      this.assertNotFailedSealed(w);
       const isHolderWithToken = w.lease?.holder === agentId && w.lease?.token === opts?.leaseToken;
       const isCreator = w.createdBy?.agentId === agentId;
       if (!isHolderWithToken && !isCreator) {
@@ -1410,9 +2733,11 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * across the CAS re-read. The CAS re-runs the sync predicate on the fresh row.
    */
   async completeWork(workId: string, agentId: string, leaseToken: string, evidence: EvidenceItem[], frictionReflection?: FrictionReflectionInput): Promise<CompleteWorkResult | null> {
+    if (!this.currentness.currentPin()) return this.withWriterFence(() => this.completeWork(workId, agentId, leaseToken, evidence, frictionReflection));
     const pre = await this.substrate.get<WorkItem>(KIND, workId);
     if (!pre) return null;
     const item = cloneWorkItem(pre);
+    this.currentness.assertCurrent(item, this.currentness.currentPin()!);
     // fail-fast auth + phase (re-checked authoritatively inside the CAS)
     this.assertLease(item, agentId, leaseToken, "complete");
     if (!COMPLETABLE_PHASES.includes(item.status)) {
@@ -1577,6 +2902,14 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return map;
   }
 
+  private async addRevisionAuthorExclusions(item: WorkItem, excluded: Set<string>): Promise<void> {
+    if (item.revisedBy?.agentId) excluded.add(item.revisedBy.agentId);
+    const logicalId = item.logicalId;
+    if (!logicalId) return;
+    const family = await this.revisionStorage.getFamily(logicalId);
+    if (family?.originalCreatedBy.agentId) excluded.add(family.originalCreatedBy.agentId);
+  }
+
   /** idea-528 / bug-249: resolve the SELF-attestation exclusion set for a verifier-attestation
    *  gate. The laundering risk is the verifier authoring the VERIFIED WORK, not merely driving the
    *  verifier-gate node. Prefer target-work history: an explicit WorkItem targetRef and/or the
@@ -1585,11 +2918,21 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   private async selfAttestationExclusionFor(gate: WorkItem): Promise<{ excluded: Set<string>; basis: "target-work" | "gate-node"; targetIds: string[] }> {
     const targets = new Map<string, WorkItem>();
     const targetRefKind = gate.targetRef?.kind.toLowerCase();
+    const pin = this.currentness.currentPin();
+    const gateIsCurrent = !pin || pin.mode === "legacy" || this.currentness.isCurrent(gate, pin);
     if (gate.targetRef && (targetRefKind === "workitem" || targetRefKind === "work-item" || targetRefKind === "work")) {
-      const target = await this.substrate.get<WorkItem>(KIND, gate.targetRef.id);
-      if (target) targets.set(gate.targetRef.id, cloneWorkItem(target));
+      const target = gateIsCurrent
+        ? await this.getCurrentProjectionItem(gate.targetRef.id)
+        : await this.getWorkItem(gate.targetRef.id); // historical attestation verification stays exact
+      if (target) targets.set(gate.targetRef.id, target);
     }
-    for (const parent of await this.parentsAwaitingCompletion(gate.id)) {
+    const parents = gateIsCurrent
+      ? await this.parentsAwaitingCompletion(gate.id)
+      : (await this.substrate.list<WorkItem>(KIND, {
+          filter: { completionDependsOn: { $contains: gate.id } },
+          limit: READY_SCAN_CAP,
+        })).items.map(cloneWorkItem);
+    for (const parent of parents) {
       if (parent.id !== gate.id) targets.set(parent.id, parent);
     }
 
@@ -1598,6 +2941,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       for (const target of targets.values()) {
         for (const agentId of target.executorHistory) excluded.add(agentId);
         if (target.createdBy?.agentId) excluded.add(target.createdBy.agentId);
+        await this.addRevisionAuthorExclusions(target, excluded);
         if (target.lease?.holder) excluded.add(target.lease.holder);
       }
       return { excluded, basis: "target-work", targetIds: [...targets.keys()].sort() };
@@ -1605,6 +2949,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
 
     for (const agentId of gate.executorHistory) excluded.add(agentId);
     if (gate.createdBy?.agentId) excluded.add(gate.createdBy.agentId);
+    await this.addRevisionAuthorExclusions(gate, excluded);
     if (gate.lease?.holder) excluded.add(gate.lease.holder);
     return { excluded, basis: "gate-node", targetIds: [] };
   }
@@ -1660,6 +3005,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     evidenceRefs: AttestationEvidenceRef[],
     _note?: string,
   ): Promise<{ item: WorkItem; attestation: Attestation }> {
+    if (!this.currentness.currentPin()) {
+      return this.withWriterFence(() => this.attestEvidence(workId, requirementId, verifierId, verdict, evidenceRefs, _note));
+    }
     // (a) SHAPE validation (sync): non-empty, well-formed typed refs.
     if (!Array.isArray(evidenceRefs) || evidenceRefs.length === 0) {
       throw new AttestationRejected("evidenceRefs must be non-empty (criterion #3: no trust-by-prose verdict)");
@@ -1669,75 +3017,123 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         throw new AttestationRejected(`malformed evidenceRef ${JSON.stringify(r)} — each is { kind: 'evidence'|'entity'|'external', ref: <non-empty> }`);
       }
     }
+    const operationId = failedGateOperationId(workId, requirementId, verifierId, verdict, evidenceRefs);
     const pre = await this.substrate.get<WorkItem>(KIND, workId);
     if (!pre) throw new AttestationRejected(`work item ${workId} not found`);
+    const preItem = cloneWorkItem(pre);
+    this.currentness.assertCurrent(preItem, this.currentness.currentPin()!);
+    // A v2 FAIL is immutable. The exact same operation is a read-only replay; every
+    // later same-row attestation (PASS or a different FAIL) is rejected. A legacy
+    // active FAIL is already effectively sealed and must be reconciled, not superseded.
+    if (preItem.failedGateSeal) {
+      if (verdict === "fail" && preItem.failedGateSeal.operationId === operationId) {
+        return { item: preItem, attestation: preItem.attestations[requirementId] };
+      }
+      throw new FailedGateSealedRejected(workId);
+    }
+    if (hasActiveVerifierFail(preItem)) throw new FailedGateSealedRejected(workId);
+
     // (b) async ENTITY existence resolution (monotonic — safe pre-CAS; relatedness runs on fresh w).
     const resolved = await this.resolveEntityRefs(evidenceRefs);
-    // (c) CAS: derive requirement/hashes/HISTORY/ref-validation ALL from the FRESH w (steve
-    //     audit-11832 #1: closes the first-attestation relocation TOCTOU — an attestation built
-    //     from a stale pre-read must never be merged onto a moved row / auto-advance).
-    const written = await this.tryCasUpdate(workId, async (w) => {
-      const req = w.evidenceRequirements.find((r) => r.id === requirementId);
-      if (!req) throw new AttestationRejected(`requirement '${requirementId}' not found on ${workId}`);
-      if (req.evidenceAuthority !== "verifier-attestation") {
-        throw new AttestationRejected(`requirement '${requirementId}' is evidenceAuthority=${req.evidenceAuthority ?? "executor-evidence"} — attest_evidence only applies to verifier-attestation requirements`);
-      }
-      // fold 2 HISTORY exclusion (idea-528): reject only when the verifier authored the VERIFIED
-      // work. If no verified work can be resolved, fail safe to the historical gate-node check.
-      const selfExclusion = await this.selfAttestationExclusionFor(w);
-      if (selfExclusion.excluded.has(verifierId)) {
-        const targetSuffix = selfExclusion.basis === "target-work" ? `target work ${selfExclusion.targetIds.join(",")}` : workId;
-        throw new AttestationRejected(`verifier ${verifierId} is in the executor/holder/creator history of ${targetSuffix} — self-attestation rejected (fold 2)`);
-      }
-      // typed-ref validation against the fresh w (steve audit-11839): every ref validated, ≥1 load-bearing.
-      const { reasons } = this.classifyEvidenceRefs(evidenceRefs, w, resolved);
-      if (reasons.length > 0) throw new AttestationRejected(`evidenceRefs invalid: ${reasons.join("; ")}`);
-      // relocation anchor guard (belt): a prior attestation stamped for a different targetRef.
-      const anchor = w.attestationHistory[0];
-      if (anchor && anchor.targetRefHash !== hashTargetRef(w.targetRef)) {
-        throw new AttestationRejected(`targetRef of ${workId} changed after an attestation exists — relocation rejected (point-at-A-then-move-to-B laundering)`);
-      }
-      // Build the attestation FROM THE FRESH w (hashes, targetRef snapshot, supersedes).
-      const producedAt = this.clock.now().toISOString();
-      const prior = w.attestations[requirementId];
-      const attestation: Attestation = {
-        requirementId,
-        verifierId,
-        verdict,
-        producedAt,
-        evidenceRefs: evidenceRefs.map((r) => ({ ...r })),
-        requirementHash: hashRequirement(req),
-        targetRefSnapshot: w.targetRef,
-        targetRefHash: hashTargetRef(w.targetRef),
-        evidenceSetHash: hashEvidenceSet(evidenceRefs),
-        ...(prior ? { supersedes: `${prior.requirementId}:${prior.verifierId}:${prior.producedAt}` } : {}),
-      };
-      // preserve-not-inject: MERGE into the CURRENT map/history (never overwrite the subtree).
-      const attestationHistory = [...w.attestationHistory, attestation];
-      const attestations = { ...w.attestations, [requirementId]: attestation };
-      // dual-edge edge #2: LEAF-only auto-advance (a gated ARC completes only via complete_work,
-      // which re-checks completionDependsOn — steve/architect: no gated-arc auto-advance until a
-      // fresh-row completionDependsOn reconciler exists).
-      if (w.status === "review") {
-        const gate = evaluateCompletionGate({ evidenceRequirements: w.evidenceRequirements, attestations });
-        let executorDone = false;
-        try {
-          executorDone = evaluateEvidence(w.evidenceRequirements, w.evidence, w.lease, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey))).nextPhase === "done";
-        } catch {
-          executorDone = false;
+    try {
+      // (c) ONE CAS: FAIL authority + exact pre-clear receipt + active projection + lease/blocker
+      // clear + persist-first exact-holder notice intent are indivisible on the WorkItem row.
+      const written = await this.tryCasUpdate(workId, async (w, resourceVersion) => {
+        if (w.failedGateSeal) {
+          if (verdict === "fail" && w.failedGateSeal.operationId === operationId) throw new IdempotentFailedSeal(w);
+          throw new FailedGateSealedRejected(workId);
         }
-        const isLeaf = w.completionDependsOn.length === 0;
-        if (gate.attestationReqsSatisfied && executorDone && isLeaf) {
-          const nowISO = this.clock.now().toISOString();
-          return { ...w, attestationHistory, attestations, status: "done" as const, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
+        if (hasActiveVerifierFail(w)) throw new FailedGateSealedRejected(workId);
+        const req = w.evidenceRequirements.find((r) => r.id === requirementId);
+        if (!req) throw new AttestationRejected(`requirement '${requirementId}' not found on ${workId}`);
+        if (req.evidenceAuthority !== "verifier-attestation") {
+          throw new AttestationRejected(`requirement '${requirementId}' is evidenceAuthority=${req.evidenceAuthority ?? "executor-evidence"} — attest_evidence only applies to verifier-attestation requirements`);
         }
+        if (verdict === "fail" && w.status !== "review") {
+          throw new AttestationRejected(`failed-gate-seal-v2 requires raw phase=review, was ${w.status}`);
+        }
+        // fold 2 HISTORY exclusion (idea-528): reject only when the verifier authored the VERIFIED
+        // work. If no verified work can be resolved, fail safe to the historical gate-node check.
+        const selfExclusion = await this.selfAttestationExclusionFor(w);
+        if (selfExclusion.excluded.has(verifierId)) {
+          const targetSuffix = selfExclusion.basis === "target-work" ? `target work ${selfExclusion.targetIds.join(",")}` : workId;
+          throw new AttestationRejected(`verifier ${verifierId} is in the executor/holder/creator history of ${targetSuffix} — self-attestation rejected (fold 2)`);
+        }
+        const { reasons } = this.classifyEvidenceRefs(evidenceRefs, w, resolved);
+        if (reasons.length > 0) throw new AttestationRejected(`evidenceRefs invalid: ${reasons.join("; ")}`);
+        const anchor = w.attestationHistory[0];
+        if (anchor && anchor.targetRefHash !== hashTargetRef(w.targetRef)) {
+          throw new AttestationRejected(`targetRef of ${workId} changed after an attestation exists — relocation rejected (point-at-A-then-move-to-B laundering)`);
+        }
+        const producedAt = this.clock.now().toISOString();
+        const prior = w.attestations[requirementId];
+        const attestation: Attestation = {
+          requirementId,
+          verifierId,
+          verdict,
+          producedAt,
+          evidenceRefs: evidenceRefs.map((r) => ({ ...r })),
+          requirementHash: hashRequirement(req),
+          targetRefSnapshot: w.targetRef,
+          targetRefHash: hashTargetRef(w.targetRef),
+          evidenceSetHash: hashEvidenceSet(evidenceRefs),
+          ...(prior ? { supersedes: attestationIdentity(prior) } : {}),
+        };
+        const attestationHistory = [...w.attestationHistory, attestation];
+        const attestations = { ...w.attestations, [requirementId]: attestation };
+
+        if (verdict === "fail") {
+          const { seal, notice } = buildFailedGateSeal({
+            item: w,
+            resourceVersion,
+            attestation,
+            attestationHistoryIndex: w.attestationHistory.length,
+            operationId,
+            sealedAt: producedAt,
+          });
+          return {
+            ...w,
+            status: "review" as const,
+            attestationHistory,
+            attestations,
+            failedGateSeal: seal,
+            effectiveDisposition: "failed_sealed" as const,
+            pendingFailedSealNotices: notice ? [...(w.pendingFailedSealNotices ?? []), notice] : (w.pendingFailedSealNotices ?? []),
+            failedSealNoticePending: notice !== null,
+            lease: null,
+            blockedOn: null,
+            ...accrueExitingState(w, producedAt),
+            updatedAt: producedAt,
+          };
+        }
+
+        // PASS dual-edge: LEAF-only auto-advance. A gated ARC completes only through
+        // complete_work, which independently re-checks completionDependsOn.
+        if (w.status === "review") {
+          const gate = evaluateCompletionGate({ evidenceRequirements: w.evidenceRequirements, attestations });
+          let executorDone = false;
+          try {
+            executorDone = evaluateEvidence(w.evidenceRequirements, w.evidence, w.lease, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey))).nextPhase === "done";
+          } catch {
+            executorDone = false;
+          }
+          if (gate.attestationReqsSatisfied && executorDone && w.completionDependsOn.length === 0) {
+            return { ...w, attestationHistory, attestations, status: "done" as const, ...accrueExitingState(w, producedAt), updatedAt: producedAt };
+          }
+        }
+        return { ...w, attestationHistory, attestations, updatedAt: producedAt };
+      });
+      return { item: written!, attestation: written!.attestations[requirementId] };
+    } catch (err) {
+      if (err instanceof IdempotentFailedSeal) {
+        return { item: err.item, attestation: err.item.attestations[requirementId] };
       }
-      return { ...w, attestationHistory, attestations, updatedAt: this.clock.now().toISOString() };
-    });
-    return { item: written!, attestation: written!.attestations[requirementId] };
+      throw err;
+    }
   }
 
   async verifyAttestation(workId: string, requirementId: string): Promise<AttestationVerification> {
+    if (!this.currentness.currentPin()) return this.withReadPin(() => this.verifyAttestation(workId, requirementId));
     const pre = await this.substrate.get<WorkItem>(KIND, workId);
     if (!pre) {
       return { workId, requirementId, valid: false, invalidReasons: [`work item ${workId} not found`], active: null, history: [], legacyReviewEvidencePresent: false };
@@ -1773,6 +3169,55 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return { workId, requirementId, valid: invalidReasons.length === 0, invalidReasons, active, history, legacyReviewEvidencePresent };
   }
 
+  /** Restart-safe outbox scan. The filter is status-partitioned/index-governed;
+   *  exact pending-intent filtering is in memory because JSON-array predicates are
+   *  intentionally not added to the substrate query language. Truncation is loud. */
+  async listPendingFailedSealNoticeItems(limit = LIST_CAP): Promise<{ items: WorkItem[]; truncated: boolean }> {
+    if (!this.currentness.currentPin()) return this.withReadPin(() => this.listPendingFailedSealNoticeItems(limit));
+    const cap = Math.min(Math.max(1, limit), LIST_CAP);
+    const { items } = await this.substrate.list<WorkItem>(KIND, {
+      filter: { "status.failedSealNoticePending": true },
+      limit: cap,
+    });
+    // Persist-first exact-holder intent is historical authority, not current
+    // lifecycle authority. A successor must not erase an unprojected notice.
+    const pending = items.map(cloneWorkItem).filter((item) =>
+      (item.pendingFailedSealNotices ?? []).some((notice) => notice.projectedMessageId === null));
+    return { items: pending, truncated: items.length >= cap };
+  }
+
+  async markFailedSealNoticeProjected(workId: string, intentId: string, messageId: string): Promise<WorkItem | null> {
+    if (!this.currentness.currentPin()) return this.withWriterFence(() => this.markFailedSealNoticeProjected(workId, intentId, messageId));
+    for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt += 1) {
+      const row = await this.substrate.getWithRevision<WorkItem>(KIND, workId);
+      if (!row) return null;
+      const w = cloneWorkItem(row.entity);
+      if (!isFailedGateSealed(w)) throw new TransitionRejected(`failed-seal notice projection requires failed-sealed authority on ${workId}`);
+      const notices = w.pendingFailedSealNotices ?? [];
+      const index = notices.findIndex((notice) => notice.intentId === intentId);
+      if (index < 0) throw new TransitionRejected(`failed-seal notice intent ${intentId} does not exist on ${workId}`);
+      const current = notices[index];
+      if (current.projectedMessageId !== null) {
+        if (current.projectedMessageId !== messageId) {
+          throw new TransitionRejected(`failed-seal notice intent ${intentId} already projects to ${current.projectedMessageId}, not ${messageId}`);
+        }
+        return w;
+      }
+      const next = [...notices];
+      const nowISO = this.clock.now().toISOString();
+      next[index] = { ...current, projectedMessageId: messageId, projectedAt: nowISO };
+      const updated = {
+        ...w,
+        pendingFailedSealNotices: next,
+        failedSealNoticePending: next.some((notice) => notice.projectedMessageId === null),
+        updatedAt: nowISO,
+      };
+      const cas = await this.substrate.putIfMatch(KIND, updated, row.resourceVersion);
+      if (cas.ok) return cloneWorkItem(updated);
+    }
+    throw new Error(`[WorkItemRepositorySubstrate] failed-seal notice projection exhausted ${MAX_CAS_RETRIES} retries on ${workId}`);
+  }
+
   // ── Lease-expiry sweep surface (sub-PR-4a) ────────────────────────────────
 
   /**
@@ -1783,11 +3228,16 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * sweeper's cal-84 belt catches + escalates).
    */
   async listExpiredLeaseItems(nowISO: string, limit: number): Promise<WorkItem[]> {
+    if (!this.currentness.currentPin()) return this.withReadPin(() => this.listExpiredLeaseItems(nowISO, limit));
+    const current = await this.currentGenerationItems(this.currentness.currentPin()!);
+    if (current) {
+      return current.filter((item) => LEASE_HELD_PHASES.includes(item.status) && !!item.lease && item.lease.expiresAt < nowISO).slice(0, limit);
+    }
     const { items } = await this.substrate.list<WorkItem>(KIND, {
       filter: { status: { $in: [...LEASE_HELD_PHASES] }, "status.lease.expiresAt": { $lt: nowISO } },
       limit,
     });
-    return items.map(cloneWorkItem);
+    return this.currentness.filterCurrent(items.map(cloneWorkItem), this.currentness.currentPin()!);
   }
 
   /**
@@ -1798,24 +3248,67 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * to ready (leaseExpiryCount < poisonCap) or POISON-ABANDONS (>= poisonCap). The lease
    * is cleared either way (a re-claim mints a fresh token → the old holder is token-fenced).
    */
-  async expireLease(workId: string, nowISO: string, poisonCap: number): Promise<"requeued" | "abandoned" | "skipped"> {
+  async expireLease(workId: string, nowISO: string, poisonCap: number): Promise<"requeued" | "abandoned" | "failed_sealed" | "skipped"> {
+    if (!this.currentness.currentPin()) return this.withWriterFence(() => this.expireLease(workId, nowISO, poisonCap));
     for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
       const existing = await this.substrate.getWithRevision<WorkItem>(KIND, workId);
       if (!existing) return "skipped";
       const w = cloneWorkItem(existing.entity);
+      this.currentness.assertCurrent(w, this.currentness.currentPin()!);
       // race-safe re-check: only sweep an item that is STILL lease-held AND still expired.
       if (!LEASE_HELD_PHASES.includes(w.status) || !w.lease || w.lease.expiresAt >= nowISO) {
         return "skipped";
       }
+
+      // failed-gate-seal-v2 LEGACY RECONCILIATION RUNS BEFORE raw-phase sweep logic.
+      // An active verifier FAIL is effective terminality even without a v2 receipt; it
+      // can never fall through to review→ready. The same CAS backfills the receipt,
+      // clears the obsolete lease/blocker, and persists the exact-holder outbox intent.
+      if (hasActiveVerifierFail(w)) {
+        if (w.failedGateSeal) return "skipped"; // born-native seals clear the lease; defensive only
+        const requirementId = w.evidenceRequirements
+          .filter((req) => req.evidenceAuthority === "verifier-attestation" && w.attestations[req.id]?.verdict === "fail")
+          .map((req) => req.id)
+          .sort()[0];
+        const attestation = w.attestations[requirementId];
+        const historyIndex = w.attestationHistory.findIndex((candidate) => attestationIdentity(candidate) === attestationIdentity(attestation));
+        if (historyIndex < 0) {
+          throw new Error(`[WorkItemRepositorySubstrate] legacy active FAIL projection ${workId}/${requirementId} has no append-only history row; refusing sweep`);
+        }
+        const operationId = hashCanonicalDomain("failed-gate-legacy-reconcile-v2", {
+          workId, attestationId: attestationIdentity(attestation),
+        });
+        const { seal, notice } = buildFailedGateSeal({
+          item: w,
+          resourceVersion: existing.resourceVersion,
+          attestation,
+          attestationHistoryIndex: historyIndex,
+          operationId,
+          sealedAt: nowISO,
+        });
+        const next: WorkItem = {
+          ...w,
+          status: "review",
+          failedGateSeal: seal,
+          effectiveDisposition: "failed_sealed",
+          pendingFailedSealNotices: notice ? [...(w.pendingFailedSealNotices ?? []), notice] : (w.pendingFailedSealNotices ?? []),
+          failedSealNoticePending: notice !== null,
+          lease: null,
+          blockedOn: null,
+          ...accrueExitingState(w, nowISO),
+          updatedAt: nowISO,
+        };
+        const result = await this.substrate.putIfMatch(KIND, next, existing.resourceVersion);
+        if (result.ok) return "failed_sealed";
+        continue;
+      }
+
       // audit-4103 #3: only claimed/in_progress lapses accrue item-poison. review/blocked
       // re-queue WITHOUT incrementing → never terminal-abandon (evidence preserved on
       // re-queue, so a parked review item that loses its holder is recoverable, not lost).
       const poisonEligible = POISON_ELIGIBLE_PHASES.includes(w.status);
       const nextCount = poisonEligible ? w.leaseExpiryCount + 1 : w.leaseExpiryCount;
       const poisoned = poisonEligible && nextCount >= poisonCap;
-      // work-98 (idea-384 Part A): accrue the EXITING lease-held state's dwell before the sweep.
-      // On requeue→ready the node re-enters ready (re-stamped here), so its next ready-dwell
-      // RE-ACCUMULATES onto the prior ready total — a thrashing node shows its time in `ready`.
       const accrued = accrueExitingState(w, nowISO);
       const next: WorkItem = poisoned
         ? { ...w, status: "abandoned", lease: null, blockedOn: null, leaseExpiryCount: nextCount, ...accrued, updatedAt: nowISO }
@@ -1866,11 +3359,18 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    *  and the agent-scoped listReadyForRole projection (idea-353 WI-2.1 / audit-4265),
    *  so the claimable digest cannot over-report relative to claim_work. */
   private async inFlightCount(agentId: string, cap: number): Promise<number> {
+    const pin = this.currentness.currentPin();
+    if (pin?.mode === "generation") {
+      const current = await this.currentGenerationItems(pin) ?? [];
+      return current.filter((item) => WIP_PHASES.includes(item.status) && item.lease?.holder === agentId && !isFailedGateSealed(item)).slice(0, cap).length;
+    }
     const { items } = await this.substrate.list<WorkItem>(KIND, {
       filter: { status: { $in: [...WIP_PHASES] }, "status.lease.holder": agentId },
-      limit: cap,
+      // A legacy active FAIL may still carry an obsolete lease until reconciliation;
+      // scan broadly enough to exclude that effective-terminal row without consuming WIP.
+      limit: LIST_CAP,
     });
-    return items.length;
+    return items.map(cloneWorkItem).filter((item) => !isFailedGateSealed(item)).slice(0, cap).length;
   }
 
   /** Resolve each dependency's phase; return the ids NOT in phase=done (audit-4085 #1).
@@ -1879,8 +3379,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   private async unmetDependencies(depIds: string[]): Promise<string[]> {
     const unmet: string[] = [];
     for (const depId of depIds) {
-      const dep = await this.substrate.get<WorkItem>(KIND, depId);
-      if (!dep || cloneWorkItem(dep).status !== "done") unmet.push(depId);
+      const dep = await this.getCurrentProjectionItem(depId);
+      if (!dep || dep.status !== "done") unmet.push(depId);
     }
     return unmet;
   }
@@ -1888,7 +3388,12 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   /** Holder + token guard for lease-bound verbs (audit-4082 #1/#4). A non-holder OR a
    *  stale token (after a lease-expiry-requeue or a fresh re-claim) REJECTS — even for
    *  the SAME agentId — fencing a zombie old-process. Fail-CLOSED, row unchanged. */
+  private assertNotFailedSealed(w: WorkItem): void {
+    if (isFailedGateSealed(w)) throw new FailedGateSealedRejected(w.id);
+  }
+
   private assertLease(w: WorkItem, agentId: string, leaseToken: string, verb: string): void {
+    this.assertNotFailedSealed(w);
     if (w.lease?.holder !== agentId) {
       throw new TransitionRejected(`${verb} requires the lease-holder (${w.lease?.holder ?? "none"}), not ${agentId}`);
     }
@@ -1933,12 +3438,15 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
 
   private async tryCasUpdate(
     workId: string,
-    transform: (current: WorkItem) => WorkItem | Promise<WorkItem>,
+    transform: (current: WorkItem, resourceVersion: string) => WorkItem | Promise<WorkItem>,
   ): Promise<WorkItem | null> {
+    if (!this.currentness.currentPin()) return this.withWriterFence(() => this.tryCasUpdate(workId, transform));
     for (let attempt = 0; attempt < MAX_CAS_RETRIES; attempt++) {
       const existing = await this.substrate.getWithRevision<WorkItem>(KIND, workId);
       if (!existing) return null;
-      const next = await transform(cloneWorkItem(existing.entity));
+      const current = cloneWorkItem(existing.entity);
+      this.currentness.assertCurrent(current, this.currentness.currentPin()!);
+      const next = await transform(current, existing.resourceVersion);
       const result = await this.substrate.putIfMatch(KIND, next, existing.resourceVersion);
       if (result.ok) {
         console.log(`[WorkItemRepositorySubstrate] WorkItem ${workId} → ${next.status}`);

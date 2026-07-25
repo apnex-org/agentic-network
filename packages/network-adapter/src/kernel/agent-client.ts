@@ -117,8 +117,12 @@ export interface AgentHandshakeConfig {
   llmModel?: string;
   /** Fatal-code halt (agent_thrashing_detected / role_mismatch). */
   onFatalHalt?: (err: HandshakeFatalError) => void;
-  /** Successful handshake callback — useful for shim state tracking. */
-  onHandshakeComplete?: (response: HandshakeResponse) => void;
+  /**
+   * Successful handshake callback — useful for shim state tracking. Async
+   * callbacks are awaited before state-sync begins, allowing a native binding
+   * to establish claimed-session authority on this exact wire generation.
+   */
+  onHandshakeComplete?: (response: HandshakeResponse) => void | Promise<void>;
   /** ADR-017: optional durable-wake HTTP endpoint for this agent. */
   wakeEndpoint?: string;
   /** ADR-017: optional per-agent receipt-SLA override (ms). */
@@ -161,6 +165,8 @@ export interface AgentClientMetrics {
   readonly sessionState: SessionState;
   readonly agentId?: string;
   readonly sessionEpoch?: number;
+  /** Monotonic L7 wire generation; increments for every newly connected wire. */
+  readonly wireGeneration: number;
   readonly totalHandshakes: number;
   readonly totalSessionInvalidRetries: number;
   readonly dedupDropCount: number;

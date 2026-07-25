@@ -247,6 +247,18 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
   // In-memory bookkeeping (wipes on Hub restart, identical to legacy).
   private readonly displacementHistory = new Map<string, number[]>();
   private readonly sessionToEngineerId = new Map<string, string>();
+  /**
+   * bug-340 P0: application-layer sink for evicting a displaced MCP session.
+   * It is intentionally process-local and receives no substrate handle: the only
+   * legal effect is cleanup of transport/session ephemera after claim CAS success.
+   */
+  private sessionDisplacementHandler?: (event: {
+    agentId: string;
+    priorSessionId: string;
+    priorEpoch: number;
+    newSessionId: string;
+    newEpoch: number;
+  }) => Promise<void>;
 
   /** bug-230: rolling, deduped, capped persisted register bindings (newest-last). */
   private static appendRegisteredSession(list: string[] | null | undefined, sessionId: string): string[] {
@@ -320,6 +332,26 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
 
   getRole(sessionId: string): SessionRole {
     return this.sessionRoles.get(sessionId) || "unknown";
+  }
+
+  setSessionDisplacementHandler(handler: (event: {
+    agentId: string;
+    priorSessionId: string;
+    priorEpoch: number;
+    newSessionId: string;
+    newEpoch: number;
+  }) => Promise<void>): void {
+    this.sessionDisplacementHandler = handler;
+  }
+
+  /**
+   * Revoke ONLY process-local authorization/binding state for one session.
+   * Do not touch lastTouchAt: it is keyed by stable agentId and belongs to the
+   * replacement session too. There is intentionally no substrate call here.
+   */
+  forgetSession(sessionId: string): void {
+    this.sessionRoles.delete(sessionId);
+    this.sessionToEngineerId.delete(sessionId);
   }
 
   // ── M18 Agent methods ──────────────────────────────────────────────
@@ -683,9 +715,33 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       this.sessionToEngineerId.set(sessionId, updated.id);
       this.lastTouchAt.set(updated.id, this.clock.now().getTime());
       if (displaced) {
+        // Revoke the old process-local binding before yielding. Without this,
+        // the displaced wire can issue one more tool call, resolve through the
+        // stale map, and auto-claim itself back (the session-amplification loop
+        // behind bug-340). The persisted registeredSessions filter above is the
+        // restart-safe counterpart; neither operation deletes an entity/history.
+        this.forgetSession(displaced.sessionId);
         console.log(
           `[AgentRepositorySubstrate] Agent displaced: ${updated.id} epoch=${updated.sessionEpoch} (trigger=${trigger}, prior sessionId=${displaced.sessionId} epoch=${displaced.epoch})`,
         );
+        if (this.sessionDisplacementHandler) {
+          try {
+            await this.sessionDisplacementHandler({
+              agentId: updated.id,
+              priorSessionId: displaced.sessionId,
+              priorEpoch: displaced.epoch,
+              newSessionId: sessionId,
+              newEpoch: updated.sessionEpoch,
+            });
+          } catch (err) {
+            // The claim CAS is already authoritative and must never be reported as
+            // failed (a blind retry would amplify sessions). The stale binding is
+            // already revoked above; surface physical-close failure loudly.
+            console.error(
+              `[AgentRepositorySubstrate] displaced-session ephemeral eviction failed after committed claim (agentId=${updated.id}, priorSessionId=${displaced.sessionId}, newSessionId=${sessionId}): ${(err as Error)?.message ?? err}`,
+            );
+          }
+        }
       } else {
         console.log(
           `[AgentRepositorySubstrate] Agent session claimed: ${updated.id} epoch=${updated.sessionEpoch} (trigger=${trigger})`,
@@ -723,9 +779,27 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     // that defeated the bug-229 minter-targeted wake live). Fall back to the
     // PERSISTED binding and rehydrate the map; a genuinely unregistered
     // session matches no row and keeps the anonymous stamp (no invented
-    // identity). One row-scan per unknown session per process — fleet-scale.
-    const rows = await this.listAgents();
-    const match = rows.find((a) => !a.archived && (a.currentSessionId === sessionId || (a.registeredSessions ?? []).includes(sessionId)));
+    // identity).
+    //
+    // bug-343: the old fallback called listAgents(), forcing a whole-Agent-kind
+    // state-sync scan for each previously-unknown session after a Hub restart.
+    // Pinpoint currentSessionId first (the normal case), then the bounded
+    // registeredSessions GIN fallback. Both paths are substrate-filtered and
+    // index-backed by Agent SchemaDef v3; no entity/history row is rewritten.
+    const current = await this.listAgentsRaw({
+      filter: { currentSessionId: sessionId },
+      limit: 2,
+    });
+    let match = current.find((a) => !a.archived && a.currentSessionId === sessionId);
+    if (!match) {
+      const registered = await this.listAgentsRaw({
+        filter: { registeredSessions: { $contains: sessionId } },
+        limit: 8,
+      });
+      match = registered.find((a) =>
+        !a.archived && (a.registeredSessions ?? []).includes(sessionId)
+      );
+    }
     if (!match) return null;
     this.sessionToEngineerId.set(sessionId, match.id);
     console.log(`[AgentRepositorySubstrate] session→agent binding rehydrated from the persisted row: ${sessionId} → ${match.id} (bug-230)`);

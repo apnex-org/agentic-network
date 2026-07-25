@@ -22,7 +22,7 @@
  * it. A new filter adds its key here; if untranslatable it fails W1.1c.
  */
 export const SUBSTRATE_FILTERABLE_KEYS: Record<string, string[]> = {
-  Agent: ["fingerprint"],
+  Agent: ["fingerprint", "currentSessionId", "registeredSessions"],
   Audit: ["actor"],
   Bug: ["status", "severity", "class", "sourceThreadId", "sourceActionId", "sourceIdeaId"],
   Idea: ["status", "missionId", "sourceThreadId", "sourceActionId"],
@@ -30,7 +30,7 @@ export const SUBSTRATE_FILTERABLE_KEYS: Record<string, string[]> = {
   Mission: ["status", "sourceThreadId", "sourceActionId"],
   PendingAction: ["state", "naturalKey", "targetAgentId", "dispatchType", "entityRef"],
   Proposal: ["status", "sourceThreadId", "sourceActionId"],
-  Thread: ["status", "cascadePending", "currentTurnAgentId", "recipientAgentId"],
+  Thread: ["status", "cascadePending", "currentTurn", "currentTurnAgentId", "recipientAgentId"],
   Document: ["category"],
   ReviewHistoryEntry: ["taskId"],
   ThreadHistoryEntry: ["threadId"],
@@ -43,6 +43,14 @@ export const SUBSTRATE_FILTERABLE_KEYS: Record<string, string[]> = {
   // (status.lease.holder / status.lease.expiresAt — isBucketPrefixed, no renameMap
   // entry, sub-PR-3), NOT listed here.
   WorkItem: ["status", "roleEligibility", "completionDependsOn"],
+  // Mission-140 immutable revision storage + indexed reverse traversal/lookups.
+  WorkRevisionFamily: ["originPhysicalId", "familyScope.kind", "familyScope.id"],
+  WorkGraphTopologyGeneration: ["generation", "previousGeneration", "operationId"],
+  WorkGraphTopologyShard: ["generation", "shardIndex"],
+  WorkGraphTopologyHead: ["generation"],
+  WorkGraphTopologyEdge: ["generation", "edgeClass", "sourceLogicalId", "targetLogicalId"],
+  WorkGraphRevisionOperation: ["generation", "state", "operationId"],
+  WorkGraphRevisionNotice: ["generation", "operationId", "exactHolderAgentId", "projected"],
   // mission-102 P3-B1: Decision queue views filter by phase + ontology class. The
   // arrival-surface routedTo.target filter uses the bucket-prefixed dotted path
   // (status.routedTo.target — isBucketPrefixed, no renameMap entry), NOT listed here.
@@ -78,6 +86,7 @@ export const EXCLUDED_FILTERABLE_KEYS: Record<string, Record<string, string>> = 
  * SUBSTRATE_FILTERABLE_KEYS.
  */
 export const ARRAY_FILTERABLE_KEYS: Record<string, string[]> = {
+  Agent: ["registeredSessions"],
   WorkItem: ["roleEligibility", "completionDependsOn"],
 };
 
@@ -122,6 +131,27 @@ export interface AnnotatedFilterSite {
 
 export const ANNOTATED_FILTER_SITES: AnnotatedFilterSite[] = [
   {
+    file: "work-revision-storage-v4.ts",
+    kind: null,
+    reason: "unresolved-kind",
+    keys: ["id"],
+    note: "listAllStableWithSnapshot(kind, filter) is the revision-storage uncapped paging primitive. kind/filter are internally selected from the closed WORK_REVISION_KINDS registry; id is the deterministic universal sort key and each supplied filter key is pinned in SUBSTRATE_FILTERABLE_KEYS above.",
+  },
+  {
+    file: "complete-list.ts",
+    kind: null,
+    reason: "unresolved-kind",
+    keys: ["id"],
+    note: "generic stable pager receives kind + filter from a typed repository and contributes only the universal immutable id sort; repository call-sites remain the domain-key authority.",
+  },
+  {
+    file: "pending-action-repository-substrate.ts",
+    kind: "PendingAction",
+    reason: "unresolved-filter-var",
+    keys: ["targetAgentId", "state"],
+    note: "agentListFilter centralizes the targetAgentId plus state/states predicates shared by capped and complete PendingAction reads.",
+  },
+  {
     file: "curation-repository-substrate.ts",
     kind: null,
     reason: "unresolved-kind",
@@ -139,8 +169,8 @@ export const ANNOTATED_FILTER_SITES: AnnotatedFilterSite[] = [
     file: "agent-repository-substrate.ts",
     kind: "Agent",
     reason: "spread",
-    keys: ["fingerprint"],
-    note: "listAgentsRaw spreads `...(envelopeFilter ? {filter} : {})`; envelopeFilter = agentFilterToEnvelope(opts.filter), which pre-translates the flat `fingerprint` → metadata.fingerprint. Keys are caller-determined.",
+    keys: ["fingerprint", "currentSessionId", "registeredSessions"],
+    note: "listAgentsRaw spreads `...(envelopeFilter ? {filter} : {})`; envelopeFilter = agentFilterToEnvelope(opts.filter), which pre-translates identity + persisted-session keys to their envelope paths. Keys are caller-determined.",
   },
   {
     file: "message-repository-substrate.ts",
@@ -153,8 +183,8 @@ export const ANNOTATED_FILTER_SITES: AnnotatedFilterSite[] = [
     file: "thread-repository-substrate.ts",
     kind: "Thread",
     reason: "spread",
-    keys: ["recipientAgentId", "currentTurnAgentId"],
-    note: "listThreads spreads `...(equalityFilter ?? {})`; the directed-discovery keys (recipientAgentId / currentTurnAgentId) are pushed in by thread-policy (bug-170). status/cascadePending are inline-derived.",
+    keys: ["recipientAgentId", "currentTurnAgentId", "currentTurn"],
+    note: "listThreads spreads `...(equalityFilter ?? {})`; directed discovery supplies recipient/currentTurnAgentId and bug-343 get_pending_actions supplies currentTurn. status/cascadePending are inline-derived.",
   },
   {
     file: "migration-runner.ts",

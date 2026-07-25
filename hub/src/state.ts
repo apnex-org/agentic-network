@@ -9,6 +9,8 @@
  * substrate (A4 zero-loss); there is no read path or type.
  */
 
+import type { CompleteListResult } from "./storage-substrate/complete-list.js";
+
 export type SessionRole = "engineer" | "architect" | "director" | "verifier" | "unknown";
 
 /**
@@ -1065,6 +1067,12 @@ export interface IThreadStore {
   replyToThread(threadId: string, message: string, author: ThreadAuthor, options?: ReplyToThreadOptions): Promise<Thread | null>;
   getThread(threadId: string): Promise<Thread | null>;
   listThreads(status?: ThreadStatus, equalityFilter?: Record<string, string>): Promise<Thread[]>;
+  /** Stable complete paging, optionally fenced to an aggregate high-water. */
+  listThreadsComplete(
+    status?: ThreadStatus,
+    equalityFilter?: Record<string, string>,
+    expectedRevision?: string,
+  ): Promise<CompleteListResult<Thread>>;
   closeThread(threadId: string): Promise<boolean>;
   /**
    * Mission-24 Phase 2 (ADR-014, M24-T6): participant-initiated exit
@@ -1149,6 +1157,8 @@ export interface IProposalStore {
   submitProposal(title: string, summary: string, body: string, correlationId?: string, executionPlan?: ProposedExecutionPlan, labels?: Record<string, string>, backlink?: CascadeBacklink, createdBy?: EntityProvenance): Promise<Proposal>;
   setScaffoldResult(proposalId: string, result: ScaffoldResult): Promise<boolean>;
   getProposals(status?: ProposalStatus): Promise<Proposal[]>;
+  /** Stable complete paging, optionally fenced to an aggregate high-water. */
+  getProposalsComplete(status?: ProposalStatus, expectedRevision?: string): Promise<CompleteListResult<Proposal>>;
   getProposal(proposalId: string): Promise<Proposal | null>;
   reviewProposal(proposalId: string, decision: ProposalStatus, feedback: string): Promise<boolean>;
   closeProposal(proposalId: string): Promise<boolean>;
@@ -1203,6 +1213,26 @@ export interface IEngineerRegistry {
    * alongside the claim audit.
    */
   claimSession(agentId: string, sessionId: string, trigger: ClaimSessionTrigger): Promise<ClaimSessionResult>;
+  /**
+   * bug-340 P0: install the process-local displacement sink. The registry calls
+   * this only AFTER the Agent-row claim CAS has made `newSessionId` authoritative.
+   * The sink may evict transport/session EPHEMERA; it must never delete substrate
+   * entities or history. Optional keeps non-network registry implementations and
+   * isolated policy tests source-compatible.
+   */
+  setSessionDisplacementHandler?(handler: (event: {
+    agentId: string;
+    priorSessionId: string;
+    priorEpoch: number;
+    newSessionId: string;
+    newEpoch: number;
+  }) => Promise<void>): void;
+  /**
+   * bug-340 P0: forget one process-local session binding/role. This is deliberately
+   * NOT a repository delete: Agent/WorkItem/Message/Audit/evidence/attestation rows
+   * and all immutable history remain untouched.
+   */
+  forgetSession?(sessionId: string): void;
   getAgent(agentId: string): Promise<Agent | null>;
   /** Mission-19: resolve the Agent bound to an SSE session (null if none). */
   getAgentForSession(sessionId: string): Promise<Agent | null>;

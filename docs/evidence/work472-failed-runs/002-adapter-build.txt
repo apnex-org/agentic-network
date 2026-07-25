@@ -1,0 +1,17 @@
+
+> @apnex/network-adapter@0.1.14 prebuild
+> node ../../scripts/build/write-build-info.js
+
+[build-info] dist/build-info.json: 21a42ad0-dirty on drew/bug343-aggregate-snapshot-coherence at 2026-07-23T18:26:36.506Z
+
+> @apnex/network-adapter@0.1.14 build
+> tsc
+
+sh: tsc: command not found
+npm error Lifecycle script `build` failed with error:
+npm error code 127
+npm error path /home/apnex/taceng/agentic-network-drew-bug343-aggregate/packages/network-adapter
+npm error workspace @apnex/network-adapter@0.1.14
+npm error location /home/apnex/taceng/agentic-network-drew-bug343-aggregate/packages/network-adapter
+npm error command failed
+npm error command sh -c tsc

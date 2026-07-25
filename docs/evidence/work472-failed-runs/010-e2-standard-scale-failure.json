@@ -1,0 +1,8 @@
+{
+  "bug": "bug-343",
+  "workItem": "work-472",
+  "profile": "e2-standard-compatible-4vcpu-8gib",
+  "failedAt": "2026-07-23T18:35:25.169Z",
+  "error": "Error: cannot establish exact rv baseline: existing max=424374",
+  "stack": "Error: cannot establish exact rv baseline: existing max=424374\n    at prepareCoherenceBaseline (/home/apnex/taceng/agentic-network-drew-bug343-aggregate/hub/scripts/bug343-reconnect-scale.ts:357:13)\n    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)\n    at async main (/home/apnex/taceng/agentic-network-drew-bug343-aggregate/hub/scripts/bug343-reconnect-scale.ts:668:3)\n    at async <anonymous> (/home/apnex/taceng/agentic-network-drew-bug343-aggregate/hub/scripts/bug343-reconnect-scale.ts:744:3)"
+}

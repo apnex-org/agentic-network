@@ -15,6 +15,12 @@
  */
 import type { EntityProvenance } from "../state.js";
 import type { PulseConfig } from "./mission.js";
+import type {
+  ActorStampV4,
+  BoundWorkItemReferenceV4,
+  PendingRecallIntentV4,
+  RecallHistoryEntryV4,
+} from "./work-item-contract-v4.js";
 
 /**
  * W1 (idea-446 / work-181): node-native backstop config. The anti-idle pulse,
@@ -32,6 +38,78 @@ export type WorkItemType = "task" | "bug" | "review" | "verifier-gate" | "freefo
 export type WorkItemPriority = "critical" | "high" | "normal" | "low";
 export type WorkItemPhase =
   | "ready" | "claimed" | "in_progress" | "blocked" | "paused" | "review" | "done" | "abandoned";
+
+export interface PauseWorkRequestV4 {
+  /** Exactly one locator is required. Physical ids never silently follow successors. */
+  workId?: string;
+  logicalId?: string;
+  operationId: string;
+  reason: string;
+  expectedRevision?: number;
+  expectedGeneration?: number;
+}
+
+export interface UnpauseWorkRequestV4 {
+  /** Scalar compatibility: exactly one physical/logical locator. Batch recommit:
+   *  logicalIds + exact revisions + operationId/reason, with scalar locators absent. */
+  workId?: string;
+  logicalId?: string;
+  logicalIds?: string[];
+  expectedRevision?: number;
+  expectedRevisions?: Record<string, number>;
+  expectedGeneration?: number;
+  operationId?: string;
+  reason?: string;
+}
+
+export interface ReviseWorkSetV4 {
+  runbook?: string;
+  payload?: unknown;
+  targetRef?: { kind: string; id: string } | null;
+  roleEligibility?: string[];
+  leaseWindowMs?: number | null;
+  nodeConfig?: NodeConfig | null;
+}
+
+/** Semantic revision request. type/evidenceRequirements and historical/status
+ *  fields are intentionally absent: they cannot be caller-mutated. Edge arrays
+ *  are replace-semantics over stable logical IDs. */
+export interface ReviseWorkRequestV4 {
+  workId?: string;
+  logicalId?: string;
+  operationId: string;
+  reason: string;
+  expectedGeneration: number;
+  expectedAffectedSet?: string[];
+  set?: ReviseWorkSetV4;
+  dependsOn?: string[];
+  completionDependsOn?: string[];
+  references?: WorkItemReference[];
+}
+
+export interface ReviseWorkResultV4 {
+  operationId: string;
+  requestHash: string;
+  generation: number;
+  previousGeneration: number;
+  topologyHash: string;
+  rootLogicalId: string;
+  affectedSet: string[];
+  recommitSet: string[];
+  current: Array<{ logicalId: string; physicalId: string; revision: number; localExecutionIdentity: string }>;
+  operationReplay: boolean;
+}
+
+export interface CurrentWorkProjectionV4 {
+  logicalId: string;
+  physicalId: string;
+  revision: number;
+  generation: number;
+  topologyHash: string;
+  predecessorPhysicalId: string | null;
+  localExecutionIdentity: string;
+  workItem: WorkItem;
+}
 
 /** work-94 (cold-start spine, non-dark digest): WHY a caller-scoped claimable digest is
  *  empty — never a DARK (silent) zero. `wip_capped` + `no_claimable_ready` are repo-set
@@ -61,6 +139,9 @@ export interface FrictionRollup {
 
 export interface StintProjection {
   arcId: string;
+  /** Mission-140: the one immutable topology snapshot this projection read. */
+  observedTopologyGeneration?: number;
+  observedTopologyHash?: string;
   arcStatus: WorkItemPhase;
   completion: { done: number; total: number; pending: string[] };
   /** tracks the ARC completion-gate (children>0): `total>0 && done===total` — complete_work would
@@ -98,6 +179,9 @@ export interface StintProjection {
  *  orders by priority + returns the head). Feeds W3's reconciler + cold-start "what next". */
 export interface NextActionProjection {
   arcId: string;
+  /** Mission-140: the one immutable topology snapshot this projection read. */
+  observedTopologyGeneration?: number;
+  observedTopologyHash?: string;
   /** the highest-priority READY child claimable by the (role, agentId); null when none. */
   nextAction: WorkItem | null;
   /** count of READY candidate children (the arc's RAW claimable scope — child-local, never
@@ -128,6 +212,9 @@ export interface LegalMove {
 }
 export interface LegalMoves {
   workId: string;
+  /** Mission-140: absent before topology activation; exact pinned head after activation. */
+  observedTopologyGeneration?: number;
+  observedTopologyHash?: string;
   status: WorkItemPhase;
   /** the caller holds this item's lease (gates the lease-bound verbs). */
   isHolder: boolean;
@@ -217,6 +304,76 @@ export interface Attestation {
   /** Supersession (A2): when a later attestation replaces this one, the new record names the
    *  superseded attestation's identity here; the active projection repoints to the latest. */
   supersedes?: string;
+}
+
+/**
+ * Mission-140 failed-gate-seal-v2: the exact pre-clear lease/status authority
+ * captured in the SAME WorkItem CAS that makes a verifier FAIL effective.
+ * The raw lease token is deliberately absent; only a domain-separated
+ * fingerprint is retained for forensic correlation.
+ */
+export interface FailedGatePreClearReceiptV2 {
+  workId: string;
+  logicalId: string;
+  revision: number;
+  topologyGeneration: number;
+  requirementId: string;
+  verifierId: string;
+  verdict: "fail";
+  producedAt: string;
+  operationId: string;
+  before: {
+    phase: WorkItemPhase;
+    holder: string | null;
+    claimedAt: string | null;
+    expiresAt: string | null;
+    heartbeatAt: string | null;
+    tokenFingerprint: string | null;
+    blockedOn: WorkItemBlockedOn | null;
+    stateHash: string;
+    evidenceSetHash: string;
+    activeAttestationProjectionHash: string;
+    resourceVersion: string;
+  };
+  after: {
+    phase: "review";
+    effectiveDisposition: "failed_sealed";
+    leaseCleared: true;
+    blockedOnCleared: true;
+  };
+  attestationHistoryIndex: number;
+  attestationId: string;
+  requirementHash: string;
+  targetRefHash: string;
+  attestationEvidenceSetHash: string;
+  sealedAt: string;
+}
+
+/** Immutable active seal projection. A distinct repair/revision must replace it. */
+export interface FailedGateSealV2 {
+  version: 2;
+  operationId: string;
+  sealHash: string;
+  receipt: FailedGatePreClearReceiptV2;
+  holderNoticeIntentId: string | null;
+}
+
+/**
+ * Persist-first exact-holder notification intent. Projection to Message is
+ * restart-safe via intentId as migrationSourceId; no role/broadcast fallback.
+ */
+export interface PendingFailedSealNotice {
+  intentId: string;
+  sealHash: string;
+  workId: string;
+  requirementId: string;
+  verifierId: string;
+  verdict: "fail";
+  producedAt: string;
+  exactHolderAgentId: string;
+  createdAt: string;
+  projectedMessageId: string | null;
+  projectedAt: string | null;
 }
 
 /** SEAL (idea-444) — `verify_attestation` output: the active attestation + full per-requirement
@@ -391,6 +548,26 @@ export interface WorkItem {
    *  in work-87 (idempotency rides the deterministic id, not a query) — cleanup-by-runId
    *  query is a deferred follow-on. */
   blueprintRunId?: string;
+  /** Mission-140 immutable physical-revision identity. Legacy rows omit these
+   *  fields and project logicalId=id/revision=1 without write-on-read. Contract
+   *  and topology hashes are outputs of node-contract-v4/node-topology-v4,
+   *  never recursive hash inputs. */
+  logicalId?: string;
+  revision?: number;
+  predecessorPhysicalId?: string;
+  revisedBy?: ActorStampV4;
+  revisionReason?: string;
+  revisionGeneration?: number;
+  nodeContractHashVersion?: "node-contract-v4";
+  nodeContractHash?: string;
+  nodeTopologyHashVersion?: "node-topology-v4";
+  nodeTopologyHash?: string;
+  boundReferences?: BoundWorkItemReferenceV4[];
+  localExecutionIdentity?: string;
+  topologyGeneration?: number;
+  /** Read-only projection provenance; never persisted as contract/lifecycle state. */
+  observedTopologyGeneration?: number;
+  observedTopologyHash?: string;
   // status (lifecycle)
   status: WorkItemPhase;
   lease: WorkItemLease | null;
@@ -423,6 +600,20 @@ export interface WorkItem {
    *  — so an executor cannot release/role-switch then attest their own work. status-partitioned,
    *  non-filterable, birth-empty. */
   executorHistory: string[];
+  /** Append-only recall lineage and persist-first exact-holder intents. These are
+   *  lifecycle authority records and therefore status-partitioned so unrelated
+   *  owner writes preserve rather than reconstruct/inject them. */
+  recallHistory?: RecallHistoryEntryV4[];
+  pendingRecallIntents?: PendingRecallIntentV4[];
+  /** True iff at least one persist-first recall notice is not Message-projected. */
+  recallNoticePending?: boolean;
+  /** failed-gate-seal-v2: immutable FAIL authority and restart-safe notice outbox. */
+  failedGateSeal?: FailedGateSealV2 | null;
+  pendingFailedSealNotices?: PendingFailedSealNotice[];
+  /** Indexed outbox projection bit; true iff an exact-holder intent is unprojected. */
+  failedSealNoticePending?: boolean;
+  /** Read-served effective terminality, independent from the raw FSM phase. */
+  effectiveDisposition?: "failed_sealed" | null;
   /** W1 (idea-446 / work-181): the node-native anti-idle backstop. The pulse CONFIG
    *  (interval/message/threshold) is authored at create/seed_blueprint; the BOOKKEEPING
    *  (lastFiredAt/lastResponseAt/missedCount/lastEscalatedAt) is sweeper-written — so, like
@@ -489,7 +680,8 @@ export interface IWorkItemStore {
    *  WorkItem per the field-mutability table. Caller-side validation
    *  (dangling/cycle/reference checks) happens in the policy layer; THIS
    *  method owns authority (author|architect, Hub-derived actor), phase
-   *  rules, empty-mutation + terminal rejection, and the single-shot CAS
+   *  rules, paused/active-generation semantic-revision fencing,
+   *  empty-mutation + terminal rejection, and the single-shot CAS
    *  (stale write → reject with the current version; caller re-reads).
    *  Returns {before, after} for the mutation audit. */
   updateWorkItem(
@@ -536,6 +728,18 @@ export interface IWorkItemStore {
 
   getWorkItem(workId: string): Promise<WorkItem | null>;
 
+  /** Mission-140 logical-current resolver. Exact getWorkItem(physicalId) never
+   *  redirects; this explicit surface follows the pinned generation binding. */
+  getCurrentWork(logicalId: string): Promise<CurrentWorkProjectionV4 | null>;
+
+  /** Mission-140 semantic revision: immutable successors + exhaustive reverse
+   *  closure + one topology-head CAS. New rows activate paused and carry no
+   *  migrated evidence/attestations. */
+  reviseWork(request: ReviseWorkRequestV4, actor: { agentId: string; role: string }): Promise<ReviseWorkResultV4>;
+
+  /** Mission-140: compose a multi-read integration under one immutable topology pin. */
+  withTopologyReadPin?<T>(fn: () => Promise<T>): Promise<T>;
+
   /** SEAL (idea-444) — record a verifier's server-stamped, load-bearing attestation against a
    *  `verifier-attestation` requirement. `verifierId` is the Hub-derived caller (the policy layer
    *  passes the spoof-proof session agentId; the verifier ROLE gate is enforced at the router).
@@ -558,6 +762,10 @@ export interface IWorkItemStore {
    *  role + is NOT in the executor/creator history, evidenceRefs resolve/relate) + return
    *  invalid-reasons. Reports legacy executor review/audit evidence as NOT-SEAL-grade. */
   verifyAttestation(workId: string, requirementId: string): Promise<AttestationVerification>;
+
+  /** failed-gate-seal-v2: restart-safe exact-holder outbox projection support. */
+  listPendingFailedSealNoticeItems(limit?: number): Promise<{ items: WorkItem[]; truncated: boolean }>;
+  markFailedSealNoticeProjected(workId: string, intentId: string, messageId: string): Promise<WorkItem | null>;
 
   /** work-88 (arc-node): the k/N COMPLETION-gate progress projection over a node's DIRECT
    *  completionDependsOn children — `{done, total, pending}` (done = children at phase=done;
@@ -661,18 +869,20 @@ export interface IWorkItemStore {
    *  roleEligibility has no registered seat). */
   abandonWork(workId: string, agentId: string, opts?: { reason?: string; leaseToken?: string }): Promise<WorkItem | null>;
 
-  /** S3 (idea-454): `ready` → `paused` — a dormancy state (unclaimable, NO lease, resumable). READY-ONLY
-   *  (a claimed item has a holder+lease; pausing would zombie the claimant — use abandon/release for
-   *  leased work). AUTHZ: CREATOR-only (server-stamped createdBy) OR Director override. `paused` is a
-   *  non-terminal dwell state excluded from listReadyForRole + the claimable digest. NOTE: the
-   *  paused→ready reverse is `unpauseWork` — NOT `resumeWork` (which is the distinct blocked→in_progress
-   *  lease-holder verb; the council's 'resume_work' name collides with it, so this pair is pause/unpause). */
-  pauseWork(workId: string, actor: { agentId: string; role: string }, reason?: string): Promise<WorkItem | null>;
+  /** Mission-140 pause/recall: ready may be paused by original creator/architect/Director;
+   *  claimed|in_progress|blocked may be force-paused only by architect/Director. The one row CAS
+   *  records the exact pre-state, invalidates/clears the lease token and blocker, and persists an
+   *  exact-holder notice intent before projection. Review/terminal/failed/noncurrent rows reject. */
+  pauseWork(request: PauseWorkRequestV4, actor: { agentId: string; role: string }): Promise<WorkItem | null>;
 
-  /** S3 (idea-454): `paused` → `ready` — reactivate a paused item back into the normal claim gate.
-   *  Start-gates are NOT bypassed: deps + roleEligibility are re-validated at the subsequent claim
-   *  (claimWorkItem's fail-closed authority). AUTHZ: CREATOR-only OR Director override. */
-  unpauseWork(workId: string, actor: { agentId: string; role: string }): Promise<WorkItem | null>;
+  /** Atomic exact revision-set recommit. Dependency state remains claim_work's concern. */
+  recommitRevisionSet(request: UnpauseWorkRequestV4, actor: { agentId: string; role: string }): Promise<{ workItems: WorkItem[]; operationReplay: boolean }>;
+  /** Scalar paused→ready compatibility. */
+  unpauseWork(request: UnpauseWorkRequestV4, actor: { agentId: string; role: string }): Promise<WorkItem | null>;
+
+  /** Mission-140 persist-first exact-holder recall outbox projection support. */
+  listPendingRecallNoticeItems(limit?: number): Promise<{ items: WorkItem[]; truncated: boolean }>;
+  markRecallNoticeProjected(workId: string, intentId: string, messageId: string): Promise<WorkItem | null>;
 
   /** {in_progress|review} → review|done. Appends + dedups the supplied evidence, then
    *  validates the anti-gameability predicate (coverage-by-binding + kind-match +

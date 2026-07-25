@@ -45,7 +45,10 @@ export const LOCK_CLASS = {
   // lock (keyed on grantId), so "a revoked grant authorizes nothing new" is a hard
   // serialization invariant, not a TOCTOU claim.
   classGrant: 4,
-  // Reserve future classes here (5, 6, ...; keep this list authoritative).
+  // Mission-140: one global WorkGraph topology writer. Every head publish and
+  // later semantic revision serializes here before its fresh head CAS.
+  workGraphGlobal: 5,
+  // Reserve future classes here (6, 7, ...; keep this list authoritative).
 } as const;
 export type LockClass = typeof LOCK_CLASS[keyof typeof LOCK_CLASS];
 
