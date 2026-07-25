@@ -196,11 +196,14 @@ describe("SEAL A2 — attest_evidence authority", () => {
     await expect(repo.attestEvidence(workId, "att", "agent-verifier", "pass", [{ kind: "external", ref: "https://github.com/o/r/pull/1" }])).rejects.toThrow(AttestationRejected);
   });
 
-  it("FAIL keeps raw review but seals effective terminality; later same-row PASS is rejected", async () => {
+  // bug-371 renamed from "FAIL keeps raw review but seals effective terminality" — that title
+  // named the superseded contract. The FAIL now STORES a terminal phase; the same-row-PASS
+  // rejection this case exists to prove is unchanged and still asserted below.
+  it("FAIL stores the terminal phase and seals effective terminality; later same-row PASS is rejected", async () => {
     const { repo } = await setup();
     const { workId } = await sealItemInReview(repo);
     const failed = await repo.attestEvidence(workId, "att", "agent-verifier", "fail", [{ kind: "evidence", ref: "pr-1" }]);
-    expect(failed.item.status).toBe("review");
+    expect(failed.item.status).toBe("failed_sealed");
     expect(failed.item.effectiveDisposition).toBe("failed_sealed");
     expect(failed.item.lease).toBeNull();
     expect(failed.item.attestationHistory).toHaveLength(1);

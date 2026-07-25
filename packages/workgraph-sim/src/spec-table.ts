@@ -1,6 +1,6 @@
 /**
  * spec-table.ts — the INDEPENDENT hand-authored legal-move ground truth for the
- * WorkItem 8-phase FSM (idea-449 §2.3). This is the A8-seal reference: the real
+ * WorkItem 9-phase FSM (idea-449 §2.3; bug-371 added `failed_sealed`). This is the A8-seal reference: the real
  * substrate's behaviour is checked AGAINST this table, NOT derived from
  * `getLegalMoves` (kept only as a consistency invariant; it has 2 documented
  * divergences — quarantine-blindness + renew-on-expired-unswept). Authoring this
@@ -15,6 +15,19 @@
 import type { WorkItemPhase } from "hub/dist/entities/work-item.js";
 
 export type Phase = WorkItemPhase;
+// 🔴 HAND-MAINTAINED, AND KNOWINGLY SO. These arrays are a SECOND representation of the phase set
+// whose first representation is `WorkItemPhase`, imported as a TYPE from `hub/dist`. NOTHING
+// ENFORCES THAT THEY AGREE. bug-371 added `failed_sealed` to the engine and these lists did not
+// follow — the drift was caught only because `SPEC` below is an exhaustive `Record<Phase, …>` and
+// failed to compile. THESE ARRAYS WOULD NOT HAVE FAILED: a plain array of a union type is not
+// checked, so they would have gone on silently narrowing every sweep that iterates them and
+// reporting full coverage of a set they had quietly reduced.
+//
+// THE UNDERLYING DEFECT IS NOT FIXED AND THE NEXT PHASE ADDITION WILL BREAK THIS AGAIN.
+// Deriving these from `SPEC` closes it permanently and was built and then BACKED OUT under an
+// explicit Director deferral: "workgraph-sim as a fully functioning component is unfinished and
+// deferred, until more critical substrate fixes and this arc are implemented successfully."
+// Only the minimum data update needed to stop the simulator misrepresenting the engine was kept.
 export const PHASES: readonly Phase[] = [
   "ready",
   "claimed",
@@ -24,8 +37,13 @@ export const PHASES: readonly Phase[] = [
   "review",
   "done",
   "abandoned",
+  "failed_sealed",
 ];
-export const TERMINAL_PHASES: readonly Phase[] = ["done", "abandoned"];
+// bug-371 — `failed_sealed` is terminal in the engine, MEASURED rather than assumed: all ten
+// lifecycle verbs refuse on a seal-failed row, each with the seal-specific refusal (work-512 case
+// (ii)). So this is a data correction, not an invented semantics — the phase genuinely has no
+// legal move out and the terminal-phase oracles were previously skipping it entirely.
+export const TERMINAL_PHASES: readonly Phase[] = ["done", "abandoned", "failed_sealed"];
 
 export type SpecVerb =
   | "claim_work"
@@ -112,6 +130,11 @@ export const SPEC: Record<Phase, Record<SpecVerb, Move>> = {
   }),
   done: allIllegal(),
   abandoned: allIllegal(),
+  // bug-371 — terminal by verifier seal. EVERY verb illegal, matching `done`/`abandoned` and
+  // matching production, where `isFailedGateSealed` refuses all ten lifecycle verbs and consults
+  // the SEAL rather than the phase. Measured directly against the substrate (work-512 case (ii)):
+  // all ten refuse, each with the seal-specific refusal rather than an incidental error.
+  failed_sealed: allIllegal(),
 };
 
 /** Look up the hand-authored move for a (phase, verb) — defaults to illegal. */

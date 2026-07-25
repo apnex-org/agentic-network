@@ -36,8 +36,33 @@ export interface NodeConfig {
 
 export type WorkItemType = "task" | "bug" | "review" | "verifier-gate" | "freeform";
 export type WorkItemPriority = "critical" | "high" | "normal" | "low";
+/**
+ * bug-371: `failed_sealed` is a REAL TERMINAL PHASE, not a projection. A verifier FAIL seal used
+ * to leave the stored phase at whatever it held (`ready` for the pre-v2 population, `review` for
+ * rows the seal path writes) while `effectiveDisposition` said `failed_sealed` — so the STORED
+ * value and the truth disagreed. That is not merely a display defect: list filters are evaluated
+ * in the STORAGE layer against the stored phase, BEFORE decode runs, so no derived field could
+ * ever fix them. Storing the terminal phase makes filter and display agree BY CONSTRUCTION rather
+ * than by a derivation someone has to keep in step. `effectiveDisposition` still supplies the
+ * REASON; the phase supplies terminality.
+ */
 export type WorkItemPhase =
-  | "ready" | "claimed" | "in_progress" | "blocked" | "paused" | "review" | "done" | "abandoned";
+  | "ready" | "claimed" | "in_progress" | "blocked" | "paused" | "review" | "done" | "abandoned"
+  | "failed_sealed";
+
+/**
+ * bug-371 — THE single terminal-phase set. It exists because there is NO exhaustive `switch` on
+ * `WorkItemPhase` and no `Record<WorkItemPhase, …>` anywhere in this codebase, so adding a variant
+ * is NOT compiler-checked: every `status === "literal"` comparison is a silent fall-through site.
+ * Two hardcoded terminal sets were already wrong the moment `failed_sealed` existed. Centralising
+ * the set does not restore exhaustiveness — nothing can, short of a real discriminated union — but
+ * it gives the next variant ONE place to be added instead of N places to be missed.
+ */
+export const TERMINAL_WORK_PHASES: ReadonlySet<WorkItemPhase> = new Set<WorkItemPhase>([
+  "done",
+  "abandoned",
+  "failed_sealed",
+]);
 
 export interface PauseWorkRequestV4 {
   /** Exactly one locator is required. Physical ids never silently follow successors. */

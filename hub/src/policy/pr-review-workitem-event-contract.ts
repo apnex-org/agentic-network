@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { TERMINAL_WORK_PHASES } from "../entities/work-item.js";
 import type { WorkItemPhase } from "../entities/work-item.js";
 import type { AgentRole } from "../state.js";
 
@@ -162,7 +163,11 @@ export type PrReviewRemovalPolicyDecision = {
 };
 
 const SAFE_START_GATE_PHASES: readonly WorkItemPhase[] = ["ready"];
-const TERMINAL_PHASES: readonly WorkItemPhase[] = ["done", "abandoned"];
+// bug-371 — a FOURTH hardcoded terminal set, and the one my own blast-radius sweep MISSED: it is a
+// `readonly WorkItemPhase[]`, so the grep for `new Set([...])` literals could not see it and the
+// grep for `status === "literal"` could not either. Delegating to the shared set rather than
+// appending the value, so the next variant does not have to find this line again.
+const TERMINAL_PHASES: readonly WorkItemPhase[] = [...TERMINAL_WORK_PHASES];
 
 function nonEmpty(value: string | undefined): string {
   return value ?? "";

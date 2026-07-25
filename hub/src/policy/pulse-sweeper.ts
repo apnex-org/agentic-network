@@ -51,6 +51,7 @@ import type {
   Message,
   MessageAuthorRole,
 } from "../entities/index.js";
+import { TERMINAL_WORK_PHASES } from "../entities/work-item.js";
 import type { WorkItem } from "../entities/work-item.js";
 import { PULSE_KEYS } from "../entities/index.js";
 import type { Selector, Agent, AgentPulseConfig, AgentRole } from "../state.js";
@@ -120,6 +121,23 @@ export interface PulseSweepResult {
   skipped: number;
   escalated: number;
   errors: number;
+}
+
+/**
+ * bug-371 / work-512 — node-pulse eligibility, EXTRACTED so it can be asserted against production
+ * code rather than restated in a test. It was an inline filter expression; a test that retyped it
+ * would have proved only that I can copy a line, and would have kept passing if the sweeper's copy
+ * later drifted. One definition, one call site, one assertion.
+ *
+ * Terminality is checked TWICE on purpose: `effectiveDisposition` catches a sealed row whose stored
+ * phase has not been migrated yet, and `TERMINAL_WORK_PHASES` catches every terminal phase
+ * including the migrated one. Either alone would be sufficient today; both together mean the
+ * transition window is covered from both sides.
+ */
+export function isNodePulseEligible(n: WorkItem): boolean {
+  return Boolean(n.nodeConfig?.pulse)
+    && n.effectiveDisposition !== "failed_sealed"
+    && !TERMINAL_WORK_PHASES.has(n.status);
 }
 
 export class PulseSweeper {
@@ -863,8 +881,12 @@ export class PulseSweeper {
         `iterateNodePulses: listWorkItems scan hit the cap (truncated) — a pulse-carrying node MAY be omitted this tick; node-pulse coverage is INCOMPLETE`,
       );
     }
-    const terminal = new Set(["done", "abandoned"]);
-    const pulseNodes = items.filter((n) => n.nodeConfig?.pulse && n.effectiveDisposition !== "failed_sealed" && !terminal.has(n.status));
+    // bug-371: was a local `new Set(["done","abandoned"])`, which did not contain `failed_sealed`
+    // and so would have treated a seal-failed node as pulse-eligible on phase alone. The adjacent
+    // effectiveDisposition check already excluded those, so this was defence in depth rather than
+    // a live hole — but a terminal set that omits a terminal phase is wrong regardless of what
+    // currently covers for it. Shared set, one place to add the next variant.
+    const pulseNodes = items.filter(isNodePulseEligible);
     for (const node of pulseNodes) {
       result.scanned += 1;
       try {

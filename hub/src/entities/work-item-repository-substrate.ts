@@ -533,6 +533,40 @@ export function hasActiveVerifierFail(item: WorkItem): boolean {
 }
 
 /** Effective failed-sealed classification is authoritative before ANY raw phase check. */
+
+/**
+ * bug-371 TRANSITIONAL PROJECTION — reinstated deliberately, mapping to `failed_sealed`.
+ *
+ * 🔴 THIS IS A COMPLETENESS MECHANISM, NOT A SAFETY MECHANISM. Say that first because the
+ * opposite belief is what nearly got encoded here. MEASURED (independently, twice): an un-migrated
+ * sealed row is ALREADY unclaimable and EVERY lifecycle verb ALREADY refuses — `isFailedGateSealed`
+ * contains zero `.status` references, and both the claimable projection and the completion-gate
+ * consumer key on the SEAL, not the phase. So the pre-migration window is harmless at ANY
+ * duration, and nothing here is load-bearing for correctness of the guards.
+ *
+ * WHAT IT ACTUALLY BUYS: without it, the rolled container does not fix bug-371 until someone
+ * remembers to run the migration — "deployed" would not mean "fixed", and the defect would stay
+ * live for an unbounded period. With it, the display is correct the moment the code rolls and the
+ * migration becomes cleanup rather than a race. That matters because merge IS deploy for
+ * `hub/**`: `deploy-hub.yml` pushes `hub:latest` and `watchtower-prod` rolls it automatically,
+ * unattended, with nobody paged.
+ *
+ * It maps to `failed_sealed`, NOT `abandoned`: the projected token and the migrated STORED token
+ * are then the same value, so (a) a reader sees one consistent answer either side of the
+ * migration, and (b) once every row is migrated this is provably a NO-OP — the
+ * `item.status === "failed_sealed"` guard short-circuits and the row is returned by identity —
+ * which makes its later removal a deletion with nothing to verify.
+ *
+ * IT DOES NOT AND CANNOT FIX THE FILTER. Filters are decided in the storage layer before decode;
+ * this runs after. It touches DISPLAY only, enters no predicate and no claimability path, and must
+ * not be mistaken for the migration.
+ */
+export function projectSealedStatus(item: WorkItem): WorkItem {
+  if (item.status === "failed_sealed") return item;          // already migrated → no-op
+  if (item.effectiveDisposition !== "failed_sealed") return item;
+  return { ...item, status: "failed_sealed" };
+}
+
 export function isFailedGateSealed(item: WorkItem): boolean {
   return item.effectiveDisposition === "failed_sealed" || item.failedGateSeal != null || hasActiveVerifierFail(item);
 }
@@ -1003,25 +1037,95 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return w ? cloneWorkItem(w) : null;
   }
 
+  /**
+   * bug-370 / B-prerequisite (1) — classify an UNBOUND row and project a draft DISTINGUISHABLY.
+   * Returns null when the row is not a draft, so the caller falls through to legacyProjection.
+   *
+   * THE DISCRIMINATOR IS POSITIVE, NOT AN ABSENCE. `topologyGeneration` names the generation a
+   * row was prepared for. MEASURED, stage by stage: a genuine legacy row carries none
+   * (`undefined`); a published row carries one <= the active head; a prepared-but-unactivated
+   * draft carries one STRICTLY GREATER than the head, because its generation was persisted and
+   * never activated. Comparing against the head is what makes this a positive test — the defect
+   * being repaired came from treating a lookup MISS as "not published", and replacing that with
+   * another absence-inference would repeat it one layer along.
+   *
+   * The draft projects `topologyHash: "draft"` and the generation it is AWAITING, so a reader can
+   * tell "prepared, not published, for generation N" from "never in any generation" at a glance.
+   * It is deliberately NOT hidden: hiding it would restore the old `null` and re-create the
+   * original ambiguity, where absence had to be interpreted rather than read.
+   */
+  private async draftProjection(logicalId: string, headGeneration: number): Promise<CurrentWorkProjectionV4 | null> {
+    const item = await this.getWorkItem(logicalId);
+    if (!item) return null;
+    const preparedFor = (item as { topologyGeneration?: number }).topologyGeneration;
+    if (typeof preparedFor !== "number" || preparedFor <= headGeneration) return null;
+    return {
+      logicalId,
+      physicalId: item.id,
+      revision: item.revision ?? 1,
+      generation: preparedFor,
+      topologyHash: "draft",
+      predecessorPhysicalId: item.predecessorPhysicalId ?? null,
+      localExecutionIdentity: item.localExecutionIdentity ?? "draft",
+      workItem: item,
+    };
+  }
+
+  /**
+   * idea-633 Part 1 — the V2 §2.1 legacy projection, extracted so the globally-legacy branch and
+   * the per-row unbound fallback CANNOT DRIFT APART. Two copies of this shape would be two
+   * chances for the fallback to disagree with the thing it is supposed to be a fallback to.
+   * `generation: 0` and `topologyHash: "legacy"` are the projection's stated legacy contract, not
+   * a stand-in for a value read from storage (storage holds null; see fence:102).
+   */
+  private async legacyProjection(logicalId: string): Promise<CurrentWorkProjectionV4 | null> {
+    const item = await this.getWorkItem(logicalId);
+    if (!item) return null;
+    return {
+      logicalId,
+      physicalId: item.id,
+      revision: item.revision ?? 1,
+      generation: 0,
+      topologyHash: "legacy",
+      predecessorPhysicalId: item.predecessorPhysicalId ?? null,
+      localExecutionIdentity: item.localExecutionIdentity ?? "legacy",
+      workItem: item,
+    };
+  }
+
   async getCurrentWork(logicalId: string): Promise<CurrentWorkProjectionV4 | null> {
     if (!this.currentness.currentPin()) return this.withReadPin(() => this.getCurrentWork(logicalId));
     const pin = this.currentness.currentPin()!;
-    if (pin.mode === "legacy") {
-      const item = await this.getWorkItem(logicalId);
-      if (!item) return null;
-      return {
-        logicalId,
-        physicalId: item.id,
-        revision: item.revision ?? 1,
-        generation: 0,
-        topologyHash: "legacy",
-        predecessorPhysicalId: item.predecessorPhysicalId ?? null,
-        localExecutionIdentity: item.localExecutionIdentity ?? "legacy",
-        workItem: item,
-      };
-    }
+    if (pin.mode === "legacy") return this.legacyProjection(logicalId);
+    // bug-370 / B-prerequisite (1): a PREPARED-BUT-UNACTIVATED draft must not masquerade as a
+    // legacy row. Both are unbound, so idea-633 Part 1's fallback projected them identically —
+    // `generation: 0, topologyHash: "legacy"` — and a crashed partial batch became
+    // indistinguishable from a genuine legacy row. Under step B (complete shadow generation)
+    // that ambiguity would cover the entire shadow population, because preparing without
+    // activating IS B's normal operating mode rather than a risk it runs.
+    // MEASURED discriminator, no new field required: a draft carries `topologyGeneration`
+    // GREATER THAN the active head (it names the generation it was prepared for), a published
+    // row carries one <= head, and a genuine legacy row carries none at all. That is a POSITIVE
+    // comparison against the head, NOT an inference from absence — the thing that broke here was
+    // relying on a lookup MISS to mean "not published", and this must not repeat it.
+    const draft = await this.draftProjection(logicalId, pin.head.generation);
+    if (draft) return draft;
+    // idea-633 Part 1 — V2 §2.1 is UNCONDITIONAL about projection: "Legacy rows project
+    // logicalId=physicalId, revision 1, and a deterministic v4 contract without write-on-read."
+    // It does not say "while no head exists". The implementation made legacy projection
+    // conditional on the GLOBAL pin (fence:102 keys only on head existence), so the FIRST head
+    // to be activated would make every row absent from that generation return null here —
+    // silently, since this site returns rather than throws. Measured: an unbound row went
+    // RESOLVES gen=0 -> NULL the moment a partial generation was activated.
+    //
+    // BINDING WINS, ALWAYS. The fallback is reached ONLY when the logicalId is absent from the
+    // generation, never as an alternative to a binding that exists — otherwise a revision's
+    // successor could be shadowed by its own legacy predecessor, which would be silent and
+    // green. Unbound is unambiguous: §2.2 a generation carries a COMPLETE bindings map (not a
+    // delta) and §1 invariant 4 publishes the entire new generation, so a logicalId cannot enter
+    // a generation and later be absent from one. UNBOUND <=> NEVER ENTERED.
     const binding = pin.generation.bindings[logicalId];
-    if (!binding) return null;
+    if (!binding) return this.legacyProjection(logicalId);
     const item = await this.getWorkItem(binding.physicalId);
     if (!item) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `current binding ${logicalId} points at missing ${binding.physicalId}`);
     const current = this.currentness.assertCurrent(item, pin)!;
@@ -1190,7 +1294,14 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
 
     const head = await this.revisionStorage.getHead();
     if (!head || head.head.generation !== request.expectedGeneration) {
-      throw new WorkGraphCurrentnessRejected("revision.currentness_mismatch", `expected generation ${request.expectedGeneration}; current is ${head?.head.generation ?? "absent"}`);
+      // idea-633 Part 1 — "absent" was wrong and cost two probes plus a false hypothesis. ONE
+      // condition currently carries THREE names: storage holds null (fence:102), the reader
+      // prints a hardcoded 0 (getCurrentWork's legacy branch), and this writer said "absent".
+      // The replacement is true for the reader's 0 and honest about the internal null, so a
+      // caller comparing this message against what get_current_work told them sees the same
+      // number rather than two vocabularies for one state.
+      const currentDesc = head ? String(head.head.generation) : "0 (legacy: no generation head)";
+      throw new WorkGraphCurrentnessRejected("revision.currentness_mismatch", `expected generation ${request.expectedGeneration}; current is ${currentDesc}`);
     }
     const activeHead = head.head;
     const generation = await this.revisionStorage.getGeneration(activeHead.generation);
@@ -2621,6 +2732,15 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       const parentLogicalIds = pin.generation.reverseCompletionDependsOn[child.logicalId] ?? [];
       const parents: WorkItem[] = [];
       for (const logicalId of parentLogicalIds) {
+        // idea-633 Part 1 deliberately does NOT add an unbound->legacy fallback here. It was
+        // implemented, measured, and reverted: a generation cannot carry an edge whose target is
+        // unbound (buildWorkRevisionStorageV4 rejects it as storage.dangling_edge), so
+        // reverseCompletionDependsOn can only name BOUND ids and this `!binding` throw is
+        // unreachable while the generation is internally consistent. A guard that cannot execute
+        // is not defence in depth — it is a claim that something is handled.
+        // The REAL defect here is the opposite one and is filed as bug-370: a legacy completion
+        // parent is INVISIBLE to this branch (reverseCompletionDependsOn simply omits it), so it
+        // is never bumped, silently — where the legacy substrate scan below would have found it.
         const binding = pin.generation.bindings[logicalId];
         if (!binding) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `reverse completion edge names absent binding ${logicalId}`);
         const parent = await this.getCurrentProjectionItem(binding.physicalId);
@@ -3093,7 +3213,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
           });
           return {
             ...w,
-            status: "review" as const,
+            // bug-371: the seal is TERMINAL, so store the terminal phase rather than leaving the
+            // row at `review` and relying on effectiveDisposition to contradict it later.
+            status: "failed_sealed" as const,
             attestationHistory,
             attestations,
             failedGateSeal: seal,
@@ -3288,7 +3410,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         });
         const next: WorkItem = {
           ...w,
-          status: "review",
+          // bug-371: terminal phase stored at seal time — see the sibling seal path above.
+          status: "failed_sealed",
           failedGateSeal: seal,
           effectiveDisposition: "failed_sealed",
           pendingFailedSealNotices: notice ? [...(w.pendingFailedSealNotices ?? []), notice] : (w.pendingFailedSealNotices ?? []),
@@ -3434,6 +3557,67 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         },
       };
     });
+  }
+
+  /**
+   * bug-371 — MIGRATION: give every seal-failed row the real terminal phase.
+   *
+   * WHY A MIGRATION AT ALL, and it is not a preference: list filters are pushed DOWN to
+   * `substrate.list` and evaluated against the STORED phase before decode runs. A derived field
+   * (`effectiveDisposition`, or work-505's `projectSealedStatus`) can therefore fix a DISPLAY and
+   * never a FILTER. Making filter and display agree means writing the rows.
+   *
+   * AUTHORITY (architect ruling 2026-07-25, verifier-measured): the retained-FAIL constraint
+   * protects the VERDICT — attestations, attestationHistory, failedGateSeal, evidence — not the
+   * lifecycle field. The verifier's baseline hashes exactly those four; `status` is not in the
+   * hashed object, so this write leaves his baseline byte-identical. The transform below touches
+   * `status` ALONE and is written so that is checkable by reading it.
+   *
+   * IDEMPOTENT and re-runnable: a row already at the terminal phase is skipped, so a retried
+   * rollout is a no-op rather than a second rewrite. `matched` and `written` are reported
+   * SEPARATELY — a migration that reports only "done" cannot tell a retry from a first run.
+   *
+   * REFUSES LOUDLY rather than skipping quietly: a row that reads as sealed but carries neither a
+   * `failedGateSeal` nor an active verifier FAIL is not a shape this migration understands, and
+   * silently passing over it would hide exactly the case worth seeing.
+   */
+  async migrateSealedRowsToFailedPhase(opts: { dryRun?: boolean } = {}): Promise<{
+    scanned: number;
+    matched: number;
+    migrated: Array<{ id: string; before: WorkItemPhase; after: WorkItemPhase }>;
+    skipped: string[];
+    truncated: boolean;
+    dryRun: boolean;
+  }> {
+    const dryRun = opts.dryRun === true;
+    const { items, truncated } = await this.listWorkItems();
+    const migrated: Array<{ id: string; before: WorkItemPhase; after: WorkItemPhase }> = [];
+    const skipped: string[] = [];
+    let matched = 0;
+    for (const item of items) {
+      if (!isFailedGateSealed(item)) { skipped.push(item.id); continue; }
+      matched += 1;
+      if (item.status === "failed_sealed") { skipped.push(item.id); continue; }
+      // loud refusal on an unrecognised sealed shape — see the doc comment
+      if (item.failedGateSeal == null && !hasActiveVerifierFail(item)) {
+        throw new Error(
+          `[bug-371 migration] ${item.id} reads as sealed but carries neither failedGateSeal nor an ` +
+          `active verifier FAIL — unrecognised shape, refusing to write. Investigate before re-running.`,
+        );
+      }
+      const before = item.status;
+      if (dryRun) {
+        // COLLECT-MODE: report exactly what a real run would write, with zero effects. The loud
+        // shape-refusal above still fires, so a dry run surfaces an unrecognised row BEFORE the
+        // deploy rather than during it.
+        migrated.push({ id: item.id, before, after: "failed_sealed" });
+        continue;
+      }
+      // status ALONE. Every other field, including all four protected ones, is carried by spread.
+      const updated = await this.tryCasUpdate(item.id, (w) => ({ ...w, status: "failed_sealed" as const }));
+      if (updated) migrated.push({ id: item.id, before, after: updated.status });
+    }
+    return { scanned: items.length, matched, migrated, skipped, truncated, dryRun };
   }
 
   private async tryCasUpdate(

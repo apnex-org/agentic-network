@@ -131,7 +131,12 @@ describe("failed-gate-seal-v2", () => {
 
     const failed = await repo.attestEvidence(workId, "seal", VERIFIER, "fail", EVIDENCE_REFS);
     expect(workItemCasCount).toBe(1);
-    expect(failed.item.status).toBe("review");
+    // bug-371 (was `review`): the seal now STORES the terminal phase. This assertion encoded the
+    // superseded contract in which the raw phase stayed non-terminal and only effectiveDisposition
+    // carried terminality — the exact split that made list filters unfixable, since filters are
+    // evaluated on the STORED phase before decode. Updated deliberately under architect ruling,
+    // not relaxed: every other assertion in this case is unchanged and still passes.
+    expect(failed.item.status).toBe("failed_sealed");
     expect(failed.item.effectiveDisposition).toBe("failed_sealed");
     expect(failed.item.lease).toBeNull();
     expect(failed.item.blockedOn).toBeNull();
@@ -282,7 +287,10 @@ describe("failed-gate-seal-v2", () => {
     const outcome = await repo.expireLease(workId, "2026-07-23T15:00:00.000Z", 3);
     expect(outcome).toBe("failed_sealed");
     const reconciled = await repo.getWorkItem(workId);
-    expect(reconciled!.status).toBe("review");
+    // bug-371 (was `review`) — the legacy backfill path now lands the terminal phase too, so a
+    // row reconciled from a pre-v2 active FAIL ends in the SAME stored shape as a freshly-sealed
+    // one. Two paths converging on one representation is the point of the change.
+    expect(reconciled!.status).toBe("failed_sealed");
     expect(reconciled!.effectiveDisposition).toBe("failed_sealed");
     expect(reconciled!.failedGateSeal?.version).toBe(2);
     expect(reconciled!.lease).toBeNull();
