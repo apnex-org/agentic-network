@@ -27,7 +27,7 @@ import { describe, expect, it } from "vitest";
 import { createMemoryStorageSubstrate } from "../../storage-substrate/index.js";
 import { SubstrateCounter } from "../substrate-counter.js";
 import type { WorkItem, WorkItemPhase } from "../work-item.js";
-import { WorkItemRepositorySubstrate, isFailedGateSealed, projectSealedStatus } from "../work-item-repository-substrate.js";
+import { WorkItemRepositorySubstrate, isFailedGateSealed } from "../work-item-repository-substrate.js";
 
 const NOW = "2026-07-25T10:15:00.000Z";
 const ARCHITECT = { role: "architect", agentId: "architect-1" };
@@ -104,11 +104,6 @@ describe("bug-371 — the migration predicate matches the DEFECT, not every seal
     const after = (await h.repo.getWorkItem("keep-abandoned"))!;
     expect(after.status, "the DECISION that a person ended it survives").toBe("abandoned");
     expect(JSON.stringify(after), "byte-identical — nothing touched").toBe(JSON.stringify(before));
-    // AND THE READ PATH MUST NOT COLLAPSE IT EITHER. Storage keeping the truth is not enough if
-    // the projection rewrites it on the way out — measured live: a `paused`/`abandoned` filter was
-    // returning rows that DISPLAY `failed_sealed`, so the two harms refused at the write were
-    // already present in the read.
-    expect(projectSealedStatus(after).status, "DISPLAYS abandoned, not a verdict").toBe("abandoned");
   });
 
   it("🔴 a sealed stored-`paused` row is NOT MATCHED and NOT WRITTEN", async () => {
@@ -123,7 +118,6 @@ describe("bug-371 — the migration predicate matches the DEFECT, not every seal
     const after = (await h.repo.getWorkItem("keep-paused"))!;
     expect(after.status).toBe("paused");
     expect(JSON.stringify(after), "byte-identical — nothing touched").toBe(JSON.stringify(before));
-    expect(projectSealedStatus(after).status, "DISPLAYS paused — reversible dormancy, not terminal").toBe("paused");
   });
 
   it("the stored-`ready` rows STILL match, and every `before` is `ready`", async () => {
@@ -161,34 +155,7 @@ describe("bug-371 — the migration predicate matches the DEFECT, not every seal
     expect((await h.repo.getWorkItem("clean-1"))!.status).toBe("ready");
   });
 
-  it("🔴 THE LIVE REPRODUCTION: a `paused` filter must stop returning rows that SAY failed_sealed", async () => {
-    // Directly reproduces the read the architect ran against production:
-    //   list_work(status="paused") -> total 24, DISPLAYED: 20 paused + 4 FAILED_SEALED
-    // The storage filter is correct pre-decode; the projection then rewrote what they said. This
-    // asserts the projected phase of every row a `paused` filter selects is still `paused`.
-    const h = harness();
-    await seed(h, [
-      sealedAt("lp1", "paused"), sealedAt("lp2", "paused"),
-      work("lp3", { status: "paused" }), work("lp4", { status: "paused" }),
-    ]);
-    const { items } = await h.repo.listWorkItems({ status: "paused" });
-    expect(items.length, "the storage filter selects all four").toBe(4);
-    const displayed = items.map((i) => projectSealedStatus(i).status).sort();
-    expect(displayed, "NO row selected by a `paused` filter may display anything else")
-      .toEqual(["paused", "paused", "paused", "paused"]);
-  });
 
-  it("the stored-`ready` sealed rows STILL DISPLAY failed_sealed — the projection keeps working", async () => {
-    // The positive control on the projection half. Without it, the two display exclusions above
-    // pass on a change that guts projectSealedStatus entirely and reverts work-505.
-    const h = harness();
-    await seed(h, [sealedAt("disp-ready", "ready"), work("disp-plain")]);
-    const sealedRow = (await h.repo.getWorkItem("disp-ready"))!;
-    expect(projectSealedStatus(sealedRow).status, "a sealed stored-`ready` row still projects terminal")
-      .toBe("failed_sealed");
-    const plain = (await h.repo.getWorkItem("disp-plain"))!;
-    expect(projectSealedStatus(plain), "an unsealed row is returned by identity").toBe(plain);
-  });
 
   it("dry-run reports the SAME narrowed set — the operator's stop condition stays honest", async () => {
     const h = harness();

@@ -568,73 +568,28 @@ export function hasActiveVerifierFail(item: WorkItem): boolean {
 
 /** Effective failed-sealed classification is authoritative before ANY raw phase check. */
 
-/**
- * bug-371 TRANSITIONAL PROJECTION — reinstated deliberately, mapping to `failed_sealed`.
- *
- * 🔴 THIS IS A COMPLETENESS MECHANISM, NOT A SAFETY MECHANISM. Say that first because the
- * opposite belief is what nearly got encoded here. MEASURED (independently, twice): an un-migrated
- * sealed row is ALREADY unclaimable and EVERY lifecycle verb ALREADY refuses — `isFailedGateSealed`
- * contains zero `.status` references, and both the claimable projection and the completion-gate
- * consumer key on the SEAL, not the phase. So the pre-migration window is harmless at ANY
- * duration, and nothing here is load-bearing for correctness of the guards.
- *
- * WHAT IT ACTUALLY BUYS: without it, the rolled container does not fix bug-371 until someone
- * remembers to run the migration — "deployed" would not mean "fixed", and the defect would stay
- * live for an unbounded period. With it, the display is correct the moment the code rolls and the
- * migration becomes cleanup rather than a race. That matters because merge IS deploy for
- * `hub/**`: `deploy-hub.yml` pushes `hub:latest` and `watchtower-prod` rolls it automatically,
- * unattended, with nobody paged.
- *
- * It maps to `failed_sealed`, NOT `abandoned`: the projected token and the migrated STORED token
- * are then the same value, so (a) a reader sees one consistent answer either side of the
- * migration, and (b) once every row is migrated this is provably a NO-OP — the
- * `item.status === "failed_sealed"` guard short-circuits and the row is returned by identity —
- * which makes its later removal a deletion with nothing to verify.
- *
- * IT DOES NOT AND CANNOT FIX THE FILTER. Filters are decided in the storage layer before decode;
- * this runs after. It touches DISPLAY only, enters no predicate and no claimability path, and must
- * not be mistaken for the migration.
- */
+
 /**
  * 🔴 bug-371's DEFECT, STATED EXACTLY: **a sealed row whose STORED phase is `ready` misrepresents
  * itself as claimable.** Nothing else does.
  *
- * DEFINED ONCE and used by BOTH the read projection and the migration match, because two copies of
- * one rule is the defect this entire arc exists to kill — introducing a fresh instance inside the
- * fix for it would be the joke writing itself.
+ * Still the MIGRATION's match predicate. The transitional read-path projection that also consumed
+ * it was removed in mission-141 once production was migrated — but the rule itself is unchanged,
+ * and it stays defined once so the migration and any future consumer cannot drift apart.
  *
- * WHY IT IS NOT SIMPLY `isFailedGateSealed`, which is what shipped and was wrong: that matches
- * EVERY sealed row regardless of stored phase, which is a strictly larger and partly DESTRUCTIVE
- * claim. Measured against production — 24 sealed rows, not the 12 we believed, because we had
- * counted them through `list_work(status="ready")`, THE VERY FILTER bug-371 EXISTS TO FIX:
- *   - 8 stored `abandoned` — rewriting collapses a PERSON'S DECISION into a VERDICT. Both are
- *     terminal, both unclaimable, both in TERMINAL_WORK_PHASES, so nothing downstream treats them
- *     differently: the ONLY thing a rewrite changes is that we can no longer tell which happened.
- *   - 4 stored `paused` — converting reversible dormancy to terminal is a LIFECYCLE mutation
- *     riding a DISPLAY correction, the bundling hazard this arc already diagnosed once.
- * Neither group is claimable and neither presents as `ready`, so neither exhibits the defect.
+ * WHY NOT SIMPLY `isFailedGateSealed`, which is what originally shipped and was wrong: that
+ * matches EVERY sealed row regardless of stored phase — a strictly larger and partly DESTRUCTIVE
+ * claim. Measured against production: 24 sealed rows, not the 12 we believed, because we had
+ * counted them through `list_work(status="ready")`, THE VERY FILTER bug-371 EXISTS TO FIX. Of
+ * those, 8 stored `abandoned` (rewriting collapses a PERSON'S DECISION into a VERDICT) and 4
+ * stored `paused` (converting reversible dormancy to terminal is a LIFECYCLE mutation). Neither
+ * group is claimable and neither presents as `ready`, so neither exhibits the defect.
  *
  * The seal itself is untouched and still governs every guard: `isFailedGateSealed` remains the
- * capability predicate and consults no phase, so an abandoned-or-paused sealed row stays refused
- * by all ten lifecycle verbs whatever this returns. THIS PREDICATE IS ABOUT REPRESENTATION ONLY.
+ * CAPABILITY predicate and consults no phase.
  */
 export function misrepresentsAsClaimable(item: WorkItem): boolean {
   return item.status === "ready" && isFailedGateSealed(item);
-}
-
-/**
- * bug-371 TRANSITIONAL PROJECTION — display-only, and narrowed to the defect.
- *
- * A no-op once a row is migrated, and a no-op for sealed rows stored at any other phase. It maps
- * to `failed_sealed`, the same token the migration stores, so the displayed answer is identical
- * either side of the migration and this becomes provably dead once storage is corrected.
- *
- * IT DOES NOT AND CANNOT FIX A FILTER — filters are decided in the storage layer before decode;
- * this runs after. It buys display consistency for the affected rows and nothing else.
- */
-export function projectSealedStatus(item: WorkItem): WorkItem {
-  if (!misrepresentsAsClaimable(item)) return item;
-  return { ...item, status: "failed_sealed" };
 }
 
 export function isFailedGateSealed(item: WorkItem): boolean {
