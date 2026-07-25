@@ -44,6 +44,7 @@ import {
   CompletionGateRejected,
   AttestationRejected,
   isPauseOperationReplay,
+  projectSealedStatus,
 } from "../entities/work-item-repository-substrate.js";
 import { LockAcquisitionTimeoutError } from "../storage-substrate/advisory-lock.js";
 import { WorkGraphCurrentnessRejected } from "../entities/workgraph-currentness-fence-v4.js";
@@ -1360,11 +1361,17 @@ async function getWork(args: Record<string, unknown>, ctx: IPolicyContext): Prom
   // work-88 (arc-node): opt-in k/N completion-gate projection — surfaces how much of an
   // arc's subtree is finalised (feeds the cold-start get_current_stint). Off by default so
   // the common point-read pays no per-child fan-out; only computed when explicitly asked.
+  // idea-635: a failed_sealed row has ZERO legal lifecycle verbs but retains whatever `status`
+  // it held when the seal landed — usually `ready`. Project it terminal so a READER is not
+  // required to reconcile `status: "ready"` against `effectiveDisposition: "failed_sealed"` and
+  // work out which governs. Read boundary only; grants no capability (every verb refuses on
+  // isFailedGateSealed, which never consults `status`).
+  const projected = projectSealedStatus(w);
   if (args.includeCompletionProgress === true) {
     const completionProgress = await store.getCompletionProgress(args.workId as string);
-    return ok({ workItem: w, completionProgress });
+    return ok({ workItem: projected, completionProgress });
   }
-  return ok({ workItem: w });
+  return ok({ workItem: projected });
 }
 
 // work-94 (cold-start spine): the "where are we" projection over an arc-node's subtree.
@@ -1435,7 +1442,9 @@ async function listWork(args: Record<string, unknown>, ctx: IPolicyContext): Pro
     holder: args.holder as string | undefined,
   };
   const { items, truncated } = await store.listWorkItems(filters);
-  const page = paginate(items, args);
+  // idea-635 — same read-boundary projection as get_work. Applied BEFORE paginate so the
+  // projected status is what a caller sees on every page, not just the first.
+  const page = paginate(items.map(projectSealedStatus), args);
   // truncation-HONEST (A4): `truncated` = the 500-row substrate scan was capped (there
   // may be MORE matches we never saw) — distinct from pagination (limit/offset over what we DID see).
   const truncationNote = truncated

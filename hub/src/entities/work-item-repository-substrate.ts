@@ -533,6 +533,44 @@ export function hasActiveVerifierFail(item: WorkItem): boolean {
 }
 
 /** Effective failed-sealed classification is authoritative before ANY raw phase check. */
+/**
+ * idea-635 — PROJECTION ONLY. A row whose `effectiveDisposition` is `failed_sealed` has ZERO
+ * legal lifecycle verbs, yet its stored `status` remains whatever it was when the seal landed —
+ * usually `ready`. Reading such a row therefore requires reconciling `status: "ready"` against
+ * `effectiveDisposition: "failed_sealed"` by hand and deciding which one governs. The seal
+ * governs; the status field is stale. This returns the row with `status` projected to match.
+ *
+ * DELIBERATELY NOT APPLIED IN THE DECODER, and that is the whole safety argument. Rewriting
+ * `status` on decode would feed the derived value to every internal consumer — the FSM guards
+ * ("claim requires ready, was X"), the state-duration accrual keyed on `w.status`, and the
+ * transition bookkeeping. That risks changing DIAGNOSTICS (masking the precise seal refusal
+ * behind a generic wrong-phase error) and could perturb accounting, for a change whose entire
+ * remit is what a reader is shown. Applied at the read boundary, it cannot reach any of them.
+ *
+ * GRANTS NO CAPABILITY. Every lifecycle verb refuses on `isFailedGateSealed`, which reads the
+ * seal and the attestations — never `status`. Nothing here touches attestations,
+ * attestationHistory, failedGateSeal or evidence, and the returned object is a copy.
+ *
+ * 🔴 NAMED RESIDUAL — `abandoned` IS APPROXIMATE, AND THAT IS A DELIBERATE, DISCLOSED CHOICE.
+ * WorkItemPhase is `ready|claimed|in_progress|blocked|paused|review|done|abandoned`. There is
+ * NO phase meaning "terminally failed by seal", so every available projection is imprecise:
+ * `done` is plainly false, and `abandoned` names a state normally reached by the `abandon_work`
+ * verb, which nobody called here — a reader asking "who abandoned it?" will find no one in
+ * executorHistory.
+ * It is chosen anyway because it strictly improves on the status quo rather than replacing one
+ * lie with an equal one. TODAY the two fields CONTRADICT (`status: ready` vs
+ * `effectiveDisposition: failed_sealed`) and the NAIVE READING IS ACTIVELY WRONG — a reader who
+ * trusts `status` concludes the row is workable. AFTER, they AGREE ON TERMINALITY and the
+ * disposition supplies the reason, so the naive reading is right-but-imprecise and the precise
+ * answer sits in the adjacent field. Wrong -> imprecise is the improvement being bought.
+ * THE HONEST END STATE IS A REAL `failed` PHASE. That is a new terminal FSM state and is
+ * explicitly out of scope here; this projection does not block it and should be replaced by it.
+ */
+export function projectSealedStatus(item: WorkItem): WorkItem {
+  if (item.effectiveDisposition !== "failed_sealed") return item;
+  return { ...item, status: "abandoned" };
+}
+
 export function isFailedGateSealed(item: WorkItem): boolean {
   return item.effectiveDisposition === "failed_sealed" || item.failedGateSeal != null || hasActiveVerifierFail(item);
 }
