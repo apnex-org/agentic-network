@@ -51,6 +51,7 @@ import type {
   Message,
   MessageAuthorRole,
 } from "../entities/index.js";
+import { TERMINAL_WORK_PHASES } from "../entities/work-item.js";
 import type { WorkItem } from "../entities/work-item.js";
 import { PULSE_KEYS } from "../entities/index.js";
 import type { Selector, Agent, AgentPulseConfig, AgentRole } from "../state.js";
@@ -863,8 +864,12 @@ export class PulseSweeper {
         `iterateNodePulses: listWorkItems scan hit the cap (truncated) — a pulse-carrying node MAY be omitted this tick; node-pulse coverage is INCOMPLETE`,
       );
     }
-    const terminal = new Set(["done", "abandoned"]);
-    const pulseNodes = items.filter((n) => n.nodeConfig?.pulse && n.effectiveDisposition !== "failed_sealed" && !terminal.has(n.status));
+    // bug-371: was a local `new Set(["done","abandoned"])`, which did not contain `failed_sealed`
+    // and so would have treated a seal-failed node as pulse-eligible on phase alone. The adjacent
+    // effectiveDisposition check already excluded those, so this was defence in depth rather than
+    // a live hole — but a terminal set that omits a terminal phase is wrong regardless of what
+    // currently covers for it. Shared set, one place to add the next variant.
+    const pulseNodes = items.filter((n) => n.nodeConfig?.pulse && n.effectiveDisposition !== "failed_sealed" && !TERMINAL_WORK_PHASES.has(n.status));
     for (const node of pulseNodes) {
       result.scanned += 1;
       try {

@@ -44,7 +44,6 @@ import {
   CompletionGateRejected,
   AttestationRejected,
   isPauseOperationReplay,
-  projectSealedStatus,
 } from "../entities/work-item-repository-substrate.js";
 import { LockAcquisitionTimeoutError } from "../storage-substrate/advisory-lock.js";
 import { WorkGraphCurrentnessRejected } from "../entities/workgraph-currentness-fence-v4.js";
@@ -1361,17 +1360,15 @@ async function getWork(args: Record<string, unknown>, ctx: IPolicyContext): Prom
   // work-88 (arc-node): opt-in k/N completion-gate projection — surfaces how much of an
   // arc's subtree is finalised (feeds the cold-start get_current_stint). Off by default so
   // the common point-read pays no per-child fan-out; only computed when explicitly asked.
-  // idea-635: a failed_sealed row has ZERO legal lifecycle verbs but retains whatever `status`
-  // it held when the seal landed — usually `ready`. Project it terminal so a READER is not
-  // required to reconcile `status: "ready"` against `effectiveDisposition: "failed_sealed"` and
-  // work out which governs. Read boundary only; grants no capability (every verb refuses on
-  // isFailedGateSealed, which never consults `status`).
-  const projected = projectSealedStatus(w);
+  // bug-371 supersedes idea-635's read-boundary projection: the terminal phase is now STORED, so
+  // there is nothing left to project. The derivation was removed rather than left in place —
+  // after the migration it would have rewritten `failed_sealed` back to `abandoned`, which is the
+  // shadowing-a-real-field failure it was warned against.
   if (args.includeCompletionProgress === true) {
     const completionProgress = await store.getCompletionProgress(args.workId as string);
-    return ok({ workItem: projected, completionProgress });
+    return ok({ workItem: w, completionProgress });
   }
-  return ok({ workItem: projected });
+  return ok({ workItem: w });
 }
 
 // work-94 (cold-start spine): the "where are we" projection over an arc-node's subtree.
@@ -1442,9 +1439,10 @@ async function listWork(args: Record<string, unknown>, ctx: IPolicyContext): Pro
     holder: args.holder as string | undefined,
   };
   const { items, truncated } = await store.listWorkItems(filters);
-  // idea-635 — same read-boundary projection as get_work. Applied BEFORE paginate so the
-  // projected status is what a caller sees on every page, not just the first.
-  const page = paginate(items.map(projectSealedStatus), args);
+  // bug-371: no projection. The stored phase IS the terminal phase, so the value this filter
+  // selected on and the value the caller is shown are the same value — which is the entire
+  // point of storing it rather than deriving it.
+  const page = paginate(items, args);
   // truncation-HONEST (A4): `truncated` = the 500-row substrate scan was capped (there
   // may be MORE matches we never saw) — distinct from pagination (limit/offset over what we DID see).
   const truncationNote = truncated
@@ -1511,7 +1509,7 @@ const WORK_PRIORITY = z.enum(["critical", "high", "normal", "low"]);
 // Canonical phase set = WorkItemPhase (entities/work-item.ts) — mirrored here for the
 // list_work filter schema (same local duplication pattern as WORK_TYPE/WORK_PRIORITY +
 // the all-schemas storage-validation copy). Keep in sync with WorkItemPhase.
-const WORK_PHASE = z.enum(["ready", "claimed", "in_progress", "blocked", "paused", "review", "done", "abandoned"]);
+const WORK_PHASE = z.enum(["ready", "claimed", "in_progress", "blocked", "paused", "review", "done", "abandoned", "failed_sealed"]);
 const evidenceRequirementSchema = z.object({
   id: z.string().min(1).describe("Author-supplied requirement id — complete_work binds evidence to it by requirementId (unique within the item)"),
   kind: EVIDENCE_KIND,

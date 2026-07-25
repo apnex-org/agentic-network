@@ -12,6 +12,7 @@
  */
 
 import type { Message } from "../entities/message.js";
+import { TERMINAL_WORK_PHASES } from "../entities/work-item.js";
 import type { IWorkItemStore, WorkItem, WorkItemPhase } from "../entities/work-item.js";
 import type { IEngineerRegistry } from "../state.js";
 import type { IPolicyContext } from "./types.js";
@@ -246,8 +247,18 @@ function stringValue(payload: Record<string, unknown>, key: string): string | un
   return typeof value === "string" ? value : undefined;
 }
 
+/**
+ * bug-371 — was a hardcoded `done || abandoned`, which silently excluded `failed_sealed` the
+ * moment that phase existed. Now delegates to the SHARED terminal set so the next variant is
+ * added in one place. Exported so a falsifier can assert the membership BEHAVIOURALLY rather
+ * than by grepping for the literal.
+ */
+export function isTerminalPhase(status: WorkItemPhase | undefined): boolean {
+  return status !== undefined && TERMINAL_WORK_PHASES.has(status);
+}
+
 function isTerminal(status: WorkItemPhase | undefined): boolean {
-  return status === "done" || status === "abandoned";
+  return isTerminalPhase(status);
 }
 
 function targetLabel(message: Message): { targetRole?: string; targetAgentId?: string } {
