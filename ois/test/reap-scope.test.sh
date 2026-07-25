@@ -37,8 +37,20 @@ TID_FA="${TW}b-claude"   # (3) FOREIGN agent
 TDIR="$(mktemp -d)"
 PIDS=()
 cleanup() {
-  local p
+  local p s
   for p in "${PIDS[@]}"; do kill -KILL "$p" 2>/dev/null; kill -KILL "-$p" 2>/dev/null; done
+  # bug-363 F4: remove this run's THROWAWAY tmux socket FILES. kill-server ends the servers but
+  # leaves the socket inodes behind, two per full run, accumulating unboundedly in a shared
+  # /tmp/tmux-$UID (45 had piled up before this was noticed). Invisible in a single run — it only
+  # becomes apparent under repetition, which is exactly what a mutation matrix does.
+  # SCOPED HARD: only this process's own pid-unique names, and only after confirming no live
+  # server answers on them. A real seat's socket can never match these patterns, and is never
+  # removed even if it somehow did — the `ls` guard below refuses anything with a live server.
+  for s in "/tmp/tmux-$(id -u)/ois-reapscope11-$$" "/tmp/tmux-$(id -u)/ois-reaptest$$-peer"; do
+    [[ -S "$s" ]] || continue
+    tmux -S "$s" ls >/dev/null 2>&1 && continue   # live server: leave it alone
+    rm -f "$s"
+  done
   rm -rf "$TDIR"
 }
 trap cleanup EXIT
@@ -291,6 +303,85 @@ if [[ "$FS" =~ ^[0-9]+$ ]]; then
        exit $sf ); then :; else fail=1; fi
 else
   echo "  FAIL: could not stage the foreign-socket fixture (got '$FS')"; fail=1
+fi
+
+echo "== (13) bug-363 F2 — THE EXCLUSION'S DIRECTION IS PINNED IN ALL THREE DIRECTIONS. A proc naming"
+echo "        its OWN seat's socket MUST STILL BE REAPED; only a DIFFERENT seat's socket is spared. =="
+# Case (12) pins only the FOREIGN direction. Nothing asserted the OWN direction, so inverting the
+# comparison in _seat_pid_foreign_socket (`!=` -> `==`) went GREEN — and post-fix the resulting
+# failure would be SILENT, because a seat's own tmux server carries no OIS_SEAT_ID and dies via
+# kill-session regardless. Silent-and-green is the combination that survives review, so pin it.
+# Degenerate `-L ''` is included because "no socket parsed" must fail TOWARD reaping, never away.
+stage_argv_proc() { # <tag> <argv-socket-or-empty> -> echoes pid
+  # NB: `f` is declared SEPARATELY. Referencing $tag inside the same `local` statement that
+  # declares it fails under `set -u` ("tag: unbound variable") — the suite runs with -u, and a
+  # standalone repro without it passes, which is precisely how this hid.
+  local tag="$1" sock="$2"
+  local f="$TDIR/AP_$tag"
+  : > "$f"
+  if [[ -n "$sock" ]]; then
+    OIS_SEAT_ID="$TID" setsid bash -c 'echo $$ > "'"$f"'"; sleep 30' fake-tmux -L "$sock" new-session >/dev/null 2>&1 &
+  else
+    OIS_SEAT_ID="$TID" setsid bash -c 'echo $$ > "'"$f"'"; sleep 30' fake-tmux -L '' new-session >/dev/null 2>&1 &
+  fi
+  disown 2>/dev/null || true
+  local i; for i in $(seq 1 20); do [[ -s "$f" ]] && break; sleep 0.1; done
+  cat "$f" 2>/dev/null
+}
+P_OWN=$(stage_argv_proc own     "$TID");                       PIDS+=("$P_OWN")
+P_FGN=$(stage_argv_proc foreign "ois-reaptest$$-otherseat");   PIDS+=("$P_FGN")
+P_EMP=$(stage_argv_proc empty   "");                           PIDS+=("$P_EMP")
+if [[ "$P_OWN" =~ ^[0-9]+$ && "$P_FGN" =~ ^[0-9]+$ && "$P_EMP" =~ ^[0-9]+$ ]]; then
+  # fixture preconditions must BIND — all three must carry the target id, else the case is vacuous
+  fx=0
+  for p in "$P_OWN" "$P_FGN" "$P_EMP"; do
+    [[ "$(_seat_id_of_pid "$p")" == "$TID" ]] || { echo "  FAIL: fixture $p does not carry the target id"; fail=1; fx=1; }
+  done
+  [[ $fx -eq 0 ]] && echo "  ok: all three fixtures carry the target id"
+  if ( KLOG="$TDIR/klog13"; : > "$KLOG"; sf=0
+       kill() { echo "$*" >> "$KLOG"; }
+       _reap_seat_signal "$TID" TERM
+       grep -qw "$P_OWN" "$KLOG" && echo "  ok: OWN-socket proc $P_OWN IS signalled (not spared)" \
+                                 || { echo "  FAIL: OWN-socket proc $P_OWN was SPARED — the exclusion is inverted"; sf=1; }
+       grep -qw "$P_FGN" "$KLOG" && { echo "  FAIL: FOREIGN-socket proc $P_FGN was signalled"; sf=1; } \
+                                 || echo "  ok: FOREIGN-socket proc $P_FGN excluded"
+       grep -qw "$P_EMP" "$KLOG" && echo "  ok: degenerate -L '' proc $P_EMP IS signalled (fails toward reaping)" \
+                                 || { echo "  FAIL: degenerate -L '' proc $P_EMP was spared — failing AWAY from reaping"; sf=1; }
+       exit $sf ); then :; else fail=1; fi
+else
+  echo "  FAIL: could not stage the three argv fixtures (own=$P_OWN foreign=$P_FGN empty=$P_EMP)"; fail=1
+fi
+
+echo "== (14) bug-363 F1 — the STRAGGLER DIAGNOSTIC names the real cause. An excluded proc keeps the"
+echo "        honest count above zero, so reap_seat reaches the straggler path; the message must say"
+echo "        SPARED BY POLICY, not blame an env scrub that never happened. (~7s: 6 real rounds.) =="
+# The count is deliberately UNFILTERED (see _seat_live_count), so this path is REACHED rather than
+# silenced — the alarm is correct and was merely mislabelled. Only an excluded proc is staged, so
+# reap_seat has nothing it is permitted to kill and nothing dies.
+FS2_SOCK="ois-reaptest$$-stragglersock"
+# NON-FORKING fixture, and this is load-bearing. A `sleep 30` fixture FORKS: the child inherits
+# OIS_SEAT_ID but its argv carries no `-L`, so it is NOT excluded, IS reaped, and the parent then
+# exits normally because its last command finished — making a correctly-SPARED proc look KILLED.
+# `read` is a bash builtin blocking on a fifo nothing writes to: no child, argv intact.
+# (Identical confound to one the verifier hit and re-ran to escape; the tell both times was
+# _seat_live_count reporting 2 where the fixture was one process.)
+mkfifo "$TDIR/blockfifo" 2>/dev/null
+OIS_SEAT_ID="$TID" setsid bash -c 'echo $$ > "'"$TDIR"'/FS2"; read -r _ < "'"$TDIR"'/blockfifo"' \
+  fake-tmux -L "$FS2_SOCK" new-session >/dev/null 2>&1 &
+disown 2>/dev/null || true
+for i in $(seq 1 20); do [[ -s "$TDIR/FS2" ]] && break; sleep 0.1; done
+FS2=$(cat "$TDIR/FS2" 2>/dev/null); PIDS+=("$FS2")
+if [[ "$FS2" =~ ^[0-9]+$ ]]; then
+  [[ "$(_seat_id_of_pid "$FS2")" == "$TID" ]] \
+    && ok_pre=1 || { echo "  FAIL: straggler fixture lacks the target id"; fail=1; ok_pre=0; }
+  if [[ "${ok_pre:-0}" -eq 1 ]]; then
+    MSG="$(reap_seat "$TID" 2>&1)"
+    grep -q "SPARED BY POLICY" <<<"$MSG"      && echo "  ok: names the policy class"            || { echo "  FAIL: does not name the policy exclusion — msg: ${MSG:0:150}"; fail=1; }
+    grep -q "another seat's -L" <<<"$MSG"     && echo "  ok: says WHY it was spared"             || { echo "  FAIL: does not explain the exclusion"; fail=1; }
+    grep -qw "$FS2" <<<"$(ps -o pid= -p "$FS2" 2>/dev/null)" && echo "  ok: the excluded proc is still ALIVE (spared, as intended)" || { echo "  FAIL: excluded proc was killed"; fail=1; }
+  fi
+else
+  echo "  FAIL: could not stage the straggler fixture (got '$FS2')"; fail=1
 fi
 
 echo

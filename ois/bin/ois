@@ -1096,8 +1096,12 @@ _seat_pid_foreign_socket() {
 # EXACTLY == <seat_id>, re-validating ownership + start-identity IMMEDIATELY before the signal — this
 # BOUNDS (does NOT eliminate) PID reuse; the residual read→signal window is non-zero (no atomicity
 # without pidfd). Excludes self/parent. FAIL-CLOSED: no id / mismatch / unreadable environ → skip.
-# The exact-environ id remains the ONLY INCLUSION gate — completeness never depends on a proc's
-# command line, so an env-carrying descendant is still reaped whatever its argv says.
+# The exact-environ id remains the ONLY INCLUSION gate: nothing is reaped on the strength of its
+# argv, so no descendant is missed for want of a recognisable command line.
+# bug-363 F3 — stating the limit precisely, because the earlier wording ("coverage unchanged
+# whatever its argv says") was FALSE: for the excluded class, reaping DOES depend on argv. An
+# env-carrying descendant is reaped whatever its argv says UNLESS that argv positively names a
+# DIFFERENT seat's `-L ois-…` socket, which is the one deliberate exception below.
 # bug-363 adds one argv-based EXCLUSION, which is not the same thing as a prefilter: a proc that
 # POSITIVELY names another seat's `-L ois-…` socket is provably foreign infrastructure, and no
 # correct reap of THIS seat ever needs to signal it. An exclusion can only ever shrink the blast
@@ -1121,12 +1125,40 @@ _reap_seat_signal() {
 }
 
 # _seat_live_count <seat_id> -> number of own-user PIDs currently carrying OIS_SEAT_ID==<seat_id>.
+#
+# bug-363 F1 — DELIBERATELY UNFILTERED, and this was ruled after being implemented the other way.
+# It is tempting to subtract the policy-excluded procs here so the count agrees with what
+# _reap_seat_signal will actually signal, making reap_seat converge instead of burning its 6
+# rounds. That was REJECTED, and the reasoning matters more than the outcome:
+#   _seat_live_count answers "what still EXISTS carrying this seat's id" — a statement about the
+#   world. _reap_seat_signal answers "what may I SIGNAL" — a statement about policy. Collapsing
+#   them makes the count report POLICY WHILE APPEARING TO REPORT REALITY, and the next operator
+#   debugging a genuine straggler loses the only honest number available.
+# The 6-round burn is NOT a spurious alarm: something really is alive that the reap will not
+# kill. The alarm was CORRECT AND MISLABELLED, so the fix is to label it accurately (see the
+# straggler message in reap_seat) — not to silence it by making the count agree.
+# Keeping the divergence VISIBLE is the point; papering it would manufacture exactly the
+# surface-disagrees-with-predicate defect this arc has filed repeatedly.
 _seat_live_count() {
   local seat_id="$1" pid n=0
   [[ -n "$seat_id" ]] || { echo 0; return 0; }
   for pid in $(pgrep -u "$(id -u)" 2>/dev/null); do
     [[ "$pid" == "$$" || "$pid" == "${PPID:-}" ]] && continue
     [[ "$(_seat_id_of_pid "$pid")" == "$seat_id" ]] && n=$((n+1))
+  done
+  echo "$n"
+}
+
+# _seat_excluded_count <seat_id> -> PIDs carrying the id but DELIBERATELY excluded from the reap
+# (they positively name another seat's `-L ois-…` socket). Diagnostic only — never a predicate.
+# Exists so the exclusion is VISIBLE rather than silently subtracted from the pending count.
+_seat_excluded_count() {
+  local seat_id="$1" pid n=0
+  [[ -n "$seat_id" ]] || { echo 0; return 0; }
+  for pid in $(pgrep -u "$(id -u)" 2>/dev/null); do
+    [[ "$pid" == "$$" || "$pid" == "${PPID:-}" ]] && continue
+    [[ "$(_seat_id_of_pid "$pid")" == "$seat_id" ]] || continue
+    _seat_pid_foreign_socket "$pid" "$seat_id" && n=$((n+1))
   done
   echo "$n"
 }
@@ -1144,7 +1176,18 @@ reap_seat() {
     [[ "$(_seat_live_count "$seat_id")" -eq 0 ]] && { echo "  · reaped seat $seat_id (quiescent after $round round(s))"; return 0; }
     sleep 1
   done
-  echo "  · reap_seat $seat_id: $(_seat_live_count "$seat_id") proc(s) still live after 6 rounds — left as stragglers (safety-over-completeness: env-scrubbed/unkillable; never a cross-seat kill)"
+  # bug-363 F1: name the ACTUAL cause, and SPLIT THE TWO CLASSES. The old text blamed
+  # "env-scrubbed/unkillable" for every survivor, which is the wrong class for a policy-excluded
+  # proc: that proc carries the id and is perfectly killable — it is spared DELIBERATELY because
+  # its argv names another seat's socket. An operator reading the old message at 3am would go
+  # hunting a scrubbed environment that was never there. The count itself stays honest (see
+  # _seat_live_count); only the explanation is corrected.
+  local _live _excl; _live=$(_seat_live_count "$seat_id"); _excl=$(_seat_excluded_count "$seat_id")
+  if [[ "$_excl" -gt 0 ]]; then
+    echo "  · reap_seat $seat_id: $_live proc(s) still live after 6 rounds — of which $_excl SPARED BY POLICY (argv names another seat's -L ois-… socket; killable, deliberately not killed — bug-363), remainder env-scrubbed/replaced or unkillable. Never a cross-seat kill."
+  else
+    echo "  · reap_seat $seat_id: $_live proc(s) still live after 6 rounds — left as stragglers (safety-over-completeness: environment scrubbed/replaced, or unkillable; never a cross-seat kill)"
+  fi
   return 0
 }
 
