@@ -223,7 +223,13 @@ export class WorkRevisionStorageError extends Error {
       | "storage.head_conflict"
       | "storage.operation_conflict"
       | "storage.family_identity_conflict"
-      | "storage.reference_unbound",
+      | "storage.reference_unbound"
+      // bug-364: a row carrying SOME but not all of the nine immutable-identity fields. Distinct
+      // from `immutable_conflict` on purpose — that one means "identified, and the identity
+      // disagrees"; this one means "half-identified", which is a corruption or a torn write and
+      // must not be auto-completed. Sharing a code would let the two be confused in exactly the
+      // situation where telling them apart matters.
+      | "storage.partial_identity",
     message: string,
   ) {
     super(`${code}: ${message}`);
@@ -270,6 +276,34 @@ function withoutTopologyObservation(item: WorkItem): WorkItem {
 
 function canonicalEqual(a: unknown, b: unknown): boolean {
   return canonicalJson(plainPersisted(a)) === canonicalJson(plainPersisted(b));
+}
+
+/**
+ * bug-364 — the nine fields the persist-time immutable-identity comparison reads. Listed once so
+ * "which fields are absent" and "which fields are compared" cannot drift apart; the comparison
+ * below is still written out longhand deliberately, because collapsing it into a loop over this
+ * array would change its semantics for `boundReferences` (canonical, not `!==`).
+ *
+ * MEASURED disjoint from the four sealed fields (attestations, attestationHistory, failedGateSeal,
+ * evidence) — overlap zero. Materialising identity therefore cannot touch a FAIL record.
+ */
+const IMMUTABLE_IDENTITY_FIELDS = [
+  "logicalId", "revision",
+  "nodeContractHashVersion", "nodeContractHash",
+  "nodeTopologyHashVersion", "nodeTopologyHash",
+  "localExecutionIdentity", "topologyGeneration",
+  "boundReferences",
+] as const;
+
+/**
+ * ABSENT means the stored row never carried the field — NOT that it holds a falsy or empty value.
+ * The distinction is the whole point of bug-364, so it is `=== undefined` and nothing looser:
+ * `boundReferences: []` is PRESENT-and-empty and must not be read as unidentified. (Note the
+ * legacy comparison coerced `?? []`, which made an absent `boundReferences` compare EQUAL to an
+ * empty candidate — so that field alone never triggered the old conflict.)
+ */
+function identityFieldAbsent(row: WorkItem, field: (typeof IMMUTABLE_IDENTITY_FIELDS)[number]): boolean {
+  return (row as unknown as Record<string, unknown>)[field] === undefined;
 }
 
 function decodeRow<T>(raw: T, kind: string): T {
@@ -1030,6 +1064,59 @@ export class WorkRevisionStorageRepositoryV4 {
       this.persistProjectedWorkItemsUnderLock(storage));
   }
 
+  /**
+   * bug-364 CASE 1 — write the derived identity onto a row that has never had one.
+   *
+   * THE NINE IDENTITY FIELDS AND NOTHING ELSE. Every other field is carried from the STORED row,
+   * not from the candidate: the candidate's `workItem` is a projection built for this generation
+   * and must not be allowed to overwrite live lifecycle state (status, lease, evidence,
+   * attestations, seals). Spreading `existing` first and then only the nine is what makes that
+   * checkable by reading it — and the four sealed fields are provably untouched because they are
+   * not in the list and the list is the only thing applied.
+   *
+   * CAS, and a LOSING CAS REFUSES rather than retrying. A retry-until-win loop would be wrong
+   * here: losing means another writer moved the row, so the identity the builder derived may no
+   * longer match the row's content, and re-deriving is the caller's business, not this write's.
+   * (`persistFamily` above retries because it converges a monotonic high-water mark — a different
+   * problem with a different safety argument.)
+   */
+  private async materializeIdentityOnLegacyRow(row: WorkItem): Promise<void> {
+    const current = await this.substrate.getWithRevision<WorkItem>("WorkItem", row.id);
+    if (!current) {
+      fail("storage.integrity", `WorkItem/${row.id} vanished between read and identity materialization`);
+    }
+    // Re-decode under the CAS read: the row may have moved since the comparison above, and the
+    // absence that justified case 1 must still hold at the instant we write.
+    const fresh = decodeRow(current.entity, "WorkItem");
+    const stillAbsent = IMMUTABLE_IDENTITY_FIELDS.every((f) => identityFieldAbsent(fresh, f));
+    if (!stillAbsent) {
+      fail(
+        "storage.immutable_conflict",
+        `WorkItem/${row.id} acquired an immutable identity between admission and materialization`,
+      );
+    }
+    const next: WorkItem = {
+      ...fresh,
+      logicalId: row.logicalId,
+      revision: row.revision,
+      nodeContractHashVersion: row.nodeContractHashVersion,
+      nodeContractHash: row.nodeContractHash,
+      nodeTopologyHashVersion: row.nodeTopologyHashVersion,
+      nodeTopologyHash: row.nodeTopologyHash,
+      localExecutionIdentity: row.localExecutionIdentity,
+      topologyGeneration: row.topologyGeneration,
+      boundReferences: plainPersisted(row.boundReferences ?? []),
+    };
+    const cas = await this.substrate.putIfMatch("WorkItem", next, current.resourceVersion);
+    if (!cas.ok) {
+      fail(
+        "storage.immutable_conflict",
+        `WorkItem/${row.id} identity materialization lost a CAS — the row changed concurrently; ` +
+        `not retried, because the derived identity may no longer match the row's content`,
+      );
+    }
+  }
+
   private async persistProjectedWorkItemsUnderLock(storage: BuiltWorkRevisionStorageV4): Promise<void> {
     const missing: WorkItem[] = [];
     for (const projection of storage.projections) {
@@ -1045,8 +1132,32 @@ export class WorkRevisionStorageRepositoryV4 {
       const existingRaw = await this.substrate.get<WorkItem>("WorkItem", row.id);
       if (existingRaw) {
         const existing = decodeRow(existingRaw, "WorkItem");
-        // Retaining an exact physical binding across a disconnected generation
-        // must not overwrite its live lifecycle row. Compare immutable identity;
+        // bug-364 / bug-372 — ABSENT IS NOT DIFFERENT. `existing.X !== row.X` is true when X is
+        // DIFFERENT and when X is ABSENT, and those mean opposite things. Every row written
+        // before the v4 identity existed carries all nine fields undefined, so the old comparison
+        // read "unidentified" as "conflicting" and refused it — stranding, permanently, every row
+        // that exists today. That was an accident of a conflated comparison, not a safety property.
+        const absent = IMMUTABLE_IDENTITY_FIELDS.filter((f) => identityFieldAbsent(existing, f));
+        if (absent.length === IMMUTABLE_IDENTITY_FIELDS.length) {
+          // CASE 1 — FIRST MATERIALISATION. Nothing is stored, so there is nothing to conflict
+          // WITH. The identity is derived deterministically from the row's own content by the
+          // builder, in this same call, and is disjoint from every sealed field.
+          await this.materializeIdentityOnLegacyRow(row);
+          continue;
+        }
+        if (absent.length > 0) {
+          // CASE 3 — MIXED. NOT a first materialisation, and NEVER silently healed: a
+          // partially-identified row is either corrupt or mid-write, and quietly completing it
+          // destroys the evidence of which. Distinct code, and it NAMES the absent fields.
+          fail(
+            "storage.partial_identity",
+            `WorkItem/${row.id} has a PARTIAL immutable identity — ${absent.length} of ` +
+            `${IMMUTABLE_IDENTITY_FIELDS.length} fields absent [${absent.join(", ")}]; this is not a first ` +
+            `materialization and is not auto-completed. Investigate whether the row is corrupt or mid-write.`,
+          );
+        }
+        // CASE 2 — FULLY IDENTIFIED. Compare exactly as before. Retaining an exact physical
+        // binding across a disconnected generation must not overwrite its live lifecycle row;
         // activation later recomputes the full contract/local identity fresh.
         if (existing.logicalId !== row.logicalId || existing.revision !== row.revision ||
             existing.nodeContractHashVersion !== row.nodeContractHashVersion || existing.nodeContractHash !== row.nodeContractHash ||
