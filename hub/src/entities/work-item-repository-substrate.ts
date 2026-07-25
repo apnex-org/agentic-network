@@ -1042,6 +1042,40 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   }
 
   /**
+   * bug-370 / B-prerequisite (1) — classify an UNBOUND row and project a draft DISTINGUISHABLY.
+   * Returns null when the row is not a draft, so the caller falls through to legacyProjection.
+   *
+   * THE DISCRIMINATOR IS POSITIVE, NOT AN ABSENCE. `topologyGeneration` names the generation a
+   * row was prepared for. MEASURED, stage by stage: a genuine legacy row carries none
+   * (`undefined`); a published row carries one <= the active head; a prepared-but-unactivated
+   * draft carries one STRICTLY GREATER than the head, because its generation was persisted and
+   * never activated. Comparing against the head is what makes this a positive test — the defect
+   * being repaired came from treating a lookup MISS as "not published", and replacing that with
+   * another absence-inference would repeat it one layer along.
+   *
+   * The draft projects `topologyHash: "draft"` and the generation it is AWAITING, so a reader can
+   * tell "prepared, not published, for generation N" from "never in any generation" at a glance.
+   * It is deliberately NOT hidden: hiding it would restore the old `null` and re-create the
+   * original ambiguity, where absence had to be interpreted rather than read.
+   */
+  private async draftProjection(logicalId: string, headGeneration: number): Promise<CurrentWorkProjectionV4 | null> {
+    const item = await this.getWorkItem(logicalId);
+    if (!item) return null;
+    const preparedFor = (item as { topologyGeneration?: number }).topologyGeneration;
+    if (typeof preparedFor !== "number" || preparedFor <= headGeneration) return null;
+    return {
+      logicalId,
+      physicalId: item.id,
+      revision: item.revision ?? 1,
+      generation: preparedFor,
+      topologyHash: "draft",
+      predecessorPhysicalId: item.predecessorPhysicalId ?? null,
+      localExecutionIdentity: item.localExecutionIdentity ?? "draft",
+      workItem: item,
+    };
+  }
+
+  /**
    * idea-633 Part 1 — the V2 §2.1 legacy projection, extracted so the globally-legacy branch and
    * the per-row unbound fallback CANNOT DRIFT APART. Two copies of this shape would be two
    * chances for the fallback to disagree with the thing it is supposed to be a fallback to.
@@ -1067,6 +1101,19 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     if (!this.currentness.currentPin()) return this.withReadPin(() => this.getCurrentWork(logicalId));
     const pin = this.currentness.currentPin()!;
     if (pin.mode === "legacy") return this.legacyProjection(logicalId);
+    // bug-370 / B-prerequisite (1): a PREPARED-BUT-UNACTIVATED draft must not masquerade as a
+    // legacy row. Both are unbound, so idea-633 Part 1's fallback projected them identically —
+    // `generation: 0, topologyHash: "legacy"` — and a crashed partial batch became
+    // indistinguishable from a genuine legacy row. Under step B (complete shadow generation)
+    // that ambiguity would cover the entire shadow population, because preparing without
+    // activating IS B's normal operating mode rather than a risk it runs.
+    // MEASURED discriminator, no new field required: a draft carries `topologyGeneration`
+    // GREATER THAN the active head (it names the generation it was prepared for), a published
+    // row carries one <= head, and a genuine legacy row carries none at all. That is a POSITIVE
+    // comparison against the head, NOT an inference from absence — the thing that broke here was
+    // relying on a lookup MISS to mean "not published", and this must not repeat it.
+    const draft = await this.draftProjection(logicalId, pin.head.generation);
+    if (draft) return draft;
     // idea-633 Part 1 — V2 §2.1 is UNCONDITIONAL about projection: "Legacy rows project
     // logicalId=physicalId, revision 1, and a deterministic v4 contract without write-on-read."
     // It does not say "while no head exists". The implementation made legacy projection
