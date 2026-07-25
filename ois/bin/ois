@@ -864,7 +864,16 @@ _seat_new_session() { # <session/socket> <command-string> — same target for -L
   # below stay correct; `env -u TMUX -u TMUX_PANE` stops the new `-L` client from binding to the
   # OUTER server when ois is invoked inside tmux. Harness-agnostic (protects claude/pi/opencode);
   # paired with the exact-OIS_SEAT_ID reap (reap_seat) for defense in depth.
-  env -u TMUX -u TMUX_PANE setsid -w tmux -L "$s" new-session -d -s "$s" -x "$cols" -y "$rows" "$@" || return 1
+  # bug-363: ALSO scrub OIS_SEAT_ID. #641 re-keys the seat's canonical id inside do_launch — i.e.
+  # INSIDE the new session — but THIS tmux server is forked BEFORE that export, from the CALLER's
+  # environment. Peer-spawning (`ois up <peer>` from inside a live seat's pane) therefore left the
+  # new seat's tmux SERVER carrying the SPAWNER's OIS_SEAT_ID for its entire life, and the
+  # exact-id reap (which has no argv filter, by design) would then signal it during a teardown of
+  # the SPAWNER — killing the server that hosts a co-resident seat. That is bug-303's blast radius
+  # returning through the ENV vector after setsid closed the pgid one: same failure, different
+  # inherited attribute. Measured 2026-07-25 (reap set for one seat contained two other seats'
+  # tmux servers); scrubbing here means a forked server can never carry a foreign seat's identity.
+  env -u TMUX -u TMUX_PANE -u OIS_SEAT_ID setsid -w tmux -L "$s" new-session -d -s "$s" -x "$cols" -y "$rows" "$@" || return 1
   stmux "$s" set-option -g window-size manual 2>/dev/null || true
 }
 
@@ -1024,18 +1033,40 @@ _seat_pid_starttime() {
   local -a f=($rest); echo "${f[19]}"  # 0-based: f[19] == stat field 22 (starttime)
 }
 
+# _seat_pid_foreign_socket <pid> <seat_id> -> 0 (TRUE) when the proc's argv positively names a
+# DIFFERENT seat's tmux socket (`-L ois-…` / `-Lois-…` != seat_id); 1 otherwise (incl. unreadable
+# argv or no -L at all). bug-363 defence-in-depth.
+_seat_pid_foreign_socket() {
+  local pid="$1" seat_id="$2" tok want=0 sock=""
+  while IFS= read -r -d '' tok; do
+    if [[ "$want" == 1 ]]; then sock="$tok"; want=0
+    elif [[ "$tok" == "-L" ]]; then want=1
+    elif [[ "$tok" == -L?* ]]; then sock="${tok#-L}"; fi
+    [[ -n "$sock" ]] && break
+  done < "/proc/$pid/cmdline" 2>/dev/null
+  [[ -n "$sock" && "$sock" == ois-* && "$sock" != "$seat_id" ]]
+}
+
 # _reap_seat_signal <seat_id> <sig>: send <sig> to every own-user PID whose environ OIS_SEAT_ID
 # EXACTLY == <seat_id>, re-validating ownership + start-identity IMMEDIATELY before the signal — this
 # BOUNDS (does NOT eliminate) PID reuse; the residual read→signal window is non-zero (no atomicity
 # without pidfd). Excludes self/parent. FAIL-CLOSED: no id / mismatch / unreadable environ → skip.
-# NO argv/comm prefilter — the exact-environ id is the only gate, so completeness never depends on
-# a proc's command line.
+# The exact-environ id remains the ONLY INCLUSION gate — completeness never depends on a proc's
+# command line, so an env-carrying descendant is still reaped whatever its argv says.
+# bug-363 adds one argv-based EXCLUSION, which is not the same thing as a prefilter: a proc that
+# POSITIVELY names another seat's `-L ois-…` socket is provably foreign infrastructure, and no
+# correct reap of THIS seat ever needs to signal it. An exclusion can only ever shrink the blast
+# radius; a prefilter would have shrunk COVERAGE, which is what bug-303's design note rightly
+# refused. This is belt-and-braces behind the `env -u OIS_SEAT_ID` root-cause fix in
+# _seat_new_session: if a foreign id ever leaks in again by some other path, one wrong identifier
+# still cannot authorise killing another seat's tmux server.
 _reap_seat_signal() {
   local seat_id="$1" sig="$2" pid st1 st2
   [[ -n "$seat_id" ]] || return 0
   for pid in $(pgrep -u "$(id -u)" 2>/dev/null); do
     [[ "$pid" == "$$" || "$pid" == "${PPID:-}" ]] && continue
     [[ "$(_seat_id_of_pid "$pid")" == "$seat_id" ]] || continue          # exact ownership
+    _seat_pid_foreign_socket "$pid" "$seat_id" && continue               # bug-363: never another seat's socket
     st1=$(_seat_pid_starttime "$pid"); [[ -n "$st1" ]] || continue
     [[ "$(_seat_id_of_pid "$pid")" == "$seat_id" ]] || continue          # re-validate id just before signal
     st2=$(_seat_pid_starttime "$pid"); [[ "$st1" == "$st2" ]] || continue # start-identity unchanged (PID-reuse bound)

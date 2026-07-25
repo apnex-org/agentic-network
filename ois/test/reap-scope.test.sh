@@ -205,6 +205,94 @@ else
   echo "  SKIP: tmux not available — spawn-isolation assertion needs a real tmux"
 fi
 
+echo "== (11) bug-363 PEER-SPAWN IDENTITY LEAK: a seat brought up from INSIDE another seat's pane must"
+echo "        NOT leave its tmux SERVER carrying the SPAWNER's OIS_SEAT_ID, and a reap of the spawner"
+echo "        must NOT signal that foreign server. =="
+# THE REGRESSION FOR bug-363. #641 re-keys the seat's canonical id inside do_launch — INSIDE the new
+# session — but the tmux server is forked BEFORE that, from the caller's env. So peer-spawning left
+# the server carrying the SPAWNER's id, and the exact-id reap (no argv inclusion filter, by design)
+# would signal it while tearing down the SPAWNER — destroying a co-resident seat. Measured live
+# 2026-07-25: one seat's reap set contained two other seats' tmux servers.
+#
+# MUTATION-PROOF: this drives the REAL _seat_new_session (the fix site) and the REAL
+# _reap_seat_signal / _seat_id_of_pid. Delete `-u OIS_SEAT_ID` from _seat_new_session and BOTH
+# assertions below go RED — the server inherits the spawner's id and the reap selects it.
+if command -v tmux >/dev/null 2>&1; then
+  T12="ois-reaptest$$-peer"   # pid-unique + ois-* prefixed; can never collide with a live seat
+  # Peer-spawn EXACTLY as `ois up <peer>` from inside a live seat's pane does: the caller's
+  # environment carries the SPAWNER's canonical id at the moment tmux is forked.
+  ( export OIS_SEAT_ID="$TID"; _seat_new_session "$T12" "sleep 30" ) >/dev/null 2>&1
+  sleep 0.5
+  SRV=$(tmux -L "$T12" display-message -p '#{pid}' 2>/dev/null)
+  if [[ "$SRV" =~ ^[0-9]+$ ]]; then
+    PIDS+=("$SRV")
+    # (a) IDENTITY — the forked server must not carry the spawner's id at all.
+    srvid=$(_seat_id_of_pid "$SRV")
+    if [[ "$srvid" == "$TID" ]]; then
+      echo "  FAIL: peer-spawned tmux server $SRV INHERITED the spawner's OIS_SEAT_ID ($TID)"; fail=1
+    else
+      echo "  ok: peer-spawned tmux server $SRV carries no spawner id (got '${srvid:-<none>}')"
+    fi
+    # (b) REAP SCOPE — the safety property itself, via the REAL selector with a kill-spy so nothing
+    #     is actually signalled. A staged proc genuinely owned by the spawner is the positive
+    #     control: it MUST be signalled, proving the reap fires rather than being a silent no-op.
+    OIS_SEAT_ID="$TID" setsid bash -c "echo \$\$ > '$TDIR/PS'; exec -a seat-spawner-own sleep 30" >/dev/null 2>&1 &
+    disown 2>/dev/null || true
+    for i in $(seq 1 20); do [[ -s "$TDIR/PS" ]] && break; sleep 0.1; done
+    PS=$(cat "$TDIR/PS" 2>/dev/null); PIDS+=("$PS")
+    if ( KLOG="$TDIR/klog11"; : > "$KLOG"; sf=0
+         kill() { echo "$*" >> "$KLOG"; }
+         _reap_seat_signal "$TID" TERM
+         if grep -qw "$SRV" "$KLOG"; then echo "  FAIL: reap of $TID SIGNALLED foreign tmux server $SRV (cross-seat blast)"; sf=1
+         else echo "  ok: reap of $TID did NOT signal foreign tmux server $SRV"; fi
+         if grep -qw "$PS" "$KLOG"; then echo "  ok: positive control — the spawner's OWN proc $PS IS signalled"
+         else echo "  FAIL: positive control — spawner's own proc not signalled (reap a no-op?)"; sf=1; fi
+         exit $sf ); then :; else fail=1; fi
+  else
+    echo "  FAIL: could not read peer tmux server pid (got '$SRV')"; fail=1
+  fi
+  tmux -L "$T12" kill-server 2>/dev/null   # throwaway -L socket only; NEVER the shared/default server
+else
+  echo "  SKIP: tmux not available — peer-spawn identity assertion needs a real tmux"
+fi
+
+echo "== (12) bug-363 DEFENCE-IN-DEPTH: a proc that carries the TARGET's id but whose argv POSITIVELY"
+echo "        names ANOTHER seat's -L socket is provably foreign infrastructure and is NOT signalled. =="
+# Pins the _seat_pid_foreign_socket exclusion on its OWN. Test (11) alone does not: with the
+# `env -u OIS_SEAT_ID` root fix in place the exclusion is redundant there, so deleting the exclusion
+# leaves (11) green — and a guard whose deletion turns nothing red is NOT ENFORCED (the bug-303 law).
+# This case reintroduces the leak DIRECTLY in the fixture: id matches, argv names a foreign socket.
+# Delete the `_seat_pid_foreign_socket … && continue` line in ois/bin/ois -> this goes RED.
+FS_SOCK="ois-reaptest$$-foreignsock"
+# NOTE: deliberately NO `exec` — exec would REPLACE the process image and DISCARD the `-L …` argv
+# this case exists to detect, so the fixture would carry the target id with a bare `sleep` cmdline
+# and pass for entirely the wrong reason. The bash proc keeps its own argv and sleeps as a child.
+OIS_SEAT_ID="$TID" setsid bash -c 'echo $$ > "'"$TDIR"'/FS"; sleep 30' \
+  fake-tmux -L "$FS_SOCK" new-session >/dev/null 2>&1 &
+disown 2>/dev/null || true
+for i in $(seq 1 20); do [[ -s "$TDIR/FS" ]] && break; sleep 0.1; done
+FS=$(cat "$TDIR/FS" 2>/dev/null); PIDS+=("$FS")
+if [[ "$FS" =~ ^[0-9]+$ ]]; then
+  # fixture sanity: it really does carry the TARGET id AND its argv really does name a foreign
+  # socket. Both must hold or the case proves nothing.
+  [[ "$(_seat_id_of_pid "$FS")" == "$TID" ]] \
+    && echo "  ok: fixture carries the target id (so only the exclusion can spare it)" \
+    || { echo "  FAIL: fixture does not carry the target id — test would pass for the wrong reason"; fail=1; }
+  if tr '\0' ' ' < "/proc/$FS/cmdline" 2>/dev/null | grep -q -- "-L $FS_SOCK"; then
+    echo "  ok: fixture argv names the foreign socket $FS_SOCK"
+  else
+    echo "  FAIL: fixture argv does NOT contain '-L $FS_SOCK' (got: $(tr '\0' ' ' < /proc/$FS/cmdline 2>/dev/null | cut -c1-90)) — exclusion would be untested"; fail=1
+  fi
+  if ( KLOG="$TDIR/klog12"; : > "$KLOG"; sf=0
+       kill() { echo "$*" >> "$KLOG"; }
+       _reap_seat_signal "$TID" TERM
+       if grep -qw "$FS" "$KLOG"; then echo "  FAIL: foreign-socket proc $FS was signalled (exclusion not enforced)"; sf=1
+       else echo "  ok: foreign-socket proc $FS NOT signalled (exclusion enforced)"; fi
+       exit $sf ); then :; else fail=1; fi
+else
+  echo "  FAIL: could not stage the foreign-socket fixture (got '$FS')"; fail=1
+fi
+
 echo
 if [[ $fail -eq 0 ]]; then
   echo "PASS: reap is blast-safe — exact-OIS_SEAT_ID per-PID reap, no group signal; foreign/cross-harness/legacy/cdir-less siblings survive; id-retaining stragglers + trees reaped to quiescence; zero cross-seat blast radius"
