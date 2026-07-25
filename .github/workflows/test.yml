@@ -123,6 +123,13 @@ jobs:
       # target's own prepare (calibration #62). A root install would run
       # those builds before their deps exist and fail. Mirrors the scoped
       # install in publish-npm.yml's "Install workspaces (scoped)" step.
+      #
+      # `hub` is included because several non-hub cells reach hub source
+      # through their test helpers, and any value-import of the
+      # storage-substrate barrel loads postgres-substrate.ts -> `pg`,
+      # which is declared only in hub/package.json. Without hub installed
+      # those cells die at import with ERR_MODULE_NOT_FOUND. hub carries
+      # no `prepare` hook, so adding it here runs no build at install time.
       - name: Install workspaces (scoped)
         run: |
           npm install --no-audit --no-fund --ignore-scripts \
@@ -132,7 +139,8 @@ jobs:
             --workspace=@apnex/storage-provider \
             --workspace=@apnex/claude-plugin \
             --workspace=@apnex/opencode-plugin \
-            --workspace=@apnex/pi-plugin
+            --workspace=@apnex/pi-plugin \
+            --workspace=hub
       # The sovereign packages must be built (dist/) before a cell's
       # vitest can resolve `@apnex/*` (main → dist/index.js).
       # network-adapter ↔ message-router form an import cycle, broken via
