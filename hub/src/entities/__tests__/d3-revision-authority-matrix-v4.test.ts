@@ -148,6 +148,77 @@ describe("Mission-140 V2 D3 exact server-derived revision authority matrix", () 
     await expectDenied(holder.repo.reviseWork(request("former-holder"), { role: "engineer", agentId: "former-holder" }), "revision.holder_has_no_authority", holder.storage);
   });
 
+  // V8 coverage_repair (b) — denial-classifier precision. Sharing the creator's ROLE while
+  // carrying an unrelated agentId is not an owner mismatch; it is simply forbidden.
+  it("denies an actor sharing only the creator role with actor_forbidden, not family_owner_mismatch", async () => {
+    const sameRole = await setup();
+    await expectDenied(
+      sameRole.repo.reviseWork(request("same-role-unrelated"), { role: CREATOR.role, agentId: "unrelated-engineer" }),
+      "revision.actor_forbidden",
+      sameRole.storage,
+    );
+
+    // Control: the SAME agentId with a non-creator role remains family_owner_mismatch.
+    const sameAgent = await setup();
+    await expectDenied(
+      sameAgent.repo.reviseWork(request("same-agent-wrong-role"), { role: "verifier", agentId: CREATOR.agentId }),
+      "revision.family_owner_mismatch",
+      sameAgent.storage,
+    );
+  });
+
+  // V8 coverage_repair (a) — FROZEN assertion for revision.failed_gate_sealed. This code
+  // protects immutable-FAIL sealing and previously had ZERO assertions in any committed
+  // test: it fired in practice but nothing would go red if a refactor removed the guard.
+  it("denies revision of an affected item carrying an immutable failed-gate seal", async () => {
+    const sealed = await setup({
+      root: {
+        failedGateSeal: {
+          version: 2,
+          operationId: "v8-failed-seal",
+          sealHash: "v8-failed-seal-hash",
+          receipt: { version: 2 },
+          holderNoticeIntentId: null,
+        } as unknown as WorkItem["failedGateSeal"],
+        // The substrate enforces coherence between the seal and the read-served
+        // effective disposition; a seal without it is rejected as a storage-integrity
+        // violation before revision authority is ever evaluated.
+        effectiveDisposition: "failed_sealed",
+      },
+    });
+    await expectDenied(sealed.repo.reviseWork(request("sealed-root"), CREATOR), "revision.failed_gate_sealed", sealed.storage);
+
+    // An architect does not out-rank the seal either — terminality is not an authority question.
+    const sealedArchitect = await setup({
+      root: {
+        failedGateSeal: {
+          version: 2,
+          operationId: "v8-failed-seal",
+          sealHash: "v8-failed-seal-hash",
+          receipt: { version: 2 },
+          holderNoticeIntentId: null,
+        } as unknown as WorkItem["failedGateSeal"],
+        // The substrate enforces coherence between the seal and the read-served
+        // effective disposition; a seal without it is rejected as a storage-integrity
+        // violation before revision authority is ever evaluated.
+        effectiveDisposition: "failed_sealed",
+      },
+    });
+    await expectDenied(sealedArchitect.repo.reviseWork(request("sealed-root-architect"), ARCHITECT), "revision.failed_gate_sealed", sealedArchitect.storage);
+  });
+
+  // V8 coverage_repair (a) — FROZEN assertion for revision.affected_state_forbidden, the
+  // quiescence guard. Also previously unasserted in any committed test.
+  it("denies revision of a non-quiescent or lease-held affected item", async () => {
+    const running = await setup({ root: { status: "in_progress" } });
+    await expectDenied(running.repo.reviseWork(request("non-quiescent"), CREATOR), "revision.affected_state_forbidden", running.storage);
+
+    const leased = await setup({
+      root: { lease: { holder: "someone-else", token: "v8-token", claimedAt: NOW, expiresAt: NOW, heartbeatAt: NOW } },
+    });
+    await expectDenied(leased.repo.reviseWork(request("lease-held"), CREATOR), "revision.affected_state_forbidden", leased.storage);
+  });
+
   it("permits architect and Director same-mission revision while fencing target scope", async () => {
     const architect = await setup({ rootScope: { kind: "mission", id: "mission-140" } });
     await expect(architect.repo.reviseWork(request("architect-single"), ARCHITECT)).resolves.toMatchObject({ generation: 2 });
@@ -172,8 +243,13 @@ describe("Mission-140 V2 D3 exact server-derived revision authority matrix", () 
     await expect(batch.repo.recommitRevisionSet(recommit, CREATOR)).rejects.toMatchObject({ code: "revision.director_or_architect_required" });
     await expect(batch.repo.recommitRevisionSet(recommit, ARCHITECT)).resolves.toMatchObject({ operationReplay: false });
 
+    // V8 coverage_repair, denial-classifier precision: this actor carries an agentId unrelated
+    // to the creator stamp and merely shares the creator's ROLE, so the precise code is
+    // actor_forbidden. It previously reported family_owner_mismatch because the classifier
+    // keyed agentId-OR-role. The laundering attempt is still DENIED and the head is still
+    // unadvanced — only the emitted code changed.
     await expect(batch.repo.reviseWork({ ...request("successor-author-launder"), expectedGeneration: 2 }, { role: "engineer", agentId: ARCHITECT.agentId }))
-      .rejects.toMatchObject({ code: "revision.family_owner_mismatch" });
+      .rejects.toMatchObject({ code: "revision.actor_forbidden" });
     expect((await batch.storage.getHead())?.head.generation).toBe(2);
   });
 

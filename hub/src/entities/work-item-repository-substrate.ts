@@ -1253,8 +1253,13 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         const item = itemsByLogical.get(logicalId)!;
         return item.lease?.holder === actor.agentId || item.executorHistory.includes(actor.agentId);
       });
-      const creatorIdentityMismatch = actor.agentId === family.originalCreatedBy.agentId
-        || actor.role === family.originalCreatedBy.role;
+      // The immutable creator stamp is anchored on agentId. An actor who merely shares the
+      // creator's ROLE is unrelated to the family, not a partial owner match, so classifying
+      // them as family_owner_mismatch overstates the relationship. Keying on agentId alone
+      // keeps same-agentId/wrong-role as family_owner_mismatch and sends every unrelated
+      // agentId to actor_forbidden. Both branches still throw: the denial is unchanged and
+      // no authority is widened — only the emitted CODE becomes precise.
+      const creatorIdentityMismatch = actor.agentId === family.originalCreatedBy.agentId;
       const denialCode = holderOnly
         ? "revision.holder_has_no_authority"
         : creatorIdentityMismatch
