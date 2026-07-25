@@ -168,10 +168,25 @@ try {
   let childExit = null;
   child.once("exit", (code, signal) => { childExit = { code, signal }; });
   await waitFor(
+    // bug-343 sync-phase contract. The former Promise.all issued `list_missions`,
+    // `get_pending_actions` and `drain_pending_actions` concurrently; `list_missions`
+    // scanned Mission/Idea history and is the full-scan class that drove the incident,
+    // so it was replaced by the store-free `get_now`, and `get_pending_actions` was
+    // gated to `role === "architect"` to stop a guaranteed RBAC rejection on engineer
+    // and verifier reconnects. The two negatives below are FALSIFIERS for that remedy:
+    // re-introducing the full-scan probe, or un-gating the architect-only call, turns
+    // this test red.
+    //
+    // ⚠ VACUITY GUARD — DO NOT WEAKEN THE POSITIVES. The two negative assertions pass
+    // TRIVIALLY when `hub.calls` is empty: a client that never connects satisfies both.
+    // They are load-bearing ONLY in conjunction with the positive assertions below,
+    // which require a live connection. Removing or loosening any positive silently
+    // makes both negatives vacuous.
     () => hub.calls.filter((call) => call.name === "register_role").length >= 2
-      && hub.calls.some((call) => call.name === "list_missions")
-      && hub.calls.some((call) => call.name === "get_pending_actions")
-      && hub.calls.some((call) => call.name === "drain_pending_actions"),
+      && hub.calls.some((call) => call.name === "get_now")
+      && hub.calls.some((call) => call.name === "drain_pending_actions")
+      && !hub.calls.some((call) => call.name === "list_missions")
+      && !hub.calls.some((call) => call.name === "get_pending_actions"),
     12_000,
     () => `packaged Claude startup did not complete Hub handshake/sync; exit=${JSON.stringify(childExit)} stderr=${stderr} stdout=${stdout}`,
   );

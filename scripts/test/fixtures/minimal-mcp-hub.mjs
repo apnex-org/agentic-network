@@ -24,6 +24,12 @@ export async function startMinimalMcpHub() {
         wasCreated: true,
       }),
       claim_session: () => ({ ok: true, agent: { id: "agent-product-smoke" }, session: { epoch: 1, claimed: true, trigger: "fixture" } }),
+      // bug-343: `get_now` is the sync-phase liveness probe that replaced
+      // `list_missions`. It must be registered here or the product-path
+      // assertion for it can never be satisfied: this fixture records a call
+      // only inside a registered tool handler, so an unregistered tool is
+      // unobservable rather than absent.
+      get_now: () => ({ now: "2026-07-25T00:00:00.000Z" }),
       list_missions: () => ({ missions: [], total: 0 }),
       get_pending_actions: () => ({ pendingProposals: [], activeThreads: [], totalPending: 0 }),
       drain_pending_actions: () => ({ items: [] }),
