@@ -55,16 +55,25 @@
  *
  *   sudo docker run --rm --network hub-net \
  *     -e POSTGRES_CONNECTION_STRING="$WRITE_CONN" \
- *     $HUB_IMAGE node dist/scripts/migrate-sealed-rows-to-failed-phase.js --dry-run
+ *     <IMAGE> node hub/dist/scripts/migrate-sealed-rows-to-failed-phase.js --dry-run
  *
  * It therefore reads the connection string FROM THE ENVIRONMENT and needs nothing
  * else: no config file, no gcloud, no interactive prompt. `--target=` exists for
  * local throwaway-postgres testing only.
  *
+ * 🔴 THE PATH DEPENDS ON THE WORKING DIRECTORY AND BOTH FORMS BELOW ARE CORRECT IN
+ * THEIR OWN CONTEXT — which is exactly the trap. The container's WORKDIR is the
+ * MONOREPO ROOT (`/repo`), so there is no `/repo/dist`; the artifact is at
+ * `/repo/hub/dist/scripts/`. An `npm run` from `hub/` has cwd=`hub/`, so the
+ * un-prefixed path is right THERE and only there.
+ *
  * Usage:
- *   node dist/scripts/migrate-sealed-rows-to-failed-phase.js [--dry-run] [--target=<conn>]
- *   npm run migrate-sealed-rows-to-failed-phase -- [--dry-run]
- *   (target defaults to $POSTGRES_CONNECTION_STRING)
+ *   IN THE CONTAINER (cwd = monorepo root):
+ *     node hub/dist/scripts/migrate-sealed-rows-to-failed-phase.js [--dry-run]
+ *   FROM hub/ (cwd = hub):
+ *     node dist/scripts/migrate-sealed-rows-to-failed-phase.js [--dry-run]
+ *     npm run migrate-sealed-rows-to-failed-phase -- [--dry-run]
+ *   (target defaults to $POSTGRES_CONNECTION_STRING; --target=<conn> for local tests)
  *
  * RUN IT WITH --dry-run FIRST. Collect-mode walks the SAME scan, the SAME match
  * predicate and the SAME shape-refusal as a real run and differs at exactly one

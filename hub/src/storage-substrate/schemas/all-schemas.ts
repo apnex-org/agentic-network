@@ -586,7 +586,11 @@ const WorkItem: SchemaDef = {
     { name: "id", type: "string", required: true },
     { name: "type", type: "string", required: false, enum: ["task", "bug", "review", "verifier-gate", "freeform"] },
     { name: "priority", type: "string", required: false, enum: ["critical", "high", "normal", "low"] },
-    { name: "status", type: "string", required: false, enum: ["ready", "claimed", "in_progress", "blocked", "paused", "review", "done", "abandoned"] },
+    // bug-371: `failed_sealed` added. MEASURED that this enum is NOT enforced at write time — a
+    // row with the new phase persisted successfully against a real postgres before this line
+    // existed — so it is a declared contract rather than a gate. Left stale it would be a latent
+    // trap for anything that later starts trusting it.
+    { name: "status", type: "string", required: false, enum: ["ready", "claimed", "in_progress", "blocked", "paused", "review", "done", "abandoned", "failed_sealed"] },
     { name: "logicalId", type: "string", required: false },
     { name: "revision", type: "number", required: false },
     { name: "predecessorPhysicalId", type: "string", required: false },
