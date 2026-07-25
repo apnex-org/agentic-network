@@ -44,7 +44,6 @@ import {
   CompletionGateRejected,
   AttestationRejected,
   isPauseOperationReplay,
-  projectSealedStatus,
 } from "../entities/work-item-repository-substrate.js";
 import { LockAcquisitionTimeoutError } from "../storage-substrate/advisory-lock.js";
 import { WorkGraphCurrentnessRejected } from "../entities/workgraph-currentness-fence-v4.js";
@@ -807,6 +806,45 @@ async function updateWork(args: Record<string, unknown>, ctx: IPolicyContext): P
   if (unknownKey !== undefined) {
     return err("invalid_arguments", `update rejected: unknown set field "${unknownKey}" — mutable via set: ${ALLOWED_SET.join("/")}; structural edges are explicit append params; type/evidenceRequirements/status are immutable via this verb`);
   }
+  // 🔴 TOP-LEVEL MISPLACEMENT AFFORDANCE (mission-140 residue).
+  //
+  // `update_work {workId, runbook:"…"}` USED TO SUCCEED SILENTLY AND CHANGE NOTHING: `set` fell
+  // back to `{}`, so the unknown-set-key check above had nothing to inspect, every guard passed,
+  // and the caller got an empty mutation with no indication that the field had been ignored. That
+  // cost mission-140 hours and, in the end, the arc — a verb that accepts a request, reports
+  // success and does nothing is worse than one that refuses.
+  //
+  // The affordance is keyed on THE WHOLE `set{}` TABLE, not on `runbook`. An error that only
+  // recognised the one field that happened to bite us would be the same defect this arc exists to
+  // fix: a rule named after the instance that produced it, which stops at the boundary of its own
+  // example while appearing to work perfectly inside it. Add a field to ALLOWED_SET and it is
+  // covered here automatically, because this reads that array rather than restating it.
+  //
+  // MESSAGE-ONLY. Nothing about what `update_work` permits changes — a request that was rejected
+  // before is still rejected, and one that worked still works. Only the silent-no-op case, which
+  // was never a legitimate success, now names the field and where it belongs.
+  const TOP_LEVEL_PARAMS = [
+    "workId", "set", "appendDependsOn", "appendCompletionDependsOn", "appendReferences", "leaseWindowMs",
+  ];
+  const misplaced = Object.keys(args).filter((k) => !TOP_LEVEL_PARAMS.includes(k));
+  if (misplaced.length > 0) {
+    const settable = misplaced.filter((k) => ALLOWED_SET.includes(k));
+    const other = misplaced.filter((k) => !ALLOWED_SET.includes(k));
+    const parts: string[] = [];
+    if (settable.length) {
+      parts.push(settable.map((k) => `unknown top-level field "${k}" — did you mean "set.${k}"?`).join("; "));
+    }
+    if (other.length) {
+      parts.push(`unknown top-level field(s) ${other.map((k) => `"${k}"`).join(", ")}`);
+    }
+    return err(
+      "invalid_arguments",
+      `update rejected: ${parts.join("; ")}. Settable fields go inside set{}: ${ALLOWED_SET.join("/")}. ` +
+      `Top-level params are: ${TOP_LEVEL_PARAMS.join("/")}. ` +
+      `Structural edges are append-only (appendDependsOn/appendCompletionDependsOn/appendReferences); ` +
+      `type/evidenceRequirements/status are immutable via this verb.`,
+    );
+  }
   // Handler-level VALUE validation (audit-10445, same bug-227 rationale as the
   // key check above): the router doesn't run zod, so an internal caller could
   // persist an out-of-domain priority.
@@ -1361,17 +1399,13 @@ async function getWork(args: Record<string, unknown>, ctx: IPolicyContext): Prom
   // work-88 (arc-node): opt-in k/N completion-gate projection — surfaces how much of an
   // arc's subtree is finalised (feeds the cold-start get_current_stint). Off by default so
   // the common point-read pays no per-child fan-out; only computed when explicitly asked.
-  // bug-371 TRANSITIONAL: a no-op once the row is migrated; until then it shows `failed_sealed` —
-  // the same token the migration stores — so the un-migrated state is display-CORRECT rather than
-  // showing the stale `ready`. Removable as a clean follow-up once production is migrated; it is
-  // deliberately NOT bundled with the phase addition, because bundling an additive change with a
-  // subtractive one is what manufactured the window in the first place.
-  const projected = projectSealedStatus(w);
+  // bug-371's transitional projection was REMOVED here (mission-141 residue) once production was
+  // migrated: the stored phase is now the terminal phase, so there is nothing left to project.
   if (args.includeCompletionProgress === true) {
     const completionProgress = await store.getCompletionProgress(args.workId as string);
-    return ok({ workItem: projected, completionProgress });
+    return ok({ workItem: w, completionProgress });
   }
-  return ok({ workItem: projected });
+  return ok({ workItem: w });
 }
 
 // work-94 (cold-start spine): the "where are we" projection over an arc-node's subtree.
@@ -1442,12 +1476,10 @@ async function listWork(args: Record<string, unknown>, ctx: IPolicyContext): Pro
     holder: args.holder as string | undefined,
   };
   const { items, truncated } = await store.listWorkItems(filters);
-  // bug-371 TRANSITIONAL: applied BEFORE paginate so the projected status is what a caller sees on
-  // every page. A no-op for migrated rows; for un-migrated ones it shows `failed_sealed` — the same
-  // token the migration will store — so the UNBOUNDED, UNOBSERVED window between the automatic
-  // watchtower roll and the manual migration is display-CORRECT rather than merely display-wrong.
-  // It does NOT fix the filter (decided in storage, before decode). Only the migration does.
-  const page = paginate(items.map(projectSealedStatus), args);
+  // bug-371's transitional projection was REMOVED here (mission-141 residue): the stored phase IS
+  // the terminal phase now, so the value this filter selected on and the value the caller sees are
+  // the same value — which was the point of storing it rather than deriving it.
+  const page = paginate(items, args);
   // truncation-HONEST (A4): `truncated` = the 500-row substrate scan was capped (there
   // may be MORE matches we never saw) — distinct from pagination (limit/offset over what we DID see).
   const truncationNote = truncated

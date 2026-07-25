@@ -1,8 +1,8 @@
 // work-512 — MEASURE THE POST-DEPLOY-PRE-MIGRATION WINDOW.
 //
 // THE STATE UNDER TEST IS REAL AND THE DEPLOY PASSES THROUGH IT: bug-371's code is live, the
-// migration has NOT yet run, so sealed rows are still stored `ready` while `projectSealedStatus`
-// — which used to paper over that on the read boundary — has been REMOVED.
+// migration has NOT yet run in the scenario these fixtures construct, so sealed rows are still
+// stored `ready`.
 //
 // 🔴 THE WINDOW IS UNBOUNDED AND UNOBSERVED, WHICH IS WHY THIS FILE EXISTS. MERGE IS DEPLOY:
 // `deploy-hub.yml` triggers on push to main and pushes `hub:latest`; `watchtower-prod` polls every
@@ -12,9 +12,12 @@
 // bet on duration with no operator watching to make it good. The surviving requirement does not
 // mention duration: THE WINDOW MUST BE HARMLESS.
 //
-// It is made harmless by the reinstated transitional projection, which maps to `failed_sealed` —
-// the SAME token the migration stores — so the displayed answer is identical either side of the
-// migration and the projection is provably a no-op once migrated.
+// HISTORICAL NOTE, kept honest: during the window this was made harmless by a transitional
+// projection mapping to `failed_sealed`. THAT PROJECTION IS NOW REMOVED (mission-141 residue) —
+// production was migrated 2026-07-25T10:53Z, so the stored phase is the terminal phase and there
+// is nothing left to project. The cases below survive because they assert properties of the
+// UN-MIGRATED shape that never depended on the projection: claimability, verb legality and pulse
+// eligibility all key off the SEAL, never the phase.
 //
 // The claim being measured was originally REASONED, NOT MEASURED: I read the call paths and saw
 // they key off derived fields. That is the same shape as my §4 slip, where I read the path
@@ -31,7 +34,7 @@ import { isNodePulseEligible } from "../../policy/pulse-sweeper.js";
 import { createMemoryStorageSubstrate } from "../../storage-substrate/index.js";
 import { SubstrateCounter } from "../substrate-counter.js";
 import type { WorkItem } from "../work-item.js";
-import { WorkItemRepositorySubstrate, projectSealedStatus } from "../work-item-repository-substrate.js";
+import { WorkItemRepositorySubstrate } from "../work-item-repository-substrate.js";
 
 const NOW = "2026-07-25T08:30:00.000Z";
 const ARCHITECT = { role: "architect", agentId: "architect-1" };
@@ -134,38 +137,6 @@ describe("work-512 — the post-deploy / pre-migration window", () => {
     expect(isNodePulseEligible(clean), "positive control — the predicate CAN return true").toBe(true);
   });
 
-  it("🔴 (v) THE PROJECTION MAKES 'DEPLOYED' MEAN 'FIXED' — displayed token identical either side", async () => {
-    // COMPLETENESS, NOT SAFETY. (i)-(iii) above already measured that the window is harmless at any
-    // duration — the guards key on the seal and never on the phase. So this case does NOT assert a
-    // safety property; asserting one would put a false claim about the projection's purpose into
-    // the suite, the same defect as a comment that overstates what its code does.
-    // What it asserts is that a reader sees the SAME token in the window as after the migration,
-    // so the rolled container fixes bug-371's display immediately instead of waiting on a manual
-    // step nobody is paged to perform. Asserted through production's projection, not a restatement.
-    const h = harness();
-    await h.substrate.put("WorkItem", unmigratedSealed("w") as unknown as Record<string, unknown>);
-    await h.substrate.put("WorkItem", work("clean") as unknown as Record<string, unknown>);
-
-    const inWindow = projectSealedStatus((await h.repo.getWorkItem("w"))!);
-    expect(inWindow.status, "an un-migrated sealed row must NOT display the stale `ready`").toBe("failed_sealed");
-
-    await h.repo.migrateSealedRowsToFailedPhase();
-    const afterMigration = projectSealedStatus((await h.repo.getWorkItem("w"))!);
-    expect(afterMigration.status).toBe("failed_sealed");
-    expect(inWindow.status, "SAME TOKEN either side — that is what makes the window harmless")
-      .toBe(afterMigration.status);
-
-    // and once migrated the projection is a PROVABLE NO-OP — returned by identity, not copied.
-    // That is what makes its later removal a deletion with nothing to verify.
-    const migratedRow = (await h.repo.getWorkItem("w"))!;
-    expect(projectSealedStatus(migratedRow)).toBe(migratedRow);
-
-    // POSITIVE CONTROL: the projection must not touch a row that is not sealed, or it would be
-    // hiding the entire population rather than correcting one class of it.
-    const cleanRow = (await h.repo.getWorkItem("clean"))!;
-    expect(projectSealedStatus(cleanRow)).toBe(cleanRow);
-    expect(cleanRow.status).toBe("ready");
-  });
 
   it("🔴 (iv) THE ONLY OBSERVABLE DIFFERENCE FROM THE MIGRATED STATE IS `status` — exhaustive diff", async () => {
     // The deliverable. Not a list of paths I thought to check: an enumeration of EVERY key of the

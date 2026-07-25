@@ -237,4 +237,66 @@ describe("update_work (work-136 / idea-419: the ratified WorkItem mutation contr
     const r = await router.handle("update_work", { workId: item, set: { dependsOn: [] } as never }, ctx);
     expect(r.isError).toBe(true); // strict set rejects the unknown key — removal is a recreate
   });
+
+  // ── mission-141 residue (B): the TOP-LEVEL MISPLACEMENT AFFORDANCE ──────────
+  //
+  // 🔴 `update_work {workId, runbook:"…"}` USED TO SUCCEED SILENTLY AND CHANGE NOTHING: `set` fell
+  // back to `{}`, the unknown-set-key guard had nothing to inspect, every other guard passed, and
+  // the caller got an empty mutation with no sign the field was ignored, while
+  // `update_work {workId, set:{runbook:"…"}}` worked. That difference cost mission-140 hours and,
+  // in the end, the arc. A VERB THAT ACCEPTS A REQUEST, REPORTS SUCCESS AND DOES NOTHING IS WORSE
+  // THAN ONE THAT REFUSES.
+  //
+  // 🔴 THE WHOLE set{} TABLE IS TESTED, NOT JUST `runbook`. An affordance recognising only the one
+  // field that happened to bite us would be the exact failure this arc exists to fix: a rule named
+  // after the instance that produced it, stopping at the boundary of its own example while working
+  // perfectly inside it.
+  const SETTABLE: Array<[string, unknown]> = [
+    ["priority", "high"],
+    ["targetRef", { kind: "bug", id: "bug-1" }],
+    ["runbook", "new runbook text"],
+    ["payload", { k: "v" }],
+    ["roleEligibility", ["engineer"]],
+  ];
+
+  it("CALIBRATION: set.runbook (the CORRECT shape) still succeeds — so a refusal below means misplacement", async () => {
+    const id = await created({ runbook: "original" });
+    const r = await router.handle("update_work", { workId: id, set: { runbook: "changed" } }, ctx);
+    expect(r.isError).toBeFalsy();
+    expect((await repo.getWorkItem(id))!.runbook).toBe("changed");
+  });
+
+  it("🔴 EVERY settable field misplaced at top level is REFUSED and NAMED with its location", async () => {
+    const silentlyAccepted: string[] = [];
+    const didNotNameLocation: string[] = [];
+    for (const [field, value] of SETTABLE) {
+      const id = await created({ runbook: "original" });
+      const r = await router.handle("update_work", { workId: id, [field]: value }, ctx);
+      if (!r.isError) { silentlyAccepted.push(field); continue; }
+      const text = JSON.stringify(body(r));
+      // ASSERT WHICH REFUSAL: it must name the field AND where it belongs, not merely refuse.
+      if (!text.includes(field) || !text.includes(`set.${field}`)) didNotNameLocation.push(field);
+    }
+    expect(silentlyAccepted, `SILENTLY ACCEPTED (the mission-140 defect): ${silentlyAccepted.join(", ")}`).toEqual([]);
+    expect(didNotNameLocation, `refused but did NOT name field+location: ${didNotNameLocation.join(", ")}`).toEqual([]);
+  });
+
+  it("the row is UNCHANGED after a misplaced update — refusal, not partial application", async () => {
+    const id = await created({ runbook: "original" });
+    const before = JSON.stringify(await repo.getWorkItem(id));
+    const r = await router.handle("update_work", { workId: id, runbook: "sneaky", priority: "critical" }, ctx);
+    expect(r.isError).toBe(true);
+    expect(JSON.stringify(await repo.getWorkItem(id)), "nothing applied").toBe(before);
+  });
+
+  it("a NON-settable unknown top-level key is refused WITHOUT a misleading set.X suggestion", async () => {
+    // POSITIVE CONTROL on the suggestion: `status` is immutable via this verb, so proposing
+    // "set.status" would send the caller at a field that rejects them again.
+    const id = await created({ runbook: "original" });
+    const r = await router.handle("update_work", { workId: id, status: "done" }, ctx);
+    expect(r.isError).toBe(true);
+    const text = JSON.stringify(body(r));
+    expect(text).toContain("status");
+    expect(text, "must NOT invite set.status — it is immutable via this verb").not.toContain("set.status");
+  });
 });
