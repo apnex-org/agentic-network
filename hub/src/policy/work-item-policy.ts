@@ -44,6 +44,7 @@ import {
   CompletionGateRejected,
   AttestationRejected,
   isPauseOperationReplay,
+  projectSealedStatus,
 } from "../entities/work-item-repository-substrate.js";
 import { LockAcquisitionTimeoutError } from "../storage-substrate/advisory-lock.js";
 import { WorkGraphCurrentnessRejected } from "../entities/workgraph-currentness-fence-v4.js";
@@ -1360,15 +1361,17 @@ async function getWork(args: Record<string, unknown>, ctx: IPolicyContext): Prom
   // work-88 (arc-node): opt-in k/N completion-gate projection — surfaces how much of an
   // arc's subtree is finalised (feeds the cold-start get_current_stint). Off by default so
   // the common point-read pays no per-child fan-out; only computed when explicitly asked.
-  // bug-371 supersedes idea-635's read-boundary projection: the terminal phase is now STORED, so
-  // there is nothing left to project. The derivation was removed rather than left in place —
-  // after the migration it would have rewritten `failed_sealed` back to `abandoned`, which is the
-  // shadowing-a-real-field failure it was warned against.
+  // bug-371 TRANSITIONAL: a no-op once the row is migrated; until then it shows `failed_sealed` —
+  // the same token the migration stores — so the un-migrated state is display-CORRECT rather than
+  // showing the stale `ready`. Removable as a clean follow-up once production is migrated; it is
+  // deliberately NOT bundled with the phase addition, because bundling an additive change with a
+  // subtractive one is what manufactured the window in the first place.
+  const projected = projectSealedStatus(w);
   if (args.includeCompletionProgress === true) {
     const completionProgress = await store.getCompletionProgress(args.workId as string);
-    return ok({ workItem: w, completionProgress });
+    return ok({ workItem: projected, completionProgress });
   }
-  return ok({ workItem: w });
+  return ok({ workItem: projected });
 }
 
 // work-94 (cold-start spine): the "where are we" projection over an arc-node's subtree.
@@ -1439,10 +1442,12 @@ async function listWork(args: Record<string, unknown>, ctx: IPolicyContext): Pro
     holder: args.holder as string | undefined,
   };
   const { items, truncated } = await store.listWorkItems(filters);
-  // bug-371: no projection. The stored phase IS the terminal phase, so the value this filter
-  // selected on and the value the caller is shown are the same value — which is the entire
-  // point of storing it rather than deriving it.
-  const page = paginate(items, args);
+  // bug-371 TRANSITIONAL: applied BEFORE paginate so the projected status is what a caller sees on
+  // every page. A no-op for migrated rows; for un-migrated ones it shows `failed_sealed` — the same
+  // token the migration will store — so the UNBOUNDED, UNOBSERVED window between the automatic
+  // watchtower roll and the manual migration is display-CORRECT rather than merely display-wrong.
+  // It does NOT fix the filter (decided in storage, before decode). Only the migration does.
+  const page = paginate(items.map(projectSealedStatus), args);
   // truncation-HONEST (A4): `truncated` = the 500-row substrate scan was capped (there
   // may be MORE matches we never saw) — distinct from pagination (limit/offset over what we DID see).
   const truncationNote = truncated

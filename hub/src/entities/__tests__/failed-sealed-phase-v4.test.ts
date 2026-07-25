@@ -215,6 +215,30 @@ describe("bug-371 — real terminal phase for seal-failed rows", () => {
     expect(TERMINAL_WORK_PHASES.has("ready")).toBe(false);
   });
 
+  it("F8: --dry-run reports what it WOULD write and writes NOTHING", async () => {
+    // Collect-mode claiming zero effects is a claim, so it is asserted rather than trusted: the
+    // stored rows must be byte-identical after a dry run, AND the report must be non-empty —
+    // without the second half this passes on a dry run that simply does nothing and reports
+    // nothing, which is the failure mode that makes a dry run useless as a pre-deploy check.
+    const h = harness();
+    await seed(h);
+    const before = JSON.stringify([
+      await h.repo.getWorkItem("pre"), await h.repo.getWorkItem("post"), await h.repo.getWorkItem("plain-ready"),
+    ]);
+    const dry = await h.repo.migrateSealedRowsToFailedPhase({ dryRun: true });
+    const after = JSON.stringify([
+      await h.repo.getWorkItem("pre"), await h.repo.getWorkItem("post"), await h.repo.getWorkItem("plain-ready"),
+    ]);
+    expect(after, "a dry run must leave storage byte-identical").toBe(before);
+    expect(dry.dryRun).toBe(true);
+    expect(dry.migrated.map((r) => r.id).sort(), "and must still REPORT the rows it would write").toEqual(["post", "pre"]);
+    expect(dry.migrated.find((r) => r.id === "pre")!.before).toBe("ready");
+    // and a real run afterwards still works — the dry run did not consume anything
+    const real = await h.repo.migrateSealedRowsToFailedPhase();
+    expect(real.migrated.map((r) => r.id).sort()).toEqual(["post", "pre"]);
+    expect((await h.repo.getWorkItem("pre"))!.status).toBe(SEALED);
+  });
+
   it("F7: the migration is IDEMPOTENT and records reversible per-row before/after", async () => {
     // A5: the prior stored status must be recoverable exactly, and re-running must not churn.
     const h = harness();

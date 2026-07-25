@@ -534,6 +534,39 @@ export function hasActiveVerifierFail(item: WorkItem): boolean {
 
 /** Effective failed-sealed classification is authoritative before ANY raw phase check. */
 
+/**
+ * bug-371 TRANSITIONAL PROJECTION — reinstated deliberately, mapping to `failed_sealed`.
+ *
+ * 🔴 THIS IS A COMPLETENESS MECHANISM, NOT A SAFETY MECHANISM. Say that first because the
+ * opposite belief is what nearly got encoded here. MEASURED (independently, twice): an un-migrated
+ * sealed row is ALREADY unclaimable and EVERY lifecycle verb ALREADY refuses — `isFailedGateSealed`
+ * contains zero `.status` references, and both the claimable projection and the completion-gate
+ * consumer key on the SEAL, not the phase. So the pre-migration window is harmless at ANY
+ * duration, and nothing here is load-bearing for correctness of the guards.
+ *
+ * WHAT IT ACTUALLY BUYS: without it, the rolled container does not fix bug-371 until someone
+ * remembers to run the migration — "deployed" would not mean "fixed", and the defect would stay
+ * live for an unbounded period. With it, the display is correct the moment the code rolls and the
+ * migration becomes cleanup rather than a race. That matters because merge IS deploy for
+ * `hub/**`: `deploy-hub.yml` pushes `hub:latest` and `watchtower-prod` rolls it automatically,
+ * unattended, with nobody paged.
+ *
+ * It maps to `failed_sealed`, NOT `abandoned`: the projected token and the migrated STORED token
+ * are then the same value, so (a) a reader sees one consistent answer either side of the
+ * migration, and (b) once every row is migrated this is provably a NO-OP — the
+ * `item.status === "failed_sealed"` guard short-circuits and the row is returned by identity —
+ * which makes its later removal a deletion with nothing to verify.
+ *
+ * IT DOES NOT AND CANNOT FIX THE FILTER. Filters are decided in the storage layer before decode;
+ * this runs after. It touches DISPLAY only, enters no predicate and no claimability path, and must
+ * not be mistaken for the migration.
+ */
+export function projectSealedStatus(item: WorkItem): WorkItem {
+  if (item.status === "failed_sealed") return item;          // already migrated → no-op
+  if (item.effectiveDisposition !== "failed_sealed") return item;
+  return { ...item, status: "failed_sealed" };
+}
+
 export function isFailedGateSealed(item: WorkItem): boolean {
   return item.effectiveDisposition === "failed_sealed" || item.failedGateSeal != null || hasActiveVerifierFail(item);
 }
@@ -3548,13 +3581,15 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
    * `failedGateSeal` nor an active verifier FAIL is not a shape this migration understands, and
    * silently passing over it would hide exactly the case worth seeing.
    */
-  async migrateSealedRowsToFailedPhase(): Promise<{
+  async migrateSealedRowsToFailedPhase(opts: { dryRun?: boolean } = {}): Promise<{
     scanned: number;
     matched: number;
     migrated: Array<{ id: string; before: WorkItemPhase; after: WorkItemPhase }>;
     skipped: string[];
     truncated: boolean;
+    dryRun: boolean;
   }> {
+    const dryRun = opts.dryRun === true;
     const { items, truncated } = await this.listWorkItems();
     const migrated: Array<{ id: string; before: WorkItemPhase; after: WorkItemPhase }> = [];
     const skipped: string[] = [];
@@ -3571,11 +3606,18 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         );
       }
       const before = item.status;
+      if (dryRun) {
+        // COLLECT-MODE: report exactly what a real run would write, with zero effects. The loud
+        // shape-refusal above still fires, so a dry run surfaces an unrecognised row BEFORE the
+        // deploy rather than during it.
+        migrated.push({ id: item.id, before, after: "failed_sealed" });
+        continue;
+      }
       // status ALONE. Every other field, including all four protected ones, is carried by spread.
       const updated = await this.tryCasUpdate(item.id, (w) => ({ ...w, status: "failed_sealed" as const }));
       if (updated) migrated.push({ id: item.id, before, after: updated.status });
     }
-    return { scanned: items.length, matched, migrated, skipped, truncated };
+    return { scanned: items.length, matched, migrated, skipped, truncated, dryRun };
   }
 
   private async tryCasUpdate(
