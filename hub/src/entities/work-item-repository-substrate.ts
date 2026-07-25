@@ -99,6 +99,40 @@ const ENTITY_REFERENCE_SCHEMA: Readonly<Record<string, string>> = Object.freeze(
 });
 const entityReferenceSchemaKind = (semanticKind: string): string => ENTITY_REFERENCE_SCHEMA[semanticKind.toLowerCase()] ?? semanticKind;
 const LIST_CAP = 500;
+
+/**
+ * bug-371 migration paging. Deliberately NOT `LIST_CAP`: the migration's traversal is a different
+ * concern from the read-API's response cap, and tying them would make a later tuning of one
+ * silently change the other.
+ *
+ * MIGRATION_MAX_SCAN is a RUNAWAY BACKSTOP, not a coverage limit — it exists so a substrate that
+ * kept returning full pages could not spin forever. Reaching it sets `truncated`, which the
+ * entrypoint treats as a FATAL incomplete run. It is set far above any plausible corpus precisely
+ * so that hitting it means something is wrong rather than something is big.
+ */
+const MIGRATION_PAGE_SIZE = 500;
+const MIGRATION_MAX_SCAN = 100_000;
+
+/**
+ * 🔴 THE SUBSTRATE SILENTLY CLAMPS `limit` TO 500 — `Math.min(limit ?? 100, 500)`, in BOTH the
+ * postgres and memory implementations. MEASURED, not read from a doc.
+ *
+ * That clamp is a trap for the paging loop below, because the loop terminates on a SHORT PAGE.
+ * Raise `MIGRATION_PAGE_SIZE` above the clamp and every page comes back at 500 — fewer than
+ * requested — so the loop stops after ONE page and silently reproduces exactly the truncation
+ * defect this change exists to fix. The failure would look like a clean, complete, one-page run.
+ *
+ * So the relationship is asserted rather than commented. This is the PER-PAGE invariant: the page
+ * size we ask for must be one the substrate will actually honour.
+ */
+const SUBSTRATE_LIST_CLAMP = 500;
+if (MIGRATION_PAGE_SIZE > SUBSTRATE_LIST_CLAMP) {
+  throw new Error(
+    `[bug-371 migration] MIGRATION_PAGE_SIZE ${MIGRATION_PAGE_SIZE} exceeds the substrate's silent ` +
+    `list clamp of ${SUBSTRATE_LIST_CLAMP}; every page would return short and the paged scan would ` +
+    `terminate after one page, re-introducing the truncation defect it exists to fix.`,
+  );
+}
 /** The substrate hard-clamps list() to 500 rows; the ready-scan uses it as the cap and
  *  flags truncation when hit (list_ready_work is truncation-HONEST, audit-4070 #3). */
 const READY_SCAN_CAP = 500;
@@ -3590,7 +3624,29 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     dryRun: boolean;
   }> {
     const dryRun = opts.dryRun === true;
-    const { items, truncated } = await this.listWorkItems();
+    // 🔴 THE SCAN POPULATION IS THE WHOLE WorkItem TABLE, NOT THE ROWS WE INTEND TO CHANGE.
+    // The first version called `listWorkItems()` once — a single LIST_CAP-limited read — and I
+    // waved it through as "inert at n=12". n=12 IS THE MATCH COUNT. The corpus is 500+ and capped,
+    // the target rows sort beyond the cap, and the production dry run scanned 500 rows, matched
+    // ZERO and reported `truncated: true`. It never reached them.
+    //
+    // NO TARGETED QUERY IS POSSIBLE, MEASURED: `effectiveDisposition` is assigned during DECODE
+    // (see decodeWorkItem) and is NOT stored, while `substrate.list` filters are evaluated in the
+    // storage layer BEFORE decode. `failedGateSeal` IS stored but is null on the pre-v2 population
+    // this migration exists for, and `status.phase` only becomes terminal AFTER this runs — the one
+    // stored marker that would select them is the value being written. So the scan must be
+    // EXHAUSTIVE, and exhaustiveness has to come from paging rather than from a predicate.
+    const items: WorkItem[] = [];
+    let truncated = false;
+    for (let offset = 0; ; offset += MIGRATION_PAGE_SIZE) {
+      const page = await this.substrate.list<WorkItem>(KIND, { limit: MIGRATION_PAGE_SIZE, offset });
+      items.push(...page.items.map(cloneWorkItem));
+      // A SHORT PAGE IS THE ONLY CORRECT TERMINATION SIGNAL — a full page tells you nothing about
+      // whether more rows exist. Guard the pathological case where the substrate keeps returning
+      // full pages forever rather than looping unbounded.
+      if (page.items.length < MIGRATION_PAGE_SIZE) break;
+      if (items.length >= MIGRATION_MAX_SCAN) { truncated = true; break; }
+    }
     const migrated: Array<{ id: string; before: WorkItemPhase; after: WorkItemPhase }> = [];
     const skipped: string[] = [];
     let matched = 0;
