@@ -301,4 +301,59 @@ describe("failed-gate-seal-v2", () => {
     await expect(repo.claimWorkItem(workId, "other-engineer", "engineer"))
       .rejects.toBeInstanceOf(FailedGateSealedRejected);
   });
+
+  // bug-346 FALSIFIERS (V8 bug346_repair). V2 §1 invariant 7 makes an active verifier FAIL an
+  // effective terminal seal: nonclaimable, never requeued by lease expiry, not re-stageable in
+  // place. The substrate ALREADY honours this on every surface (isFailedGateSealed is consulted
+  // by the ready scan, by getNextAction, by expireLease, and by the same-row lifecycle guard).
+  // What was missing was any test binding it: every one of those guards could have been deleted
+  // without turning anything red. These assertions exist to make that impossible.
+  //
+  // The fixture deliberately reproduces the OBSERVED LIVE SHAPE — status "ready" carrying an
+  // active verifier FAIL — which is the row that was advertised to the engineer lane for hours.
+  // Asserting against a `review`-phase row instead would pass on the status check alone and stay
+  // green with the seal filter removed, i.e. it would be exactly the unfalsified guard this node
+  // exists to eliminate.
+  it("keeps a terminal-FAIL row out of every claimable projection and never requeues it", async () => {
+    const { substrate, repo, workId } = await fixture();
+    await repo.attestEvidence(workId, "seal", VERIFIER, "fail", EVIDENCE_REFS);
+
+    const sealed = await repo.getWorkItem(workId);
+    expect(sealed!.attestations.seal.verdict).toBe("fail");
+
+    // Force the raw phase back to "ready" WITHOUT clearing the FAIL attestation, reproducing the
+    // live row. Terminality must be derived from the SEAL, never from the mutable status field —
+    // so this row must still be treated as terminal despite reading as "ready".
+    await substrate.put("WorkItem", { ...sealed!, status: "ready", lease: null });
+    const readyShaped = await repo.getWorkItem(workId);
+    expect(readyShaped!.status).toBe("ready");
+    expect(readyShaped!.lease).toBeNull();
+
+    // (a) role-lane ready listing must not advertise it to its eligible role.
+    const forRole = await repo.listReadyForRole("engineer", 100);
+    expect(forRole.items.map((item) => item.id)).not.toContain(workId);
+
+    // ...nor to an unscoped listing.
+    const anyRole = await repo.listReadyForRole(undefined, 100);
+    expect(anyRole.items.map((item) => item.id)).not.toContain(workId);
+
+    // (b) lease expiry must never requeue a sealed row.
+    // The load-bearing assertion is NEVER "requeued". Two terminal outcomes are both correct:
+    // "failed_sealed" on the legacy path (an active verifier FAIL with no v2 receipt yet, which
+    // the sweep reconciles), and "skipped" when a born-native v2 seal already cleared the lease.
+    // This row was sealed by attestEvidence, so it takes the born-native branch.
+    const outcome = await repo.expireLease(workId, "2026-07-25T00:00:00.000Z", 3);
+    expect(outcome).not.toBe("requeued");
+    expect(["failed_sealed", "skipped"]).toContain(outcome);
+    // The invariant is that expiry never RESURRECTS a sealed row into a claimable lane. The raw
+    // phase is deliberately not asserted here: on the "skipped" branch the sweep correctly does
+    // nothing, so the phase stays whatever it was — asserting on it would test the fixture, not
+    // the guard. Terminality is seal-derived, so re-check the projection instead.
+    const afterExpiry = await repo.listReadyForRole("engineer", 100);
+    expect(afterExpiry.items.map((item) => item.id)).not.toContain(workId);
+
+    // (c) and it must remain non-re-stageable in place.
+    await expect(repo.claimWorkItem(workId, HOLDER, "engineer"))
+      .rejects.toBeInstanceOf(FailedGateSealedRejected);
+  });
 });
