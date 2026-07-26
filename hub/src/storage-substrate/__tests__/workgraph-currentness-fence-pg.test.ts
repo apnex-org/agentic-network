@@ -155,11 +155,18 @@ describe("Mission-140 WorkGraph writer/read fence real PostgreSQL", () => {
     expect(pauseRace.status).toBe("fulfilled");
     expect(["fulfilled", "rejected"]).toContain(renewRace.status);
     const recalled = (await workItems.getWorkItem("a"))!;
-    expect(recalled).toMatchObject({ status: "paused", lease: null, recallNoticePending: true });
+    // idea-640 (A): pause RETAINS the lease, so `lease: null` no longer holds. This test is about the
+    // writer/read FENCE, not about lease clearing — the fence properties (paused status, recall notice)
+    // are what it exists to assert, and both are unchanged.
+    expect(recalled).toMatchObject({ status: "paused", recallNoticePending: true });
     expect(recalled.recallHistory).toHaveLength(1);
     expect(recalled.recallHistory![0].before.phase).toBe("claimed");
     expect(recalled.pendingRecallIntents![0].exactHolderAgentId).toBe("engineer-1");
-    expect(JSON.stringify(recalled)).not.toContain(token);
+    // idea-640 (A): scoped from the WHOLE ROW to RECALLHISTORY, matching pause-recall-v4. The history's
+    // fingerprint-not-token discipline is a real designed control and stays; the row-level scrub was a
+    // side effect of `lease: null` and protected nothing, since get_work returns lease.token in plaintext
+    // to any reader of any live row. Filed separately, out of this arc's bound.
+    expect(JSON.stringify(recalled.recallHistory)).not.toContain(token);
     await expect(workItems.renewLease("a", "engineer-1", token)).rejects.toThrow();
     const raw = await substrate.get<Record<string, unknown>>("WorkItem", "a");
     expect((raw!.status as Record<string, unknown>).recallNoticePending).toBe(true);
