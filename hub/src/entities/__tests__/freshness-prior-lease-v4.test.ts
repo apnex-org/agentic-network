@@ -112,6 +112,46 @@ describe("bug-384 — acceptance, BOTH directions", () => {
     ).toBe("done");
   });
 
+  it("🔴 EARLIEST-WINS: with MULTIPLE prior leases, the floor is the OLDEST, not the newest", async () => {
+    // ARCHITECT-FLAGGED, AND MY EXISTING FIXTURES COULD NOT HAVE CAUGHT IT — they carry ONE
+    // recallHistory entry, so earliest and latest are the same value and a latest-wins bug reads
+    // as green. Implemented is not enforced.
+    //
+    // THE LIVE SHAPE THAT PROVOKED IT: m140_residue accumulated a SECOND entry when it was paused
+    // during the identity outage. Its entries are [12:22:43 (the original), 23:21:52 (the
+    // post-re-claim pause)] and its artifacts are 12:36/12:38/12:52. Take the LATEST and the floor
+    // becomes 23:21:52 — AFTER the artifacts — and the predicate fails on the one row the whole
+    // series was written to rescue. A second pause is all it takes; no code change required.
+    const h = harness();
+    const OLD = "2020-01-01T00:10:00.000Z"; // original lease — artifact at T2 postdates this
+    const NEW = "2020-01-03T00:00:00.000Z"; // a later pause — artifact at T2 PREDATES this
+    const twoEntry = rowWithPriorLease("w-two", ME, {
+      status: "in_progress",
+      lease: { holder: ME, token: "cur", claimedAt: "2020-01-04T00:00:00.000Z", expiresAt: "2099-01-01T00:00:00.000Z", heartbeatAt: NEW } as never,
+      recallHistory: [
+        { operationId: "old", requestHash: "h", actor: { role: "system", agentId: "s" }, reason: "expiry", recalledAt: OLD, beforeStateHash: "s",
+          before: { physicalId: "w-two", logicalId: "w-two", revision: 1, topologyGeneration: null, phase: "in_progress", resourceVersion: "1", stateHash: "s", blockedOn: null,
+            lease: { holder: ME, claimedAt: OLD, expiresAt: NEW, heartbeatAt: OLD, tokenFingerprint: "f" } },
+          frozenAuthority: null, holderNoticeIntentId: null },
+        { operationId: "new", requestHash: "h", actor: { role: "architect", agentId: "arch" }, reason: "protective pause", recalledAt: NEW, beforeStateHash: "s",
+          before: { physicalId: "w-two", logicalId: "w-two", revision: 1, topologyGeneration: null, phase: "in_progress", resourceVersion: "2", stateHash: "s", blockedOn: null,
+            lease: { holder: ME, claimedAt: NEW, expiresAt: NEW, heartbeatAt: NEW, tokenFingerprint: "f" } },
+          frozenAuthority: null, holderNoticeIntentId: null },
+      ] as never,
+    });
+    await h.substrate.put("Agent", { id: ME, role: "engineer" });
+    await h.substrate.put("WorkItem", twoEntry as unknown as Record<string, unknown>);
+
+    await h.repo.completeWork("w-two", ME, "cur", [
+      { requirementId: "pr", kind: "pr", ref: "https://github.com/x/y/pull/1", producedAt: T2 } as never,
+    ], { summary: "s", observed: false } as never);
+
+    expect(
+      (await h.repo.getWorkItem("w-two"))!.status,
+      "the floor must be the OLDEST prior lease; a later pause must not raise it above the artifact",
+    ).toBe("done");
+  });
+
   it("🔴 NEGATIVE CONTROL: REFUSES the same artifact for a DIFFERENT agent", async () => {
     // The prior lease belongs to ME; OTHER claims and submits the same timestamp. A new holder
     // must never inherit a predecessor's baseline — without this the fix is a global relaxation.
