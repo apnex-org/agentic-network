@@ -3244,6 +3244,25 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (!isHolderWithToken && !isCreator) {
         throw new TransitionRejected(`abandon requires the lease-holder (with matching token) or the creator, not ${agentId}`);
       }
+      // 🔴 idea-640 / nodefix0 — `abandonWork` IS THE ONE HOLDER VERB THAT DOES NOT ROUTE THROUGH
+      // `assertLease`, so the suspension refusal added there does not reach it. It has its own authority
+      // path because a CREATOR may abandon an unclaimed `ready` row without holding a lease.
+      //
+      // MECHANICS: without this, a suspended row still satisfies RELEASABLE_PHASES (its phase no longer
+      // moves), so the holder — or the creator — could ABANDON it. That is TERMINAL and irreversible.
+      //
+      // RATIONALE: of everything a suspended row must refuse, this is the worst to get wrong: an
+      // operator suspends a row to hold it still, and the one verb that escaped the shared seam is the
+      // one that DESTROYS it. Found only because a seven-verb enumeration had exactly one member
+      // resolve instead of reject — six shared a seam and the seventh did not.
+      //
+      // CONSEQUENCE: unpause before abandoning. The decision to end the work should be taken on a live
+      // row, not on one somebody else has withdrawn from execution.
+      if (isSuspended(w)) {
+        throw new TransitionRejected(
+          `abandon rejected: ${w.id} is SUSPENDED (status=${w.status}); a suspended row is withdrawn from execution and cannot be abandoned. Unpause it first — abandoning is terminal.`,
+        );
+      }
       if (!RELEASABLE_PHASES.includes(w.status) && !(w.status === "ready" && isCreator)) {
         throw new TransitionRejected(`abandon requires an active claim (or the creator from ready), was ${w.status}`);
       }
@@ -4004,6 +4023,30 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
 
   private assertLease(w: WorkItem, agentId: string, leaseToken: string, verb: string): void {
     this.assertNotFailedSealed(w);
+    // 🔴 idea-640 / nodefix0 — A SUSPENDED ROW ACCEPTS NO HOLDER VERB. THE WIDEST INSTANCE OF THE CLASS.
+    //
+    // MECHANICS: this is the seam EVERY holder verb passes through — start, block, resume, renew,
+    // release, complete, abandon — so the suspension refusal is stated ONCE here rather than seven times.
+    //
+    // WHY IT IS NEW: before the attribute model, suspension moved the phase to `paused`, and every one
+    // of those verbs was refused by ITS OWN PHASE CHECK for free — `block` requires in_progress,
+    // `renew` requires a LEASE_HELD phase, `complete` requires in_progress|review. NOW THE PHASE STAYS
+    // PUT, so every one of those checks PASSES on a suspended row. MEASURED: a holder verb resolved
+    // instead of rejecting on a suspended `in_progress` row. WITHOUT THIS, A HOLDER COULD `complete` A
+    // ROW AN OPERATOR HAD SUSPENDED — suspension would withdraw nothing.
+    //
+    // RATIONALE: suspension means WITHDRAWN FROM EXECUTION. If the holder can still act, the state is
+    // decorative. This is the same fail-open shape as claimability, one layer in: the refusals that
+    // announce themselves (reset, unpause) were caught immediately; the ones that simply keep working
+    // are silent, and this is the widest of them.
+    //
+    // CONSEQUENCE: unpause the row to resume. The lease, holder and token are all retained across the
+    // suspension, so nothing needs re-claiming.
+    if (isSuspended(w)) {
+      throw new TransitionRejected(
+        `${verb} rejected: ${w.id} is SUSPENDED (status=${w.status}); a suspended row is withdrawn from execution and accepts no holder verb. Unpause it to resume — your lease is retained.`,
+      );
+    }
     if (w.lease?.holder !== agentId) {
       throw new TransitionRejected(`${verb} requires the lease-holder (${w.lease?.holder ?? "none"}), not ${agentId}`);
     }
