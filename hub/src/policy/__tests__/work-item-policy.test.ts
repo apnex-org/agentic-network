@@ -38,7 +38,7 @@ function makeStub(overrides: Partial<Record<keyof IWorkItemStore, (...a: unknown
   return {
     calls,
     createWorkItem: m("createWorkItem"), updateWorkItem: m("updateWorkItem"), appendSystemProjectionEdge: m("appendSystemProjectionEdge"), createBlueprintNode: m("createBlueprintNode"), deleteWorkItem: m("deleteWorkItem"),
-    getWorkItem: m("getWorkItem"), getCurrentWork: m("getCurrentWork"), reviseWork: m("reviseWork"), getCompletionProgress: m("getCompletionProgress"), getStintProjection: m("getStintProjection"), getNextAction: m("getNextAction"), getLegalMoves: m("getLegalMoves"), entityExists: m("entityExists"),
+    getWorkItem: m("getWorkItem"), getCurrentWork: m("getCurrentWork"), getCompletionProgress: m("getCompletionProgress"), getStintProjection: m("getStintProjection"), getNextAction: m("getNextAction"), getLegalMoves: m("getLegalMoves"), entityExists: m("entityExists"),
     listWorkItems: m("listWorkItems"), listPrReviewBindingWorkItems: m("listPrReviewBindingWorkItems"), listWorkItemsByProjectionKey: m("listWorkItemsByProjectionKey"), listReadyForRole: m("listReadyForRole"),
     claimWorkItem: m("claimWorkItem"), startWork: m("startWork"), blockWork: m("blockWork"),
     resumeWork: m("resumeWork"), renewLease: m("renewLease"), releaseWork: m("releaseWork"),
@@ -85,8 +85,14 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
   let router: PolicyRouter;
   beforeEach(() => { router = new PolicyRouter(() => {}); registerWorkItemPolicy(router); });
 
-  it("registers the WorkGraph cold-start, semantic-revision, lifecycle, and SEAL tools", () => {
-    for (const t of ["create_work", "seed_blueprint", "get_work", "get_current_work", "revise_work", "get_current_stint", "get_next_action", "legal_moves", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "pause_work", "unpause_work", "complete_work", "attest_evidence", "verify_attestation"]) {
+  // idea-640: `revise_work` REMOVED from this list with the verb's retirement.
+  // 🔴 THIS ASSERTION WAS INVISIBLE TO THE COMPILER. Removing the interface member turned every
+  // TypeScript reference into an error and gave a complete list of SYMBOL uses — but this is a
+  // STRING. It would have compiled clean and failed at RUNTIME, asserting a tool that no longer
+  // exists. A `git grep` on the symbol misses what a compiler catches; the compiler misses what a
+  // string grep catches. NEITHER INSTRUMENT IS COMPLETE AND THEY FAIL IN OPPOSITE DIRECTIONS.
+  it("registers the WorkGraph cold-start, lifecycle, and SEAL tools", () => {
+    for (const t of ["create_work", "seed_blueprint", "get_work", "get_current_work", "get_current_stint", "get_next_action", "legal_moves", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "pause_work", "unpause_work", "complete_work", "attest_evidence", "verify_attestation"]) {
       expect(router.getRegisteredTools()).toContain(t);
     }
   });
@@ -170,15 +176,6 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     expect(stub.calls[0]).toMatchObject({ method: "getCurrentWork", args: ["logical-1"] });
   });
 
-  it("revise_work passes only the SERVER-STAMPED actor and returns the revision receipt", async () => {
-    const receipt = { operationId: "rev-1", requestHash: "h", generation: 2, previousGeneration: 1, topologyHash: "t", rootLogicalId: "a", affectedSet: ["a"], recommitSet: ["a"], current: [], operationReplay: false };
-    const stub = makeStub({ reviseWork: () => receipt });
-    const r = await router.handle("revise_work", { logicalId: "a", operationId: "rev-1", reason: "semantic", expectedGeneration: 1, set: { runbook: "new" }, role: "director", agentId: "spoof" }, ctxFor(stub, "architect"));
-    expect(r.isError).toBeFalsy();
-    expect(body(r)).toMatchObject({ operationId: "rev-1", affectedSet: ["a"] });
-    expect(stub.calls[0].method).toBe("reviseWork");
-    expect(stub.calls[0].args[1]).toEqual({ agentId: "anonymous-architect", role: "architect" });
-  });
 
   it("unpause_work batch routes to the atomic revision-set verb and preserves replay", async () => {
     const item = sampleItem({ id: "physical-2", status: "ready", lease: null });

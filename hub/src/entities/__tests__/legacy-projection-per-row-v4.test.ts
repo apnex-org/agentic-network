@@ -15,6 +15,7 @@ import { SubstrateCounter } from "../substrate-counter.js";
 import type { WorkItem } from "../work-item.js";
 import { WorkItemRepositorySubstrate } from "../work-item-repository-substrate.js";
 import { WorkRevisionStorageRepositoryV4, buildWorkRevisionStorageV4 } from "../work-revision-storage-v4.js";
+import { buildSuccessorGeneration } from "./_successor-generation.js";
 
 const NOW = "2026-07-25T06:50:00.000Z";
 const ARCHITECT = { role: "architect", agentId: "architect-1" };
@@ -109,10 +110,18 @@ describe("idea-633 Part 1 — per-row legacy projection", () => {
     const before = await repo.getCurrentWork("subject");
     expect(before!.physicalId).toBe("subject");
 
-    await repo.reviseWork({
-      logicalId: "subject", operationId: "rev-1", reason: "semantic correction",
-      expectedGeneration: 1, set: { runbook: "corrected" },
-    }, ARCHITECT);
+    // idea-640: `revise_work` is RETIRED, so the successor is constructed through the storage layer
+    // via the shared helper. THE SUBJECT OF THIS TEST IS UNCHANGED — getCurrentWork must return the
+    // SUCCESSOR, not the legacy predecessor. `reviseWork` was only ever the scaffolding that produced
+    // one; retiring it removed the affordance, never the property.
+    const gen1 = await storage.getFamily("subject");
+    await buildSuccessorGeneration({
+      storage,
+      workItems: [work("subject-r2", { runbook: "corrected", logicalId: "subject", revision: 2, predecessorPhysicalId: "subject" } as never)],
+      generation: 2, previousGeneration: 1,
+      operationId: "rev-1", createdAt: NOW,
+      ...(gen1 ? { existingFamiliesByLogicalId: { subject: gen1 } } : {}),
+    });
 
     const after = await repo.getCurrentWork("subject");
     expect(after, "revised logicalId must still resolve").not.toBeNull();

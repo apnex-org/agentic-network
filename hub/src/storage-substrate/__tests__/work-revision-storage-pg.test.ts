@@ -12,6 +12,7 @@ import {
   type SchemaReconciler,
 } from "../index.js";
 import { createTestPool } from "./_pg-test-pool.js";
+import { buildSuccessorGeneration } from "../../entities/__tests__/_successor-generation.js";
 import { decodeEnvelopeToFlat } from "../../entities/shape-helpers.js";
 import {
   WORK_REVISION_KINDS,
@@ -183,12 +184,21 @@ describe("Mission-140 revision storage real PostgreSQL", () => {
     expect(snapshot.operation.state).toBe("committed");
     expect(snapshot.families).toHaveLength(1);
 
+    // idea-640: `revise_work` is RETIRED; the successor generation is now built through the storage
+    // layer via the shared helper. THE SUBJECT BELOW IS UNCHANGED — recommitRevisionSet's authority
+    // and its survival across a restart, on a REAL PostgreSQL. `reviseWork` was only ever how this
+    // test obtained a gen-2 to recommit; it was never what the test was about.
     const workRepo = new WorkItemRepositorySubstrate(substrate, new SubstrateCounter(substrate));
-    const revised = await workRepo.reviseWork({
-      logicalId: "one", operationId: "pg-revise-one-2", reason: "real-pg semantic revision",
-      expectedGeneration: 1, expectedAffectedSet: ["one"], set: { runbook: "new semantics" },
-    }, { role: "architect", agentId: "architect-1" });
-    expect(revised).toMatchObject({ generation: 2, affectedSet: ["one"], operationReplay: false });
+    await buildSuccessorGeneration({
+      storage: repo,
+      workItems: [{ ...work("one-r2"), runbook: "new semantics", status: "paused", logicalId: "one", revision: 2, predecessorPhysicalId: "one" } as never],
+      generation: 2, previousGeneration: 1,
+      operationId: "pg-revise-one-2", createdAt: NOW,
+      // the PENDING RECOMMIT SET reviseWork used to register — without it recommitRevisionSet falls
+      // into its replay branch and throws "no matching pending recommit set".
+      recommitSet: ["one"],
+      existingFamiliesByLogicalId: { one: (await repo.getFamily("one"))! },
+    });
     expect((await workRepo.getWorkItem("one"))?.status).toBe("ready");
     expect((await workRepo.getCurrentWork("one"))?.workItem).toMatchObject({ status: "paused", runbook: "new semantics", evidence: [], attestationHistory: [] });
 

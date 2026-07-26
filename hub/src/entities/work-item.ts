@@ -892,10 +892,6 @@ export interface IWorkItemStore {
    *  redirects; this explicit surface follows the pinned generation binding. */
   getCurrentWork(logicalId: string): Promise<CurrentWorkProjectionV4 | null>;
 
-  /** Mission-140 semantic revision: immutable successors + exhaustive reverse
-   *  closure + one topology-head CAS. New rows activate paused and carry no
-   *  migrated evidence/attestations. */
-  reviseWork(request: ReviseWorkRequestV4, actor: { agentId: string; role: string }): Promise<ReviseWorkResultV4>;
 
   /** Mission-140: compose a multi-read integration under one immutable topology pin. */
   withTopologyReadPin?<T>(fn: () => Promise<T>): Promise<T>;

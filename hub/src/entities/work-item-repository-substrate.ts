@@ -50,8 +50,6 @@ import type {
   PendingFailedSealNotice,
   PauseWorkRequestV4,
   UnpauseWorkRequestV4,
-  ReviseWorkRequestV4,
-  ReviseWorkResultV4,
   CurrentWorkProjectionV4,
 } from "./work-item.js";
 import { ALL_WORK_ITEM_VERBS, DEFAULT_STATE_DURATIONS, PR_REVIEW_PROJECTION_AUTHOR_AGENT_ID, evaluateCompletionGate } from "./work-item.js";
@@ -194,6 +192,53 @@ const LEASE_HELD_PHASES: readonly WorkItemPhase[] = ["claimed", "in_progress", "
  * that protection evaporates silently, which is precisely how bug-381 and bug-384 would be
  * reintroduced by the arc that closes them.
  */
+/**
+ * 🔴 idea-646 — THE FIELD -> TIER TABLE IS COMPILER-ENFORCED. A GUARD MUST HAVE NO PROXY.
+ *
+ * The tier classification used to be two hand-maintained string lists inside `updateWorkItem`.
+ * Adding a field to the `set` shape and forgetting to classify it did NOT break anything: the new
+ * field simply fell through every tier test and became SILENTLY EDITABLE ON A LIVE ROW. That is the
+ * shift's recurring shape — an enumeration that describes the fields rather than being bound to them.
+ *
+ * `satisfies Record<WorkItemUpdateSetField, EditTier>` binds the two together: **add a field to
+ * `WorkItemUpdateSet` without assigning it a tier and the build fails.** Same device as
+ * ALL_WORK_ITEM_VERBS; the omission becomes a COMPILE ERROR rather than a permission.
+ *
+ * 🔴 WHAT THIS DOES *NOT* MAKE STRUCTURAL, STATED PLAINLY BECAUSE THE BAR'S POINT IS TO STOP
+ * COUNTING PREDICATES AS IF THEY WERE STRUCTURAL: the FULL-tier admission test is DATA-DEPENDENT —
+ * "does this row carry evidence or attestationHistory?" is a property of the row's CONTENTS at call
+ * time, not of the call's SHAPE. No signature and no type can encode it: `updateWorkItem` receives a
+ * workId and loads the row itself, so there is no caller-held value to brand, and a nominal
+ * `Quiescent<WorkItem>` would only relocate the same runtime check behind a cast.
+ * A STRUCTURAL FORM WAS LOOKED FOR AND IS NOT AVAILABLE FOR THAT HALF. It is a predicate plus a test,
+ * and it fails open, and both facts are written here rather than left for a reader to discover.
+ * What IS structural is the half that silently fails open on EXTENSION — the classification itself.
+ */
+type EditTier = "scalar" | "claimant" | "full";
+export interface WorkItemUpdateSet {
+  priority?: WorkItemPriority;
+  targetRef?: { kind: string; id: string } | null;
+  runbook?: string;
+  payload?: unknown;
+  roleEligibility?: string[];
+  evidenceRequirements?: EvidenceRequirement[];
+  leaseWindowMs?: number;
+}
+type WorkItemUpdateSetField = keyof WorkItemUpdateSet;
+const FIELD_TIER = {
+  // SCALAR — coordination metadata. decision-11 principle 3's deliberate carve-out: editable on a
+  // LIVE row because it changes nothing the claimant is working to.
+  priority: "scalar",
+  leaseWindowMs: "scalar",
+  // CLAIMANT CONTRACT — what an executor claimed against. MINOR tier: suspended only.
+  targetRef: "claimant",
+  runbook: "claimant",
+  payload: "claimant",
+  roleEligibility: "claimant",
+  // FULL — the anti-gameability contract itself. Suspended + lease-revoked + evidence-free.
+  evidenceRequirements: "full",
+} satisfies Record<WorkItemUpdateSetField, EditTier>;
+
 function isSuspended(w: Pick<WorkItem, "suspended" | "status">): boolean {
   return w.suspended === true || w.status === "paused";
 }
@@ -987,7 +1032,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     workId: string,
     actor: { agentId: string; role: string },
     mutation: {
-      set?: { priority?: WorkItemPriority; targetRef?: { kind: string; id: string } | null; runbook?: string; payload?: unknown; roleEligibility?: string[] };
+      set?: WorkItemUpdateSet;
       appendDependsOn?: string[];
       appendCompletionDependsOn?: string[];
       appendReferences?: WorkItemReference[];
@@ -1052,7 +1097,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     workId: string,
     actor: { agentId: string; role: string },
     mutation: {
-      set?: { priority?: WorkItemPriority; targetRef?: { kind: string; id: string } | null; runbook?: string; payload?: unknown; roleEligibility?: string[] };
+      set?: WorkItemUpdateSet;
       appendDependsOn?: string[];
       appendCompletionDependsOn?: string[];
       appendReferences?: WorkItemReference[];
@@ -1078,7 +1123,13 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     if (before.status === "done" || before.status === "abandoned") {
       throw new TransitionRejected(`update rejected: ${workId} is terminal (${before.status}) — terminal items reject all mutation`);
     }
-    const changesClaimantAuthority = setKeys.some((key) => ["targetRef", "runbook", "payload", "roleEligibility"].includes(key))
+    // 🔴 idea-640 ITEM 1 — THE FULL TIER, AND THE REFUSAL THAT BOUNDS IT.
+    // `evidenceRequirements` is the arc's ORIGINATING QUESTION: can a node's evidence contract be
+    // corrected without re-seeding the whole blueprint? decision-11 made it immutable via this verb
+    // outright. It becomes editable ONLY at the FULL tier.
+    const tierOf = (key: string): EditTier | undefined => FIELD_TIER[key as WorkItemUpdateSetField];
+    const changesEvidenceContract = setKeys.some((key) => tierOf(key) === "full");
+    const changesClaimantAuthority = setKeys.some((key) => tierOf(key) === "claimant")
       || (mutation.appendDependsOn?.length ?? 0) > 0
       || (mutation.appendCompletionDependsOn?.length ?? 0) > 0
       || (mutation.appendReferences?.length ?? 0) > 0;
@@ -1163,10 +1214,68 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
             `CONSEQUENCE: pause the row, then edit. Nothing has been changed by this call.`,
       );
     }
+    // 🔴 THE FULL-TIER REFUSAL. **PORTED, NOT RE-DERIVED** — this predicate is the one that lived
+    // inside `reviseWork` (`revision.affected_state_forbidden`, "not quiescent and evidence-free").
+    // It occurred exactly ONCE in the codebase, and `revise_work` is being retired in this same node.
+    // DELETING THAT VERB WITHOUT PORTING THIS FIRST WOULD HAVE SILENTLY REMOVED THE ONLY EXISTING
+    // IMPLEMENTATION OF THE GUARD THE FULL TIER NEEDS — and both nodes would still have looked
+    // complete. Re-deriving it from scratch under time pressure is how a subtly-different definition
+    // ships, so the shape is preserved verbatim and ONE defect is repaired:
+    //
+    //   WAS   ["ready","paused"].includes(item.status)      <- a PHASE check
+    //   NOW   before.status === "ready" || isSuspended()    <- the two-axis repair
+    //
+    // That phase check is an EIGHTH instance of the phase-vs-attribute defect this arc closed seven
+    // of. It was inert ONLY because `revise_work` has no internal caller — which is precisely why no
+    // test and no user could ever have reached it. Reviving `revise_work` would revive the bug.
+    //
+    // MECHANICS: the FULL tier needs a row that is quiescent (ready or suspended, no live lease) AND
+    //   evidence-free (no evidence, no attestationHistory).
+    // RATIONALE: THIS IS THE ANTI-GAMEABILITY CONTROL, and it is the whole reason the tier is safe.
+    //   `reset` is what clears lease+evidence+attestations, so the ONLY route to FULL is one that
+    //   DISCARDS the evidence first. Without this, an executor could rewrite the contract their
+    //   already-submitted evidence is judged against — grading their own exam after sitting it.
+    // CONSEQUENCE: reset the row (which nullifies evidence) and then edit the contract. The
+    //   discarding is the point, not a side effect.
+    if (changesEvidenceContract) {
+      // 🔴 THE PORTED DEFINITION IS "QUIESCENT AND EVIDENCE-FREE". THE PHASE SET IS *NOT* INHERITED.
+      // `reviseWork`'s predicate read `["ready","paused"]` because IT revises a whole logical family,
+      // where a pre-claim row is a legitimate subject. The ratified three-tier table for THIS verb says
+      // FULL = SUSPENDED + NO LEASE. Porting the definition faithfully does NOT mean importing the
+      // other verb's phase scope — and admitting `ready` here would WIDEN evidenceRequirements into
+      // pre-claim authoring, which the supersession does not record and which was never legal (the
+      // field was absent from ALLOWED_SET entirely). Refusing on `ready` is BEHAVIOUR-PRESERVING.
+      // I have over-reached at this exact site twice before; the mutability table caught both.
+      const quiescent = suspendedForEdit && !before.lease;
+      const evidenceFree = before.evidence.length === 0 && (before.attestationHistory?.length ?? 0) === 0;
+      if (!quiescent || !evidenceFree) {
+        throw new TransitionRejected(
+          `update rejected: ${workId} cannot reach the FULL edit tier — evidenceRequirements is frozen unless the row is quiescent AND evidence-free ` +
+            `(status=${before.status}, suspended=${suspendedForEdit}, lease=${before.lease ? "held" : "none"}, ` +
+            `evidence=${before.evidence.length}, attestationHistory=${before.attestationHistory?.length ?? 0}).\n` +
+            `MECHANICS: the FULL tier requires a SUSPENDED row with NO lease, NO evidence and NO attestationHistory.\n` +
+            `RATIONALE: rewriting the evidence contract while evidence already stands against it would let an executor ` +
+            `re-grade their own submission after the fact. \`reset\` is the gateway BECAUSE it discards the evidence first.\n` +
+            `CONSEQUENCE: pause, then reset the row, then edit the contract. Nothing has been changed by this call.`,
+        );
+      }
+    }
     const preClaim = before.status === "ready";
     const next: WorkItem = { ...before };
     const set = mutation.set ?? {};
     if (set.priority !== undefined) next.priority = set.priority;
+    if (set.evidenceRequirements !== undefined) next.evidenceRequirements = set.evidenceRequirements;
+    // idea-640: coordination metadata, same tier as `priority` — deliberately NOT in
+    // changesClaimantAuthority, so it is editable on a LIVE row. It changes no contract the claimant
+    // is working to; it changes how long their next lease grant lasts.
+    // 🔴 NEXT-RENEW ONLY. `leaseTtlMsFor` is read at CLAIM and RENEW, so the CURRENT lease keeps its
+    // expiresAt. That is deliberate: re-deriving a live lease would let one actor move another seat's
+    // expiry, and the dangerous direction is SHORTENING — an instant expiry on a healthy holder,
+    // mid-turn, with work in flight. The lease is a contract with its holder; a window change is a
+    // change to the NEXT contract, not a rewrite of the current one.
+    // The caller is TOLD this by updateWork's response. An accepted-and-deferred change that does not
+    // announce itself is just a slower silent no-op, which is the defect this field exists to fix.
+    if (set.leaseWindowMs !== undefined) next.leaseWindowMs = set.leaseWindowMs;
     if (set.targetRef !== undefined) {
       // SEAL (idea-444) relocation guard: freeze targetRef once ANY attestation exists — a
       // relocation would launder a pass verdict onto a different deliverable. (attest_evidence +
@@ -1431,7 +1540,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         // Git locators are immutable only when pinned, but deriving blobSha256
         // requires authoritative repository bytes. The Hub repository layer is
         // intentionally git-less; never accept a caller-asserted blob digest.
-        throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", `changed git reference ${reference.ref} requires authoritative blob resolution before revise_work`);
+        throw new WorkGraphCurrentnessRejected("workgraph.currentness.revision_required", `changed git reference ${reference.ref} requires authoritative blob resolution before a semantic revision`);
       }
     }
     return bindWorkItemReferencesV4(references, resolutions, snapshotToken);
@@ -1489,405 +1598,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     }
   }
 
-  private async revisionResult(
-    operation: WorkGraphRevisionOperationV4,
-    rootLogicalId: string,
-    replay: boolean,
-  ): Promise<ReviseWorkResultV4> {
-    const generation = await this.revisionStorage.getGeneration(operation.generation);
-    if (!generation) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `operation ${operation.id} generation is missing`);
-    const affectedSet = [...(operation.recommitSet.length > 0 ? operation.recommitSet : operation.recommittedSet ?? [])].sort();
-    const current = await Promise.all(affectedSet.map(async (logicalId) => {
-      const binding = generation.bindings[logicalId]!;
-      const item = await this.getWorkItem(binding.physicalId);
-      if (!item?.localExecutionIdentity) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `successor ${binding.physicalId} has no local identity`);
-      return { logicalId, physicalId: binding.physicalId, revision: binding.revision, localExecutionIdentity: item.localExecutionIdentity };
-    }));
-    return {
-      operationId: operation.operationId,
-      requestHash: operation.requestHash,
-      generation: operation.generation,
-      previousGeneration: operation.previousGeneration,
-      topologyHash: operation.topologyHash,
-      rootLogicalId,
-      affectedSet,
-      recommitSet: [...operation.recommitSet],
-      current,
-      operationReplay: replay,
-    };
-  }
 
-  async reviseWork(request: ReviseWorkRequestV4, actor: { agentId: string; role: string }): Promise<ReviseWorkResultV4> {
-    // The same global writer fence used by lifecycle CAS and head publication:
-    // claim-vs-revise, pause-vs-revise, and two revise operations serialize from
-    // first current read through the one topology-head visibility CAS.
-    return withAdvisoryLock(this.substrate, LOCK_CLASS.workGraphGlobal, WORK_GRAPH_HEAD_ID, () =>
-      this.reviseWorkUnderFence(request, actor));
-  }
-
-  private async reviseWorkUnderFence(request: ReviseWorkRequestV4, actor: { agentId: string; role: string }): Promise<ReviseWorkResultV4> {
-    const hasWorkId = typeof request.workId === "string" && request.workId.length > 0;
-    const hasLogicalId = typeof request.logicalId === "string" && request.logicalId.length > 0;
-    if (hasWorkId === hasLogicalId) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "revise_work requires exactly one workId or logicalId");
-    if (!request.operationId?.trim() || !request.reason?.trim()) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "revise_work requires operationId and reason");
-    const hasSemanticPatch = (request.set && Object.keys(request.set).length > 0)
-      || request.dependsOn !== undefined || request.completionDependsOn !== undefined || request.references !== undefined;
-    if (!hasSemanticPatch) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "revise_work rejects an empty semantic mutation");
-
-    const normalizedRequest = JSON.parse(JSON.stringify({ ...request, actor })) as Record<string, unknown>;
-    const requestHash = hashCanonicalDomain("workgraph-revise-request-v4", normalizedRequest);
-    const existingOperation = await this.revisionStorage.getOperation(request.operationId);
-    if (existingOperation) {
-      if (existingOperation.requestHash !== requestHash) throw new WorkRevisionStorageError("storage.operation_conflict", `operation ${request.operationId} was reused with different bytes`);
-      let rootLogicalId = request.logicalId;
-      if (!rootLogicalId) {
-        const previous = existingOperation.previousGeneration > 0
-          ? await this.revisionStorage.getGeneration(existingOperation.previousGeneration)
-          : null;
-        rootLogicalId = previous
-          ? Object.entries(previous.bindings).find(([, binding]) => binding.physicalId === request.workId)?.[0]
-          : request.workId;
-      }
-      if (!rootLogicalId) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "replayed operation root cannot be resolved");
-      if (existingOperation.state === "prepared") {
-        const candidate = await this.revisionStorage.getGeneration(existingOperation.generation);
-        if (!candidate) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `prepared operation ${existingOperation.operationId} lost its generation`);
-        for (const binding of Object.values(candidate.bindings)) {
-          const item = await this.getWorkItem(binding.physicalId);
-          if (!item) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `prepared successor ${binding.physicalId} vanished`);
-          await this.assertBoundReferencesFresh(item);
-        }
-        await this.revisionStorage.activateGeneration(existingOperation.generation, existingOperation.operationId, this.clock.now().toISOString());
-      }
-      const refreshed = (await this.revisionStorage.getOperation(request.operationId))!;
-      return this.revisionResult(refreshed, rootLogicalId, true);
-    }
-
-    const head = await this.revisionStorage.getHead();
-    if (!head || head.head.generation !== request.expectedGeneration) {
-      // idea-633 Part 1 — "absent" was wrong and cost two probes plus a false hypothesis. ONE
-      // condition currently carries THREE names: storage holds null (fence:102), the reader
-      // prints a hardcoded 0 (getCurrentWork's legacy branch), and this writer said "absent".
-      // The replacement is true for the reader's 0 and honest about the internal null, so a
-      // caller comparing this message against what get_current_work told them sees the same
-      // number rather than two vocabularies for one state.
-      const currentDesc = head ? String(head.head.generation) : "0 (legacy: no generation head)";
-      throw new WorkGraphCurrentnessRejected("revision.currentness_mismatch", `expected generation ${request.expectedGeneration}; current is ${currentDesc}`);
-    }
-    const activeHead = head.head;
-    const generation = await this.revisionStorage.getGeneration(activeHead.generation);
-    if (!generation || generation.topologyHash !== activeHead.topologyHash) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "active generation is missing or mismatched");
-    const rootBinding = hasLogicalId
-      ? generation.bindings[request.logicalId!]
-      : Object.values(generation.bindings).find((binding) => binding.physicalId === request.workId);
-    if (!rootBinding) throw new WorkGraphCurrentnessRejected("revision.currentness_mismatch", "revision root is not current");
-    const rootLogicalId = hasLogicalId
-      ? request.logicalId!
-      : Object.entries(generation.bindings).find(([, binding]) => binding.physicalId === request.workId)![0];
-
-    const edges = await this.revisionStorage.loadEdgesComplete(generation.generation);
-    const reverse = new Map<string, string[]>();
-    for (const edge of edges) {
-      const list = reverse.get(edge.targetLogicalId) ?? [];
-      list.push(edge.sourceLogicalId);
-      reverse.set(edge.targetLogicalId, list);
-    }
-    const affected = new Set<string>([rootLogicalId]);
-    const queue = [rootLogicalId];
-    while (queue.length > 0) {
-      for (const source of reverse.get(queue.shift()!) ?? []) if (!affected.has(source)) { affected.add(source); queue.push(source); }
-    }
-    const affectedSet = [...affected].sort();
-    const expectedAffected = request.expectedAffectedSet ? [...request.expectedAffectedSet].sort() : undefined;
-    if (expectedAffected && canonicalJson(expectedAffected) !== canonicalJson(affectedSet)) {
-      throw new WorkGraphCurrentnessRejected("revision.affected_set_mismatch", `affected closure changed; expected ${expectedAffected.join(",")}, got ${affectedSet.join(",")}`);
-    }
-
-    const itemsByLogical = new Map<string, WorkItem>();
-    const familiesByLogical = new Map<string, WorkRevisionFamilyRowV4>();
-    for (const binding of Object.values(generation.bindings)) {
-      const item = await this.getWorkItem(binding.physicalId);
-      const [logicalId] = Object.entries(generation.bindings).find(([, candidate]) => candidate === binding)!;
-      const family = await this.revisionStorage.getFamily(logicalId);
-      if (!item || !family) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `binding ${logicalId} has missing row/family`);
-      this.currentness.assertCurrent(item, { mode: "generation", head: activeHead, generation, headResourceVersion: head.resourceVersion });
-      await this.assertBoundReferencesFresh(item);
-      itemsByLogical.set(logicalId, item);
-      familiesByLogical.set(logicalId, family);
-    }
-    for (const logicalId of affectedSet) {
-      const item = itemsByLogical.get(logicalId)!;
-      if (item.failedGateSeal) {
-        throw new WorkGraphCurrentnessRejected("revision.failed_gate_sealed", `affected ${logicalId} has an immutable failed-gate seal`);
-      }
-      if (!(["ready", "paused"] as string[]).includes(item.status) || item.lease || item.evidence.length > 0 || item.attestationHistory?.length) {
-        throw new WorkGraphCurrentnessRejected("revision.affected_state_forbidden", `affected ${logicalId} is not quiescent and evidence-free`);
-      }
-    }
-    const root = itemsByLogical.get(rootLogicalId)!;
-    const family = familiesByLogical.get(rootLogicalId)!;
-    const isArchitect = actor.role === "architect";
-    const isDirector = actor.role === "director";
-    const isOriginalCreator = actor.agentId === family.originalCreatedBy.agentId
-      && actor.role === family.originalCreatedBy.role;
-    if (!isArchitect && !isDirector && !isOriginalCreator) {
-      const holderOnly = affectedSet.some((logicalId) => {
-        const item = itemsByLogical.get(logicalId)!;
-        return item.lease?.holder === actor.agentId || item.executorHistory.includes(actor.agentId);
-      });
-      // The immutable creator stamp is anchored on agentId. An actor who merely shares the
-      // creator's ROLE is unrelated to the family, not a partial owner match, so classifying
-      // them as family_owner_mismatch overstates the relationship. Keying on agentId alone
-      // keeps same-agentId/wrong-role as family_owner_mismatch and sends every unrelated
-      // agentId to actor_forbidden. Both branches still throw: the denial is unchanged and
-      // no authority is widened — only the emitted CODE becomes precise.
-      const creatorIdentityMismatch = actor.agentId === family.originalCreatedBy.agentId;
-      const denialCode = holderOnly
-        ? "revision.holder_has_no_authority"
-        : creatorIdentityMismatch
-          ? "revision.family_owner_mismatch"
-          : "revision.actor_forbidden";
-      throw new WorkGraphCurrentnessRejected(
-        denialCode,
-        holderOnly
-          ? `lease-holder history grants no revision authority for family ${family.id}`
-          : creatorIdentityMismatch
-            ? `actor does not match the immutable creator stamp for family ${family.id}`
-            : `actor lacks server-derived authority for family ${family.id}`,
-      );
-    }
-    if (isOriginalCreator && !isArchitect && !isDirector && family.familyScope.kind !== "standalone") {
-      throw new WorkGraphCurrentnessRejected("revision.architect_required", `creator revision is limited to standalone families; ${family.id} is ${family.familyScope.kind}/${family.familyScope.id}`);
-    }
-    if (isArchitect || isDirector) {
-      const scopes = affectedSet.map((logicalId) => familiesByLogical.get(logicalId)!.familyScope);
-      if (scopes.length > 1) {
-        const missionId = scopes[0]?.kind === "mission" ? scopes[0].id : null;
-        if (!missionId || scopes.some((scope) => scope.kind !== "mission" || scope.id !== missionId)) {
-          throw new WorkGraphCurrentnessRejected("revision.cross_scope_forbidden", "cross-family revision requires every affected family to share one mission scope");
-        }
-      }
-    }
-
-    const normalizeEdges = (values: string[] | undefined, fallback: string[]): string[] => {
-      if (values === undefined) return [...fallback];
-      if (new Set(values).size !== values.length) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", "revision edge list contains duplicates");
-      for (const value of values) if (!generation.bindings[value]) throw new WorkGraphCurrentnessRejected("workgraph.currentness.integrity", `revision edge target ${value} is not in the current generation`);
-      return [...values].sort();
-    };
-    const nextDependsOn = normalizeEdges(request.dependsOn, root.dependsOn);
-    const nextCompletionDependsOn = normalizeEdges(request.completionDependsOn, root.completionDependsOn);
-    let nextReferences = root.references;
-    let nextBoundReferences = root.boundReferences;
-    if (request.references !== undefined) {
-      nextReferences = request.references;
-      if (canonicalJson(nextReferences) !== canonicalJson(root.references)) {
-        nextBoundReferences = await this.resolveReferenceBindings(nextReferences, `revision:${request.operationId}`);
-      }
-    }
-    const preview = cloneWorkItem(root);
-    if (request.set) {
-      if (Object.prototype.hasOwnProperty.call(request.set, "runbook")) preview.runbook = request.set.runbook;
-      if (Object.prototype.hasOwnProperty.call(request.set, "payload")) preview.payload = request.set.payload;
-      if (Object.prototype.hasOwnProperty.call(request.set, "targetRef")) preview.targetRef = request.set.targetRef ?? null;
-      if (Object.prototype.hasOwnProperty.call(request.set, "roleEligibility")) preview.roleEligibility = [...(request.set.roleEligibility ?? [])];
-      if (Object.prototype.hasOwnProperty.call(request.set, "leaseWindowMs")) preview.leaseWindowMs = request.set.leaseWindowMs ?? undefined;
-      if (Object.prototype.hasOwnProperty.call(request.set, "nodeConfig")) preview.nodeConfig = request.set.nodeConfig ?? undefined;
-    }
-    preview.references = [...(nextReferences ?? [])];
-
-    // D3 authority is checked over the server-derived actor, the complete affected
-    // closure, and the fully normalized proposed contract before allocating even
-    // one successor revision. Creator compatibility is deliberately narrow: one
-    // standalone family, no topology or target change, and no authority weakening
-    // or lease/pulse escalation.
-    if (isOriginalCreator && !isArchitect && !isDirector) {
-      if (affectedSet.length !== 1) {
-        throw new WorkGraphCurrentnessRejected("revision.architect_required", "original creator cannot revise a reverse-dependent closure");
-      }
-      if (canonicalJson(nextDependsOn) !== canonicalJson(root.dependsOn)
-          || canonicalJson(nextCompletionDependsOn) !== canonicalJson(root.completionDependsOn)) {
-        throw new WorkGraphCurrentnessRejected("revision.architect_required", "original creator cannot replace topology edges");
-      }
-      const nextRoles = preview.roleEligibility;
-      const allowedRoles = new Set([...root.roleEligibility, actor.role]);
-      if (nextRoles.some((role) => !allowedRoles.has(role))) {
-        throw new WorkGraphCurrentnessRejected("revision.authority_expansion_forbidden", "original creator cannot expand role eligibility");
-      }
-      if (canonicalJson(preview.targetRef) !== canonicalJson(root.targetRef)) {
-        throw new WorkGraphCurrentnessRejected("revision.authority_expansion_forbidden", "original creator cannot change target scope");
-      }
-      const requiredReferenceKeys = new Set((root.references ?? [])
-        .filter((reference) => reference.required)
-        .map((reference) => canonicalJson({ kind: reference.kind, ref: reference.ref, storage: reference.storage, mode: reference.mode })));
-      const retainedRequiredKeys = new Set((preview.references ?? [])
-        .filter((reference) => reference.required)
-        .map((reference) => canonicalJson({ kind: reference.kind, ref: reference.ref, storage: reference.storage, mode: reference.mode })));
-      if ([...requiredReferenceKeys].some((key) => !retainedRequiredKeys.has(key))) {
-        throw new WorkGraphCurrentnessRejected("revision.authority_expansion_forbidden", "original creator cannot remove or weaken a required reference");
-      }
-      const oldLeaseWindow = root.leaseWindowMs;
-      const nextLeaseWindow = preview.leaseWindowMs;
-      if ((oldLeaseWindow === undefined && nextLeaseWindow !== undefined)
-          || (oldLeaseWindow !== undefined && nextLeaseWindow !== undefined && nextLeaseWindow > oldLeaseWindow)) {
-        throw new WorkGraphCurrentnessRejected("revision.authority_expansion_forbidden", "original creator cannot escalate the lease window");
-      }
-      if (canonicalJson(preview.nodeConfig ?? null) !== canonicalJson(root.nodeConfig ?? null)) {
-        throw new WorkGraphCurrentnessRejected("revision.authority_expansion_forbidden", "original creator cannot change pulse authority");
-      }
-    }
-
-    const proposedTarget = preview.targetRef;
-    if (family.familyScope.kind === "mission"
-        && proposedTarget?.kind === "mission"
-        && proposedTarget.id !== family.familyScope.id) {
-      throw new WorkGraphCurrentnessRejected("revision.cross_scope_forbidden", "targetRef would cross the family's mission scope");
-    }
-    if (family.familyScope.kind === "standalone" && proposedTarget?.kind === "mission") {
-      throw new WorkGraphCurrentnessRejected("revision.cross_scope_forbidden", "standalone family cannot expand into mission scope");
-    }
-
-    const contractView = (item: WorkItem) => ({
-      type: item.type,
-      roleEligibility: item.roleEligibility,
-      ...(item.runbook !== undefined ? { runbook: item.runbook } : {}),
-      ...(Object.prototype.hasOwnProperty.call(item, "payload") ? { payload: item.payload } : {}),
-      targetRef: item.targetRef,
-      evidenceRequirements: item.evidenceRequirements,
-      references: item.references,
-      ...(item.leaseWindowMs !== undefined ? { leaseWindowMs: item.leaseWindowMs } : {}),
-      ...(item.nodeConfig !== undefined ? { nodeConfig: item.nodeConfig } : {}),
-    });
-    const beforeContract = deriveNodeContractV4(contractView(root), root.boundReferences ?? []).hash;
-    const afterContract = deriveNodeContractV4(contractView(preview), nextBoundReferences ?? []).hash;
-    if (beforeContract === afterContract
-        && canonicalJson(root.dependsOn) === canonicalJson(nextDependsOn)
-        && canonicalJson(root.completionDependsOn) === canonicalJson(nextCompletionDependsOn)) {
-      throw new WorkGraphCurrentnessRejected("revision.currentness_mismatch", "revise_work semantic bytes are unchanged");
-    }
-
-    const revisions = new Map<string, number>();
-    for (const logicalId of affectedSet) {
-      const currentFamily = familiesByLogical.get(logicalId)!;
-      const allocation = await this.revisionStorage.allocateNextRevision({
-        logicalId,
-        originPhysicalId: currentFamily.originPhysicalId,
-        originalCreatedBy: currentFamily.originalCreatedBy,
-        familyScope: currentFamily.familyScope,
-        createdAt: currentFamily.createdAt,
-      });
-      familiesByLogical.set(logicalId, allocation.family);
-      revisions.set(logicalId, allocation.revision);
-    }
-    const now = this.clock.now().toISOString();
-    const successorByLogical = new Map<string, WorkItem>();
-    for (const logicalId of affectedSet) {
-      const old = itemsByLogical.get(logicalId)!;
-      const revision = revisions.get(logicalId)!;
-      const successor = cloneWorkItem(old);
-      successor.id = `work-rev-${createHash("sha256").update(`${logicalId}\0${revision}`).digest("hex").slice(0, 32)}`;
-      successor.revision = revision;
-      successor.predecessorPhysicalId = old.id;
-      successor.revisedBy = { role: actor.role, agentId: actor.agentId };
-      successor.revisionReason = request.reason;
-      successor.revisionGeneration = activeHead.generation + 1;
-      successor.status = "paused";
-      successor.lease = null;
-      successor.blockedOn = null;
-      successor.evidence = [];
-      successor.attestations = {};
-      successor.attestationHistory = [];
-      successor.executorHistory = [];
-      successor.frictionReflections = [];
-      successor.recallHistory = [];
-      successor.pendingRecallIntents = [];
-      successor.recallNoticePending = false;
-      successor.failedGateSeal = null;
-      successor.pendingFailedSealNotices = [];
-      successor.failedSealNoticePending = false;
-      successor.effectiveDisposition = null;
-      if (successor.nodeConfig?.pulse) {
-        const pulse = successor.nodeConfig.pulse;
-        successor.nodeConfig = { pulse: {
-          intervalSeconds: pulse.intervalSeconds,
-          message: pulse.message,
-          responseShape: pulse.responseShape,
-          missedThreshold: pulse.missedThreshold,
-          ...(pulse.firstFireDelaySeconds !== undefined ? { firstFireDelaySeconds: pulse.firstFireDelaySeconds } : {}),
-        } };
-      }
-      successor.enteredCurrentStateAt = now;
-      successor.stateDurations = { ready: 0, claimed: 0, in_progress: 0, blocked: 0, review: 0, paused: 0 };
-      successor.leaseExpiryCount = 0;
-      successor.createdAt = now;
-      successor.updatedAt = now;
-      successor.createdBy = { role: actor.role, agentId: actor.agentId };
-      successor.dependsOn = logicalId === rootLogicalId ? nextDependsOn : [...old.dependsOn];
-      successor.completionDependsOn = logicalId === rootLogicalId ? nextCompletionDependsOn : [...old.completionDependsOn];
-      if (logicalId === rootLogicalId) {
-        if (request.set) {
-          if (Object.prototype.hasOwnProperty.call(request.set, "runbook")) successor.runbook = request.set.runbook;
-          if (Object.prototype.hasOwnProperty.call(request.set, "payload")) successor.payload = request.set.payload;
-          if (Object.prototype.hasOwnProperty.call(request.set, "targetRef")) successor.targetRef = request.set.targetRef ?? null;
-          if (Object.prototype.hasOwnProperty.call(request.set, "roleEligibility")) successor.roleEligibility = [...(request.set.roleEligibility ?? [])];
-          if (Object.prototype.hasOwnProperty.call(request.set, "leaseWindowMs")) successor.leaseWindowMs = request.set.leaseWindowMs ?? undefined;
-          if (Object.prototype.hasOwnProperty.call(request.set, "nodeConfig")) successor.nodeConfig = request.set.nodeConfig ?? undefined;
-        }
-        successor.references = [...(nextReferences ?? [])];
-        successor.boundReferences = [...(nextBoundReferences ?? [])];
-      }
-      if (successor.nodeConfig?.pulse) {
-        const pulse = successor.nodeConfig.pulse;
-        successor.nodeConfig = { pulse: {
-          intervalSeconds: pulse.intervalSeconds,
-          message: pulse.message,
-          responseShape: pulse.responseShape,
-          missedThreshold: pulse.missedThreshold,
-          ...(pulse.firstFireDelaySeconds !== undefined ? { firstFireDelaySeconds: pulse.firstFireDelaySeconds } : {}),
-        } };
-      }
-      delete successor.nodeContractHashVersion;
-      delete successor.nodeContractHash;
-      delete successor.nodeTopologyHashVersion;
-      delete successor.nodeTopologyHash;
-      delete successor.localExecutionIdentity;
-      delete successor.topologyGeneration;
-      delete successor.observedTopologyGeneration;
-      delete successor.observedTopologyHash;
-      successorByLogical.set(logicalId, successor);
-    }
-
-    const candidateItems = Object.keys(generation.bindings).sort().map((logicalId) => successorByLogical.get(logicalId) ?? itemsByLogical.get(logicalId)!);
-    const boundReferencesByPhysicalId: Record<string, readonly BoundWorkItemReferenceV4[]> = {};
-    const familyScopesByPhysicalId: Record<string, { kind: "mission" | "standalone"; id: string }> = {};
-    for (const item of candidateItems) {
-      boundReferencesByPhysicalId[item.id] = item.boundReferences ?? [];
-      const logicalId = item.logicalId ?? item.id;
-      familyScopesByPhysicalId[item.id] = familiesByLogical.get(logicalId)!.familyScope;
-    }
-    const prepared = buildWorkRevisionStorageV4({
-      operationId: request.operationId,
-      requestHash,
-      previousGeneration: activeHead.generation,
-      generation: activeHead.generation + 1,
-      createdAt: now,
-      workItems: candidateItems,
-      existingFamiliesByLogicalId: Object.fromEntries(familiesByLogical),
-      boundReferencesByPhysicalId,
-      familyScopesByPhysicalId,
-      recommitSet: affectedSet,
-    });
-    // Materialize every new physical successor atomically BEFORE publishing
-    // the prepared operation lookup. A crash before the lookup leaves harmless
-    // unreachable drafts; a visible prepared operation is always recoverable.
-    await this.revisionStorage.persistProjectedWorkItems(prepared);
-    await this.revisionStorage.persistPrepared(prepared);
-    // Re-resolve every mutable binding immediately before the one visibility CAS.
-    for (const item of candidateItems) await this.assertBoundReferencesFresh(item);
-    await this.revisionStorage.activateGeneration(prepared.generation.generation, request.operationId, now);
-    const committed = (await this.revisionStorage.getOperation(request.operationId))!;
-    return this.revisionResult(committed, rootLogicalId, false);
-  }
 
   /** Compose event/watchdog/PR integrations under one immutable topology observation. */
   async withTopologyReadPin<T>(fn: () => Promise<T>): Promise<T> {
