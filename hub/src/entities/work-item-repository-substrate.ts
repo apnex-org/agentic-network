@@ -680,6 +680,49 @@ export function accrueExitingState(
   return { stateDurations: durations, enteredCurrentStateAt: nowISO };
 }
 
+/**
+ * work-561 / bug-392 — THE ONE HOLD-RELEASE CORE. Every verb that ends a hold goes through here.
+ *
+ * 🔴 WHY IT EXISTS. bug-392 was THREE hand-written returns for "release the hold" with nothing
+ * comparing them, one altitude below bug-390's TWO hand-written definitions of "the claimant
+ * contract" with nothing comparing them. Deduping fixes the CLASS; adding `status: "ready"` to
+ * `resetWork` would have fixed the INSTANCE and left the next divergence free to appear.
+ *
+ * MEASURED FIRST-PARTY ON 04c1ab45 BEFORE THIS CHANGE, and it corrects the framing the node was
+ * seeded with — it was NOT three implementations disagreeing:
+ *
+ *   releaseWork  status ready  lease null  blockedOn null  accrue YES   <- these two are byte-
+ *   expireLease  status ready  lease null  blockedOn null  accrue YES   <- equivalent, independently
+ *   resetWork    status  —     lease null  blockedOn  —    accrue NO    <- THE OUTLIER, all three axes
+ *
+ * Two independent authors converged on the same core. That is evidence the core is RIGHT, and it
+ * makes this a pure refactor at two of the three call sites and a behaviour change at exactly one.
+ *
+ * 🔴 `phase` IS A PARAMETER, NOT HARD-CODED TO `ready`, AND THAT IS LOAD-BEARING. `expireLease` has
+ * TWO exits: it requeues to `ready` below the poison cap and ABANDONS at or above it. A primitive
+ * that assumed `ready` would silently convert every poison-abandon into a requeue — TURNING THE
+ * POISON CAP OFF WITH NOTHING GOING RED. Same shape as the `accrueExitingState` trap that motivated
+ * this node, one layer further in, and only visible by reading `expireLease` instead of inheriting a
+ * summary of it.
+ *
+ * WHAT IS DELIBERATELY *NOT* HERE, because it is verb-specific and absorbing it would make the
+ * primitive a dumping ground rather than a contract:
+ *  - `reset`   discards evidence/attestations/attestationHistory, re-baselines `sanctionedAuthority`,
+ *              and keeps `suspended: true` (a reset node is unstarted AND still withdrawn).
+ *  - `expire`  increments `leaseExpiryCount` and appends recallHistory.
+ *  - `release` asserts the lease token first.
+ *  - `blockedOn` — LEFT EXACTLY AS EACH VERB HAS IT TODAY. release and expire clear it; reset
+ *    preserves it under spec_resolution Q1. That divergence is UNRULED and is not mine to decide
+ *    inside this node; folding it in would be the widening that took production down in #682.
+ */
+export function releaseHold(
+  w: Pick<WorkItem, "status" | "suspended" | "enteredCurrentStateAt" | "stateDurations" | "updatedAt">,
+  nowISO: string,
+  phase: WorkItemPhase,
+): { status: WorkItemPhase; lease: null } & ReturnType<typeof accrueExitingState> {
+  return { status: phase, lease: null, ...accrueExitingState(w, nowISO) };
+}
+
 /** SEAL (idea-444) — attest_evidence rejection (authority / history / relocation / ref failures). */
 export class AttestationRejected extends Error {
   constructor(message: string) {
@@ -2977,7 +3020,30 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         && resetBaseline.authorityHash !== resetRederived.authorityHash
         ? resetRecall.map((entry, i) => (i === resetRecall.length - 1 ? { ...entry, sanctionedAuthority: resetRederived } : entry))
         : resetRecall;
-      return { ...w, lease: null, evidence: [], attestations: {}, attestationHistory: [], recallHistory: rebaselined, updatedAt: nowISO };
+      // ── work-561 / bug-392: RESET NOW RETURNS THE NODE TO `ready` VIA THE SHARED CORE ────────────
+      //
+      // 🔴 THIS IS THE ONE BEHAVIOUR CHANGE IN work-561; the other two call sites are pure refactors.
+      //
+      // DIRECTOR'S REASONING, and it is COHERENCE not consistency: `in_progress` is a claim ABOUT the
+      // node — an executor, a lease, work in flight. Reset destroys all three. So `in_progress` after
+      // a reset is THE NODE ASSERTING SOMETHING FALSE ABOUT ITSELF, and every execution verb then
+      // correctly refuses an incoherent node. bug-392's symptom was "the node can never be worked
+      // again"; the defect was one layer down — the FSM sat in a state its own data contradicted.
+      //
+      // 🔴 AND THE ACCRUAL IS WHY THIS COULD NOT BE A ONE-LINE PATCH. `resetWork` did not call
+      // `accrueExitingState`, because until now it did not change phase. Adding `status: "ready"`
+      // ALONE would have SILENTLY UNDER-COUNTED `stateDurations` on every reset node with nothing
+      // going red. Going through `releaseHold` makes that impossible to forget by construction, which
+      // is the whole argument for deduping over patching.
+      //
+      // `suspended: true` is PRESERVED, deliberately: a reset node is unstarted AND still withdrawn
+      // from execution. The phase says "nothing has been started"; the attribute says "not available".
+      // THE PAIR IS THE TRUTH — the same two-axis model this arc ratified.
+      //
+      // `blockedOn` is still NOT cleared here, unlike release and expire. That divergence is UNRULED
+      // (spec_resolution Q1 ruled reset must not repeat pauseWork's blocker-wipe) and is reported, not
+      // decided, inside this node.
+      return { ...w, ...releaseHold(w, nowISO, "ready"), evidence: [], attestations: {}, attestationHistory: [], recallHistory: rebaselined, updatedAt: nowISO };
     });
   }
 
@@ -3178,7 +3244,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       this.assertLease(w, agentId, leaseToken, "release");
       if (!RELEASABLE_PHASES.includes(w.status)) throw new TransitionRejected(`release requires an active claim, was ${w.status}`);
       const nowISO = this.clock.now().toISOString();
-      return { ...w, status: "ready", lease: null, blockedOn: null, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
+      // work-561: shared hold-release core. `blockedOn: null` stays verb-specific and UNCHANGED here.
+      return { ...w, ...releaseHold(w, nowISO, "ready"), blockedOn: null, updatedAt: nowISO };
     });
   }
 
@@ -3862,7 +3929,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       const poisonEligible = POISON_ELIGIBLE_PHASES.includes(w.status);
       const nextCount = poisonEligible ? w.leaseExpiryCount + 1 : w.leaseExpiryCount;
       const poisoned = poisonEligible && nextCount >= poisonCap;
-      const accrued = accrueExitingState(w, nowISO);
+      // work-561: accrual now comes from `releaseHold` below, with the SAME (w, nowISO) inputs — the
+      // local binding is gone rather than left shadowing an identical computation.
       // bug-384 — RECORD THE LEASE THE TIMER IS ABOUT TO DESTROY.
       //
       // MECHANICS: before clearing `lease`, append a recallHistory entry carrying the expiring
@@ -3908,9 +3976,18 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
             holderNoticeIntentId: null,
           } as RecallHistoryEntryV4]
         : (w.recallHistory ?? []);
-      const next: WorkItem = poisoned
-        ? { ...w, status: "abandoned", lease: null, blockedOn: null, leaseExpiryCount: nextCount, recallHistory, ...accrued, updatedAt: nowISO }
-        : { ...w, status: "ready", lease: null, blockedOn: null, leaseExpiryCount: nextCount, recallHistory, ...accrued, updatedAt: nowISO };
+      // work-561: shared hold-release core. THE PHASE IS PASSED, NOT ASSUMED — the poison branch
+      // abandons and the requeue branch readies, and a primitive hard-coded to `ready` would have
+      // silently disabled the poison cap. `leaseExpiryCount`, `recallHistory` and `blockedOn: null`
+      // stay verb-specific and UNCHANGED.
+      const next: WorkItem = {
+        ...w,
+        ...releaseHold(w, nowISO, poisoned ? "abandoned" : "ready"),
+        blockedOn: null,
+        leaseExpiryCount: nextCount,
+        recallHistory,
+        updatedAt: nowISO,
+      };
       const result = await this.substrate.putIfMatch(KIND, next, existing.resourceVersion);
       if (result.ok) return poisoned ? "abandoned" : "requeued";
       // revision-mismatch → re-read + re-check (a concurrent renew may now make it not-expired)
