@@ -171,7 +171,20 @@ describe("idea-640 (B) — reset", () => {
     expect(reset.evidence).toEqual([]);
   });
 
-  it("🔴 reset PRESERVES attestations and provenance", async () => {
+  it("🔴🔴 reset CLEARS attestations — the counter-control that pays for the evidenceRequirements widening", async () => {
+    // decision-11 ⨯ idea-640 §3/§4. decision-11 principle 1 held `evidenceRequirements` IMMUTABLE
+    // FOREVER because "a mutable evidence contract guts anti-gameability". idea-640 makes it mutable at
+    // the FULL tier. THE RULE CHANGED; THE REASON DID NOT. The attack is bug-383's class via another verb:
+    //   claim -> produce evidence that does NOT satisfy the contract -> pause -> reset
+    //         -> REWRITE evidenceRequirements to match it -> unpause -> complete
+    // Closed by ONE property: the FULL tier is reachable only on an evidence-free row, and getting there
+    // COSTS you the artifacts. Attestations clear for the same reason — an attestation is a verifier's
+    // statement AGAINST A SPECIFIC CONTRACT, so carrying one across a rewrite leaves a hole exactly the
+    // width of what was left behind.
+    //
+    // ⚠️ IF THIS TEST IS EVER "FIXED" BY MAKING reset PRESERVE THESE, bug-383's CLASS REOPENS. Preserving
+    // them looks like a kindness — the same instinct that correctly drove claimedAt preservation all
+    // through this arc — and here it is exactly backwards.
     const { repo, substrate } = await harness();
     const id = await readyItem(repo);
     await inProgress(repo, id);
@@ -184,11 +197,13 @@ describe("idea-640 (B) — reset", () => {
     } as never);
     const before = (await repo.getWorkItem(id))!;
     expect(Object.keys(before.attestations), "fixture must be ARMED or this is vacuous").toHaveLength(1);
+    expect(before.attestationHistory).toHaveLength(1);
 
     const reset = (await repo.resetWork(id, ARCH))!;
-    expect(reset.attestations, "a verifier's verdict is not a scope decision").toEqual(before.attestations);
-    expect(reset.attestationHistory).toEqual(before.attestationHistory);
-    expect(reset.recallHistory).toEqual(before.recallHistory);
+    expect(reset.attestations, "FORWARD-SATISFYING artifacts CLEAR").toEqual({});
+    expect(reset.attestationHistory, "…including the append-only attestation record").toEqual([]);
+    // ADVERSE HISTORICAL FACTS PERSIST — the other half of the same rule.
+    expect(reset.recallHistory, "provenance of what happened TO the row survives").toEqual(before.recallHistory);
     expect(reset.executorHistory).toEqual(before.executorHistory);
   });
 

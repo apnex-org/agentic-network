@@ -1059,10 +1059,30 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // Adapting the mechanism (status -> attribute) preserves decision-11 exactly under the new model and
     // keeps the freeze from VANISHING SILENTLY, which is the failure the ratification specifically
     // warned about. Choosing between the two contracts is a governance decision and is escalated.
-    if (changesClaimantAuthority && (activePin.mode === "generation" || isSuspended(before))) {
+    // 🔴 decision-11 ⨯ idea-640 — THE RATIFIED THREE TIERS. See
+    // docs/design/nodefix0-decision-11-supersession.md; BOTH contract ids are named deliberately.
+    //
+    //   NOT suspended            -> refuse. `LIVE -> modify DOES NOT FUNCTION` (Director, absolute).
+    //   suspended + lease        -> MINOR: priority, targetRef, runbook, payload, roleEligibility.
+    //   suspended + NO lease     -> FULL: anything, including `evidenceRequirements`.
+    //
+    // THE DELTA RUNS BOTH WAYS AND THE NARROWING IS THE SURPRISE. decision-11 made `priority` and
+    // `targetRef` mutable UNTIL TERMINAL — i.e. on a live, claimed, in-flight row. Under the tiers they
+    // are MINOR, so BOTH LOSE AN AUTHORITY THEY HAD. That capability removal is nowhere in idea-640; it
+    // follows by implication from the Director's absolute, and is recorded as a DECISION so nobody
+    // later reports it as a regression. Conversely `runbook`/`payload`/`roleEligibility` were PRE-CLAIM
+    // ONLY and are now editable at MINOR — the amendment decision-11's own out-of-scope list invited:
+    // "lease-holder mutation authority (revisit with evidence)". idea-640 is that revisit.
+    const suspendedForEdit = isSuspended(before);
+    if (changesClaimantAuthority && (activePin.mode === "generation" || !suspendedForEdit)) {
       throw new WorkGraphCurrentnessRejected(
         "workgraph.currentness.revision_required",
-        `update rejected: ${workId} claimant contract/topology is frozen ${isSuspended(before) ? "while suspended" : `by active generation ${activePin.mode === "generation" ? activePin.head.generation : "unknown"}`}; create a semantic revision`,
+        activePin.mode === "generation"
+          ? `update rejected: ${workId} claimant contract/topology is frozen by active generation ${activePin.mode === "generation" ? activePin.head.generation : "unknown"}; create a semantic revision`
+          : `update rejected: ${workId} is LIVE (status=${before.status}); modify does not function on a live node.\n` +
+            `MECHANICS: claimant-significant fields and edge appends require the row to be SUSPENDED.\n` +
+            `RATIONALE: an executor working to a runbook must not have it change mid-turn. Suspending first makes the edit visible to the holder and reversible by the controller — the editability gap idea-640 exists to close.\n` +
+            `CONSEQUENCE: pause the row, then edit. Nothing has been changed by this call.`,
       );
     }
     const preClaim = before.status === "ready";
@@ -2963,7 +2983,32 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         );
       }
       const nowISO = this.clock.now().toISOString();
-      return { ...w, lease: null, evidence: [], updatedAt: nowISO };
+      // 🔴 decision-11 ⨯ idea-640 — THIS CLEARING IS THE ANTI-GAMEABILITY COUNTER-CONTROL, NOT A CLEANUP.
+      // Named at both contract ids on purpose; see docs/design/nodefix0-decision-11-supersession.md §3.
+      //
+      // decision-11 principle 1 held `evidenceRequirements` IMMUTABLE FOREVER, because "a mutable
+      // evidence contract guts anti-gameability". idea-640 makes it mutable at the FULL tier. THE RULE
+      // CHANGED; THE REASON DID NOT. The attack it guarded is bug-383's exact class through another verb:
+      //
+      //   claim -> produce evidence that does NOT satisfy the contract -> pause -> reset
+      //         -> REWRITE evidenceRequirements to match what was produced -> unpause -> complete
+      //
+      // It is closed by ONE property: the FULL tier is reachable only on an EVIDENCE-FREE row, and
+      // getting there costs you the artifacts. YOU CANNOT REWRITE THE CONTRACT AND KEEP WHAT YOU MADE.
+      //
+      // `attestations` and `attestationHistory` clear for the same reason (§4): AN ATTESTATION IS A
+      // VERIFIER'S STATEMENT AGAINST A SPECIFIC CONTRACT. Carry it across a contract rewrite and the
+      // attack simply runs through attestation instead — the hole is exactly the width of whatever was
+      // left behind. `failedGateSeal`, `recallHistory` and `executorHistory` PERSIST: forward-satisfying
+      // artifacts clear, ADVERSE HISTORICAL FACTS PERSIST. (A sealed row cannot be reset at all —
+      // `assertNotFailedSealed` above refuses first — so the seal is protected by refusal as well.)
+      //
+      // ⚠️ THE NICEST-LOOKING CHANGE TO THIS CODE IS THE ONE THAT BREAKS IT. Preserving evidence across a
+      // reset LOOKS like a kindness — it is the same instinct that correctly drove `claimedAt`
+      // preservation throughout this arc, and here it is exactly backwards. The protection lives in a
+      // DIFFERENT verb from the tier it protects, so nobody reading the FULL-tier branch sees why
+      // evidence-freeness matters. Softening this silently reopens bug-383's class.
+      return { ...w, lease: null, evidence: [], attestations: {}, attestationHistory: [], updatedAt: nowISO };
     });
   }
 
