@@ -831,8 +831,32 @@ export interface RecallHistoryEntryV4 {
   recalledAt: string;
   beforeStateHash: Sha256Hex;
   before: RecallBeforeStateV4;
-  /** Optional only for backward decode. New pauses always persist it; unpause fails closed without it. */
+  /** Optional only for backward decode. New pauses always persist it; unpause fails closed without it.
+   *  🔴 IMMUTABLE ONCE WRITTEN — this is the historical record of what the row looked like AT PAUSE.
+   *  A sanctioned edit does NOT overwrite it (see `sanctionedAuthority`); recallHistory is append-only
+   *  provenance and "what it was when we paused it" must stay answerable. */
   frozenAuthority?: FrozenRecallAuthorityV4;
+  /**
+   * work-553 / bug-390 — THE BASELINE UNPAUSE ACTUALLY COMPARES AGAINST, when a tier-gated edit has
+   * landed on this suspended row. Absent until one does; unpause falls back to `frozenAuthority`.
+   *
+   * WHY A SECOND FIELD RATHER THAN MUTATING THE FIRST. The freeze exists to catch UNSANCTIONED drift
+   * between pause and unpause. But `frozenAuthority` is a HASH, and **A HASH RECORDS DIFFERENCE, NOT
+   * PROVENANCE** — it cannot tell a MINOR-tier edit that passed the gate from arbitrary corruption, so
+   * the sanctioned edit tripped the guard meant to catch its opposite. That is bug-390: pause worked,
+   * modify worked, and unpause then refused BECAUSE you modified, stranding the row with the refusal
+   * naming a remedy (`revise_work`) that no longer exists.
+   *
+   * The provenance is established AT THE MOMENT OF THE WRITE, where it actually exists — the edit had
+   * to clear the tier gate to land at all — instead of being guessed at unpause time from a hash that
+   * never carried it. So the guard keeps FULL strength for everyone including stewards (the rejected
+   * alternative, exempting stewards, would not permit sanctioned edits — it would BLIND the guard for
+   * them, trading a trap that fails closed and announces itself for a hole that fails open silently).
+   *
+   * The freeze stops meaning "nothing changed" and starts meaning "NOTHING CHANGED EXCEPT THROUGH A
+   * GATE" — which is what it was always for.
+   */
+  sanctionedAuthority?: FrozenRecallAuthorityV4;
   holderNoticeIntentId: string | null;
 }
 export interface PendingRecallIntentV4 {
