@@ -2230,9 +2230,21 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       }
     }
     const current = await this.currentGenerationItems(this.currentness.currentPin()!);
+    // idea-640 / nodefix0 — SUSPENDED ROWS ARE NOT CLAIMABLE, AND THE SCAN MUST SAY SO.
+    //
+    // MECHANICS: suspension no longer moves the phase, so a row suspended from `ready` KEEPS
+    // `status: "ready"` and would otherwise list as claimable. The exclusion is applied in code on both
+    // branches, for the same reason as the sweeper scan: a store-filter path for `suspended` fails
+    // SILENTLY AND OPEN if the envelope partition is wrong.
+    //
+    // RATIONALE: before the model change this was free — `paused` is not `ready`. Losing it would put a
+    // SUSPENDED ROW BACK IN THE CLAIMABLE POOL, which is the bug-346/351 shape and the precise hazard an
+    // operator suspends a row to prevent. `claimWorkItem` refuses it too (it is the authority), so this
+    // is the projection half of a defence-in-depth pair — the scan must not advertise what the verb
+    // will refuse, or it manufactures exactly the silent friction idea-353 exists to kill.
     const listed = current
-      ? current.filter((item) => item.status === "ready")
-      : (await this.substrate.list<WorkItem>(KIND, { filter: { status: "ready" }, limit: READY_SCAN_CAP })).items.map(cloneWorkItem);
+      ? current.filter((item) => item.status === "ready" && !isSuspended(item))
+      : (await this.substrate.list<WorkItem>(KIND, { filter: { status: "ready" }, limit: READY_SCAN_CAP })).items.map(cloneWorkItem).filter((item) => !isSuspended(item));
     const truncated = !current && listed.length >= READY_SCAN_CAP;
     const ready = listed;
     const nonFailed = ready.filter((w) => !isFailedGateSealed(w));
@@ -2301,6 +2313,23 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         return this.tryCasUpdate(workId, (w) => {
           this.assertNotFailedSealed(w);
           if (w.status !== "ready") throw new TransitionRejected(`claim requires ready, was ${w.status}`);
+          // idea-640 / nodefix0 — A SUSPENDED ROW IS NOT CLAIMABLE, WHATEVER ITS PHASE SAYS.
+          //
+          // MECHANICS: suspension is now an attribute, so a row suspended from `ready` still reads
+          // `status: "ready"` and would pass the check above. This is the AUTHORITY half of the pair —
+          // the ready scan also excludes suspended rows, but the scan is a projection and this is the
+          // gate that actually decides.
+          //
+          // RATIONALE: an operator suspends a row precisely to stop work starting on it. Without this a
+          // suspension would be advisory — the exact bug-346/351 shape where an uncompletable or
+          // withdrawn row sits in the claimable pool and someone picks it up.
+          //
+          // CONSEQUENCE: unpause the row before claiming it. Nothing has been changed by this call.
+          if (isSuspended(w)) {
+            throw new TransitionRejected(
+              `claim rejected: ${w.id} is SUSPENDED (status=${w.status}); a suspended row is withdrawn from execution and cannot be claimed. Unpause it first.`,
+            );
+          }
           assertRoleEligible(w, role); // (a) role ∈ roleEligibility (empty = any-role)
           if (depsNotDone.length > 0) { // (b) all dependsOn must be phase=done
             throw new ClaimRejected(`dependencies not done: ${depsNotDone.join(", ")}`);
