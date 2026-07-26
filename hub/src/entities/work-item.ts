@@ -228,7 +228,17 @@ export interface NextActionProjection {
  *  + gate-aware (an arc with an unmet completion-gate → complete is NOT legal; a leaf → it is). */
 export type WorkItemVerb =
   | "claim" | "start" | "block" | "resume" | "complete" | "release" | "abandon" | "renew"
-  | "pause" | "unpause";
+  | "pause" | "unpause" | "reset";
+
+// 🔴 COMPILER-ENFORCED ENUMERATION. getLegalMoves previously carried the verb list as TWO
+// hand-maintained literal arrays. Adding a verb to the union above did NOT break them — the
+// early-return paths would simply stop mentioning it, and a surface that omits a verb is a
+// surface that under-advertises SILENTLY. `satisfies Record<WorkItemVerb, 0>` makes the omission
+// a COMPILE ERROR: the enumeration can no longer drift from the type it enumerates.
+export const ALL_WORK_ITEM_VERBS = Object.keys({
+  claim: 0, start: 0, block: 0, resume: 0, complete: 0, release: 0, abandon: 0, renew: 0,
+  pause: 0, unpause: 0, reset: 0,
+} satisfies Record<WorkItemVerb, 0>) as WorkItemVerb[];
 export interface LegalMove {
   verb: WorkItemVerb;
   legal: boolean;

@@ -54,7 +54,7 @@ import type {
   ReviseWorkResultV4,
   CurrentWorkProjectionV4,
 } from "./work-item.js";
-import { DEFAULT_STATE_DURATIONS, evaluateCompletionGate } from "./work-item.js";
+import { ALL_WORK_ITEM_VERBS, DEFAULT_STATE_DURATIONS, evaluateCompletionGate } from "./work-item.js";
 import { SubstrateCounter } from "./substrate-counter.js";
 import { withAdvisoryLock, LOCK_CLASS } from "../storage-substrate/advisory-lock.js";
 import { decodeEnvelopeToFlat } from "./shape-helpers.js";
@@ -2041,6 +2041,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const w = await this.getWorkItem(workId);
     if (!w) return null;
     const status = w.status;
+    const suspended = isSuspended(w);
     const isHolder = !!w.lease && w.lease.holder === caller.agentId;
     const pin = this.currentness.currentPin()!;
     const observation = pin.mode === "generation" ? { observedTopologyGeneration: pin.head.generation, observedTopologyHash: pin.head.topologyHash } : {};
@@ -2051,13 +2052,13 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
           ? `; current=${error.current.physicalId}@${error.current.revision} generation=${error.current.generation}`
           : `; no current binding in generation ${pin.head.generation}`;
         const reason = `${error.code}: exact physical ${workId} is historical/draft and cannot mutate${current}`;
-        const verbs: WorkItemVerb[] = ["claim", "start", "block", "resume", "renew", "release", "abandon", "complete", "pause", "unpause"];
+        const verbs = ALL_WORK_ITEM_VERBS;
         return { workId: w.id, ...observation, status, isHolder, gateMet: false, moves: verbs.map((verb) => ({ verb, legal: false, reason })) };
       }
     }
     if (isFailedGateSealed(w)) {
       const reason = "effectiveDisposition=failed_sealed; no same-row lifecycle verb is legal — create a distinct repair/revision";
-      const verbs: WorkItemVerb[] = ["claim", "start", "block", "resume", "renew", "release", "abandon", "complete", "pause", "unpause"];
+      const verbs = ALL_WORK_ITEM_VERBS;
       return { workId: w.id, ...observation, status, isHolder, gateMet: false, moves: verbs.map((verb) => ({ verb, legal: false, reason })) };
     }
     const isCreator = w.createdBy?.agentId === caller.agentId;
@@ -2134,8 +2135,34 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const lastRecall = (w.recallHistory ?? []).at(-1);
     const canCreatorUnpause = isOriginalCreator && !w.predecessorPhysicalId && lastRecall?.actor.agentId === caller.agentId;
     const canUnpause = isSteward || canCreatorUnpause;
-    add("unpause", canUnpause && status === "paused",
-      !canUnpause ? "unpause requires the original creator who paused this unchanged row, architect, or Director" : `unpause requires paused, was ${status}`);
+    // 🔴 idea-640: gates on SUSPENDED, not on `status === "paused"`. Under the attribute model the
+    // phase no longer moves on suspend, so `status === "paused"` is NEVER true — this line would have
+    // made unpause permanently illegal and left every suspended row ADVERTISING NO WAY OUT OF ITS OWN
+    // SUSPENSION. Under-advertising is not the safe direction here; it is a dead end.
+    add("unpause", canUnpause && suspended,
+      !canUnpause ? "unpause requires the original creator who paused this unchanged row, architect, or Director" : "unpause requires a suspended row");
+    // `reset` is legal ONLY on a suspended row, steward-only — the arc's new verb, previously absent
+    // from this surface entirely, i.e. undiscoverable through the affordance API that drives agents.
+    add("reset", suspended && isSteward,
+      !suspended ? "reset requires a suspended row" : "reset requires architect or Director");
+
+    // 🔴 SUSPENSION POST-FILTER — AN ALLOWLIST, DELIBERATELY, BECAUSE IT MUST FAIL CLOSED.
+    // MECHANICS: every verb above keys on `status`, and suspension no longer moves the phase, so a
+    //   suspended `in_progress` row would advertise block|renew|release|abandon|complete as LEGAL.
+    // RATIONALE: this is the surface that ISSUES calls, not one that merely accepts them. Every other
+    //   suspension guard refuses a bad call; this one would HAND OUT the bad call — including
+    //   `abandon`, which is terminal and irreversible, at three separate phases.
+    // CONSEQUENCE: a suspended row advertises exactly its two exits and nothing else.
+    // Written as a post-filter over an allowlist rather than `&& !suspended` on each verb ON PURPOSE:
+    // a per-verb enumeration fails OPEN when someone adds verb N+1 and forgets one line. This fails
+    // CLOSED — a new verb is illegal on a suspended row until explicitly allowed here.
+    if (suspended) {
+      const SUSPENDED_LEGAL: WorkItemVerb[] = ["unpause", "reset"];
+      for (const move of moves) {
+        if (SUSPENDED_LEGAL.includes(move.verb) || !move.legal) continue;
+        Object.assign(move, { legal: false, reason: `the row is SUSPENDED (management attribute); phase is ${status} but execution is withdrawn — only ${SUSPENDED_LEGAL.join("|")} are legal` });
+      }
+    }
 
     return { workId: w.id, ...observation, status, isHolder, gateMet, moves };
   }

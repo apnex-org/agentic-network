@@ -271,3 +271,55 @@ describe("idea-640 (B) — reset", () => {
     expect((await repo.getWorkItem(id))!.lease, "the refused reset revoked nothing").not.toBeNull();
   });
 });
+
+describe("🔴 idea-640 — getLegalMoves: THE SURFACE THAT ISSUES THE CALL, NOT ONE THAT ACCEPTS IT", () => {
+  // Every other suspension guard in this arc REFUSES a bad call. This one would HAND OUT the bad
+  // call: legal_moves is the affordance API agents read to decide what to do next. It held no
+  // suspension concept of its own and was protected purely by `paused` occupying the phase slot.
+  // The same defect I proved on list_ready_work — the scan is a projection, the verb is the
+  // authority — on the surface that DRIVES behaviour rather than merely lists it.
+  const movesOf = async (repo: WorkItemRepositorySubstrate, id: string, caller: { agentId: string; role?: string }) =>
+    Object.fromEntries((await repo.getLegalMoves(id, caller))!.moves.map((m) => [m.verb, m.legal]));
+
+  it("does not advertise ANY holder verb on a suspended in_progress row — abandon above all", async () => {
+    const { repo } = await harness();
+    const id = await readyItem(repo);
+    await inProgress(repo, id);
+    const live = await movesOf(repo, id, ENG);
+    expect(live.abandon, "armed fixture: abandon IS legal here while live").toBe(true);
+    expect(live.complete || live.block || live.renew || live.release).toBe(true);
+
+    await pause(repo, id);
+    const susp = await movesOf(repo, id, ENG);
+    // abandon is TERMINAL AND IRREVERSIBLE, and would have been advertised at three phases.
+    for (const verb of ["abandon", "complete", "block", "renew", "release", "start", "claim", "resume", "pause"]) {
+      expect(susp[verb], `${verb} must not be advertised on a suspended row`).toBe(false);
+    }
+    expect((await repo.getWorkItem(id))!.status, "the phase is still in_progress — that is WHY this was exposed").toBe("in_progress");
+  });
+
+  it("a suspended row ADVERTISES ITS OWN EXITS — under-advertising is a dead end, not a safe default", async () => {
+    const { repo } = await harness();
+    const id = await readyItem(repo);
+    await inProgress(repo, id);
+    await pause(repo, id);
+    // Gating unpause on `status === "paused"` would be permanently false under the attribute model:
+    // the row would advertise NO WAY OUT OF ITS OWN SUSPENSION. Both directions, or the fix is half.
+    const arch = await movesOf(repo, id, ARCH);
+    expect(arch.unpause, "unpause must stay legal").toBe(true);
+    expect(arch.reset, "reset is the arc's new verb and was absent from this surface entirely").toBe(true);
+    // ...and the exits still respect their own authority: an engineer gets neither.
+    const eng = await movesOf(repo, id, ENG);
+    expect(eng.unpause).toBe(false);
+    expect(eng.reset).toBe(false);
+  });
+
+  it("a row suspended from READY stops advertising claim (the claimability hole, at the affordance)", async () => {
+    const { repo } = await harness();
+    const id = await readyItem(repo);
+    expect((await movesOf(repo, id, ENG)).claim, "armed: claimable before suspension").toBe(true);
+    await pause(repo, id);
+    expect((await repo.getWorkItem(id))!.status, "phase stays ready — the hole").toBe("ready");
+    expect((await movesOf(repo, id, ENG)).claim, "but claim is no longer advertised").toBe(false);
+  });
+});
