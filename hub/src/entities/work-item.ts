@@ -573,6 +573,18 @@ export interface WorkItem {
    *  in work-87 (idempotency rides the deterministic id, not a query) — cleanup-by-runId
    *  query is a deferred follow-on. */
   blueprintRunId?: string;
+  /** idea-640 / nodefix0 — SUSPENSION IS A MANAGEMENT ATTRIBUTE, NOT A LIFECYCLE STATE.
+   *  Director-ratified 2026-07-26. A node that is `in_progress` and suspended IS STILL `in_progress` —
+   *  withdrawn from execution, not moved along its lifecycle. THE PAIR IS THE TRUTH; NEITHER FIELD
+   *  ALONE IS: `status: in_progress` + `suspended: true` reads as "at the in_progress stage, not
+   *  currently executing". Same shape as a paused Deployment, where `status.phase` stays Running and
+   *  `spec.paused` says why nothing moves — you read both.
+   *
+   *  🔴 EVERY GUARD THAT USED TO GET SUSPENSION FOR FREE VIA `status === "paused"` MUST NOW READ THIS
+   *  FIELD EXPLICITLY. `expireLease` and its scans were safe only because `paused` was absent from
+   *  LEASE_HELD_PHASES; once `status` says `in_progress` that protection evaporates. Absent = not
+   *  suspended, so legacy rows and every row that never paused behave exactly as before. */
+  suspended?: boolean;
   /** bug-383 — SERVER-STAMPED projection provenance. Written ONLY by a Hub projection reconciler
    *  via `createBlueprintNode`; absent on every caller-authored row. `createWorkItem` (the
    *  `create_work` path) does not accept it and it is NOT in `update_work`'s `ALLOWED_SET`, so no

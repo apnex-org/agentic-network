@@ -179,6 +179,25 @@ const WIP_PHASES: readonly WorkItemPhase[] = ["claimed", "in_progress", "blocked
  *  heartbeat legal). Mirrors WIP_PHASES — the lease is held until a terminal/ready edge. */
 const LEASE_HELD_PHASES: readonly WorkItemPhase[] = ["claimed", "in_progress", "blocked", "review"];
 
+/**
+ * idea-640 / nodefix0 — IS THIS ROW WITHDRAWN FROM EXECUTION?
+ *
+ * TWO POPULATIONS, BOTH REAL, AND THIS IS THE ONLY PLACE THAT KNOWS IT:
+ *  - post-model rows carry `suspended: true` with their lifecycle phase intact;
+ *  - LEGACY rows carry `status: "paused"`, written before suspension became an attribute. MEASURED on
+ *    the live graph: 28 such rows, 5 of which were worked and then paused with NO recallHistory, so
+ *    their pre-pause phase is UNRECOVERABLE and they are deliberately left on this phase rather than
+ *    having a lifecycle position invented for them.
+ *
+ * Every suspension-sensitive guard MUST route through here. Before the model change, protection was a
+ * SIDE EFFECT of `paused` being absent from `LEASE_HELD_PHASES`; once the phase stays `in_progress`
+ * that protection evaporates silently, which is precisely how bug-381 and bug-384 would be
+ * reintroduced by the arc that closes them.
+ */
+function isSuspended(w: Pick<WorkItem, "suspended" | "status">): boolean {
+  return w.suspended === true || w.status === "paused";
+}
+
 /** Phases from which release_work / abandon_work are legal (FSM §3.1). review is
  *  excluded — a review item advances only via complete_work or the lease-expiry
  *  sweeper (sub-PR-4); review-edge finalization lands with complete_work (3a-ii). */
@@ -584,17 +603,34 @@ function cloneWorkItem(w: WorkItem): WorkItem {
  * Requeues RE-ACCUMULATE: a node re-entering ready ADDS the new ready-dwell onto the prior total.
  */
 export function accrueExitingState(
-  w: Pick<WorkItem, "status" | "enteredCurrentStateAt" | "stateDurations" | "updatedAt">,
+  w: Pick<WorkItem, "status" | "suspended" | "enteredCurrentStateAt" | "stateDurations" | "updatedAt">,
   nowISO: string,
 ): { stateDurations: StateDurations; enteredCurrentStateAt: string } {
   const enteredMs = Date.parse(w.enteredCurrentStateAt ?? w.updatedAt);
   const elapsed = Math.max(0, Date.parse(nowISO) - enteredMs);
   const durations: StateDurations = { ...DEFAULT_STATE_DURATIONS, ...w.stateDurations };
+  // idea-640 / nodefix0 — SUSPENDED TIME ACCRUES TO THE `paused` BUCKET, NOT TO THE LIFECYCLE PHASE.
+  //
+  // MECHANICS: this banks elapsed time against the state being LEFT. Under the attribute model the
+  // phase no longer moves on suspend, so a suspended `in_progress` row would otherwise bank all of its
+  // dormancy as `in_progress` — recording an operator's suspension as the holder's execution time. The
+  // existing `paused` bucket is reused as the SUSPENDED bucket: no schema change, and sum-identity
+  // (sum(buckets) === createdAt→completedAt) still holds.
+  //
+  // NOTE THE ORDERING, WHICH IS WHAT MAKES IT CORRECT: at PAUSE the row is not yet suspended, so the
+  // exiting bucket is its real phase; at UNPAUSE the row IS suspended, so the exiting bucket is
+  // `paused`. Both fall out of reading the row as it stands.
+  //
+  // RATIONALE: it preserves the property this stream leaned on repeatedly — `m140_residue` recorded
+  // 35,792,638 ms as a SEPARATE bucket, which is how a ten-hour wedge stopped being counted as engineer
+  // work-time. Three distinguishable things, all real: RESERVED (`claimed`), EXECUTING (`in_progress`),
+  // SUSPENDED (`paused`). Collapsing any two loses a fact somebody will later need.
+  const bucket = isSuspended(w) ? "paused" : w.status;
   // The exiting status is always a non-terminal DWELL state (a transition only leaves a dwell
   // state; terminal done/abandoned are never the FROM-state). Guard defensively so a non-bucket
   // status is a no-op accrual, never a throw mid-CAS.
-  if (Object.prototype.hasOwnProperty.call(durations, w.status)) {
-    (durations as unknown as Record<string, number>)[w.status] += elapsed;
+  if (Object.prototype.hasOwnProperty.call(durations, bucket)) {
+    (durations as unknown as Record<string, number>)[bucket] += elapsed;
   }
   return { stateDurations: durations, enteredCurrentStateAt: nowISO };
 }
@@ -985,10 +1021,40 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // same freeze even in legacy/shadow mode so no alias of update_work can launder a
     // changed row through creator unpause. updateWorkItem is the common repository seam
     // behind the public tool and internal policy aliases; priority remains a scalar.
-    if (changesClaimantAuthority && (activePin.mode === "generation" || before.status === "paused")) {
+    // idea-640 / nodefix0 — THE RATIFIED THREE-TIER EDIT MODEL REPLACES THE BLANKET PAUSED FREEZE.
+    //
+    // MECHANICS: suspension no longer moves the phase, so `before.status === "paused"` would simply STOP
+    // FIRING and the freeze would VANISH SILENTLY — a control disappearing as an unremarked side effect
+    // of a modelling change. The tiers are read explicitly instead:
+    //   NOT suspended            -> refuse; a live row's claimant contract never moves under its holder
+    //   suspended + lease intact -> MINOR tier: the substrate's own ALLOWED_SET, which excludes these
+    //   suspended + lease gone   -> FULL tier: anything, including evidenceRequirements
+    // `reset` is what clears the lease, so it is the gateway between the middle and full tiers.
+    //
+    // RATIONALE: this is the editability gap idea-640 exists to close, and it was measured the hard way
+    // — an architect could not correct a runbook she KNEW was wrong while an engineer built to it, and
+    // the seventh birth-only freeze-point of the stream was recorded on that exact refusal. Suspending
+    // first is what makes an edit visible to the holder and reversible by the controller.
+    //
+    // CONSEQUENCE: the generation freeze is UNCHANGED and still absolute. What changes is that a
+    // SUSPENDED row is now editable in a bounded way instead of being frozen outright, and a LIVE row
+    // is refused for a reason that names the remedy.
+    const suspendedForEdit = isSuspended(before);
+    const fullEditTier = suspendedForEdit && !before.lease;
+    if (changesClaimantAuthority && (activePin.mode === "generation" || !fullEditTier)) {
       throw new WorkGraphCurrentnessRejected(
         "workgraph.currentness.revision_required",
-        `update rejected: ${workId} claimant contract/topology is frozen ${before.status === "paused" ? "while paused" : `by active generation ${activePin.mode === "generation" ? activePin.head.generation : "unknown"}`}; create a semantic revision`,
+        activePin.mode === "generation"
+          ? `update rejected: ${workId} claimant contract/topology is frozen by active generation ${activePin.head.generation}; create a semantic revision`
+          : !suspendedForEdit
+            ? `update rejected: ${workId} is LIVE (status=${before.status}); a claimant contract may not move under its holder.\n` +
+              `MECHANICS: claimant-significant fields (targetRef/runbook/payload/roleEligibility) and edge appends require the row to be suspended.\n` +
+              `RATIONALE: an executor working to a runbook must not have it change mid-turn; suspending first makes the edit visible to the holder and reversible by the controller.\n` +
+              `CONSEQUENCE: pause the row, then edit. Nothing has been changed by this call.`
+            : `update rejected: ${workId} is suspended but STILL LEASED — that is the MINOR edit tier.\n` +
+              `MECHANICS: with the lease intact, only the scalar mutable set is editable. Claimant-contract and edge edits need the FULL tier, which requires the lease to be revoked.\n` +
+              `RATIONALE: the holder still owns this row; revoking their lease is a decision that should be taken deliberately, not implied by an edit.\n` +
+              `CONSEQUENCE: \`reset\` the suspended row to revoke the lease, then edit. Nothing has been changed by this call.`,
       );
     }
     const preClaim = before.status === "ready";
@@ -2608,7 +2674,22 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         } : null;
         return {
           ...w,
-          status: "paused" as const,
+          // idea-640 / nodefix0 — SUSPENSION IS AN ATTRIBUTE, NOT A PHASE. Director-ratified.
+          //
+          // MECHANICS: `status` is deliberately NOT written here. The lifecycle phase does not move;
+          // only `suspended` flips. A row suspended from `in_progress` stays `in_progress`.
+          //
+          // RATIONALE: pausing is a MANAGEMENT action, and moving the lifecycle phase to record it
+          // conflates two independent things. It was also LOSSY — the pre-pause phase was overwritten,
+          // recoverable only from `recallHistory`, and for rows paused before that existed, not
+          // recoverable at all. MEASURED on the live graph: of 28 currently-paused rows, 5 had been
+          // worked and then paused with NO recallHistory, so their phase is unrecoverable today. This
+          // change is what stops that set growing.
+          //
+          // CONSEQUENCE: `status === "paused"` is no longer written by this verb, but REMAINS A VALID
+          // PHASE for the legacy rows that already carry it. Every suspension-sensitive guard must read
+          // `suspended` explicitly — it no longer falls out of `paused` being absent from a phase set.
+          suspended: true,
           // idea-640 (A): PAUSE RETAINS THE LEASE, HOLDER AND TOKEN. It used to set `lease: null`.
           //
           // MECHANICS: the row keeps `lease` untouched while paused. It is NOT exposed to the expiry
@@ -2748,43 +2829,38 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       // CONSEQUENCE: `unpause` is no longer a synonym for "return to the queue". A row paused from
       // `in_progress` resumes at `in_progress` with its holder intact and does not need re-claiming,
       // which is the whole point of the middle tier.
-      // The recorded pre-pause phase is TYPED `ready|claimed|in_progress|blocked` — tsc rejects a
-      // `!== "paused"` guard here as unreachable, which is a compile-time proof that a pause can never
-      // record `paused` and therefore that this cannot restore a row into the state it is leaving.
+      // idea-640 / nodefix0 — UNPAUSE CLEARS THE ATTRIBUTE. THE PHASE WAS NEVER MOVED, SO THERE IS
+      // NOTHING TO RESTORE.
       //
-      // 🔴 THE RESTORE TARGET IS GATED ON THE LEASE, NOT ON WHO CLEARED IT. A row whose lease is gone
-      // CANNOT coherently re-enter a lease-held phase: `in_progress` + `lease: null` is a PERMANENT
-      // ZOMBIE — unclaimable (claim requires `ready`) and unreapable (expireLease requires `!!w.lease`),
-      // so nothing in the system can ever move it again. That is the exact mirror of the `ready` + live
-      // lease corruption this change already had to avoid, and it only becomes reachable once BOTH
-      // lease-retention and phase-restoration land: pause from in_progress → `reset` (clears the lease,
-      // stays paused) → unpause would restore `in_progress` with nothing to hold it.
+      // An earlier build of this verb reconstructed the pre-pause phase from
+      // `recallHistory.at(-1).before.phase`. That was a correct workaround for a MODELLING ERROR — pause
+      // used to overwrite `status`, so the phase had to be recovered from history. Under the ratified
+      // attribute model the phase never leaves, and that read is DELETED rather than renamed: a
+      // superseded mechanism kept alive because something still needs it becomes a permanent path nobody
+      // can later justify. The one-time MIGRATION of already-paused rows reads the same history from its
+      // OWN code and dies with the migration — a migration may read history; a runtime verb may not.
       //
-      // Deriving this from `w.lease` rather than from a reset-specific marker means it holds for EVERY
-      // path that clears a lease while paused, including ones not yet written. A flag would only cover
-      // the one caller we thought of.
-      const restoredPhase: WorkItemPhase = w.lease ? (lastRecall?.before?.phase ?? "ready") : "ready";
-      // idea-640 (A): REFRESH `expiresAt` FROM NOW WHEN RESTORING INTO A LEASE-HELD PHASE.
+      // LEGACY ROWS: a row still carrying `status: "paused"` (paused before this shipped) keeps that
+      // phase here. Unsuspending it is honest — it says "no longer suspended" — and it does NOT invent a
+      // lifecycle position that was destroyed at pause time. The migration dispositions those rows.
+      // idea-640: REFRESH `expiresAt` FROM NOW when resuming a row whose phase holds a lease.
       //
-      // MECHANICS: a retained lease's `expiresAt` is frozen at its pre-pause value, which is in the past
-      // for any pause longer than the TTL. Restoring that verbatim into a LEASE_HELD phase re-enters the
-      // sweeper's scan with an ALREADY-EXPIRED lease, so the row is reaped on the next tick.
+      // MECHANICS: a retained lease's `expiresAt` is frozen at its pre-suspension value, which is in the
+      // past for any suspension longer than the TTL. Un-suspending without refreshing re-admits the row
+      // to the sweeper's scan ALREADY EXPIRED, so it is reaped on the next tick.
       //
       // RATIONALE: this is bug-384's M4 trap on a different verb — there, deriving `expiresAt` from a
       // PRESERVED `claimedAt` minted a lease expired at the moment of claim. `claimedAt` is deliberately
-      // NOT refreshed: preserving it is what keeps evidence produced before the pause admissible, and it
-      // is the same invariant claimWorkItem protects for a same-holder re-claim.
+      // NOT refreshed: preserving it is what keeps evidence produced before the suspension admissible,
+      // the same invariant claimWorkItem protects for a same-holder re-claim.
       //
-      // CONSEQUENCE: the holder gets a full fresh window on resume; the pause costs no lease time.
-      const restoringHeldLease = w.lease !== null && LEASE_HELD_PHASES.includes(restoredPhase);
-      const lease = restoringHeldLease
-        ? {
-            ...w.lease!,
-            expiresAt: new Date(this.clock.now().getTime() + leaseTtlMsFor(w)).toISOString(),
-            heartbeatAt: nowISO,
-          }
+      // CONSEQUENCE: the holder resumes with a full window; a suspension costs no lease time. A row with
+      // no lease, or in a phase that holds none, is returned untouched.
+      const resumesHeldLease = w.lease !== null && LEASE_HELD_PHASES.includes(w.status);
+      const lease = resumesHeldLease
+        ? { ...w.lease!, expiresAt: new Date(this.clock.now().getTime() + leaseTtlMsFor(w)).toISOString(), heartbeatAt: nowISO }
         : w.lease;
-      return { ...w, status: restoredPhase, lease, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
+      return { ...w, suspended: false, lease, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
 
@@ -3598,14 +3674,31 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   async listExpiredLeaseItems(nowISO: string, limit: number): Promise<WorkItem[]> {
     if (!this.currentness.currentPin()) return this.withReadPin(() => this.listExpiredLeaseItems(nowISO, limit));
     const current = await this.currentGenerationItems(this.currentness.currentPin()!);
+    // idea-640 / nodefix0 — SUSPENSION IS EXCLUDED IN CODE ON BOTH BRANCHES, NOT IN THE QUERY.
+    //
+    // MECHANICS: the store filter narrows on phase + expiry; `isSuspended` then drops suspended rows
+    // from whatever came back. The exclusion is applied identically to the in-memory and the store
+    // branch, and again at the act (`expireLease`) — defence in depth at scan AND act, as before.
+    //
+    // RATIONALE: this exclusion is SAFETY-CRITICAL — miss it and a suspended row is reaped mid-pause,
+    // reintroducing bug-381 and bug-384 inside the arc that closes them. Expressing it as a store
+    // predicate would require knowing which envelope partition `suspended` lands in (`spec.*` vs
+    // `status.*`), and A WRONG FIELD PATH IN A FILTER FAILS SILENTLY AND OPEN: the query simply returns
+    // the rows it should have excluded, and no memory-substrate test can catch it because that branch
+    // does not use the path at all. A code-side predicate is partition-independent and identical across
+    // both branches by construction.
+    //
+    // CONSEQUENCE: a suspended row may be FETCHED and then discarded. That is a bounded cost — the
+    // suspended population is small (28 rows measured live) — paid to keep the guard verifiable.
     if (current) {
-      return current.filter((item) => LEASE_HELD_PHASES.includes(item.status) && !!item.lease && item.lease.expiresAt < nowISO).slice(0, limit);
+      return current.filter((item) => !isSuspended(item) && LEASE_HELD_PHASES.includes(item.status) && !!item.lease && item.lease.expiresAt < nowISO).slice(0, limit);
     }
     const { items } = await this.substrate.list<WorkItem>(KIND, {
       filter: { status: { $in: [...LEASE_HELD_PHASES] }, "status.lease.expiresAt": { $lt: nowISO } },
       limit,
     });
-    return this.currentness.filterCurrent(items.map(cloneWorkItem), this.currentness.currentPin()!);
+    const unsuspended = items.map(cloneWorkItem).filter((item) => !isSuspended(item));
+    return this.currentness.filterCurrent(unsuspended, this.currentness.currentPin()!);
   }
 
   /**
@@ -3624,7 +3717,12 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       const w = cloneWorkItem(existing.entity);
       this.currentness.assertCurrent(w, this.currentness.currentPin()!);
       // race-safe re-check: only sweep an item that is STILL lease-held AND still expired.
-      if (!LEASE_HELD_PHASES.includes(w.status) || !w.lease || w.lease.expiresAt >= nowISO) {
+      // idea-640 / nodefix0: `!isSuspended(w)` is the ACT-side half of the sweeper guard. Before the
+      // attribute model this was free — `paused` is absent from LEASE_HELD_PHASES — but a suspended row
+      // now keeps its lifecycle phase, so that protection is gone and must be stated. THE SCAN ALREADY
+      // EXCLUDES THESE; this is the second, independent line, because a row can be suspended between
+      // the scan and the act.
+      if (isSuspended(w) || !LEASE_HELD_PHASES.includes(w.status) || !w.lease || w.lease.expiresAt >= nowISO) {
         return "skipped";
       }
 
