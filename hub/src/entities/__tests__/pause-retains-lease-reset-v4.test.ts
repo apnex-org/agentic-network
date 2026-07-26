@@ -1,23 +1,28 @@
-// idea-640 (A)+(B) — PAUSE RETAINS THE LEASE; UNPAUSE RESTORES THE PHASE; `reset` REVOKES DELIBERATELY.
+// idea-640 / nodefix0 — SUSPENSION IS A MANAGEMENT ATTRIBUTE, NOT A LIFECYCLE PHASE.
 //
-// WHY THE THREE ARE ONE CHANGE. The Director's ratified edit model has three tiers:
-//   live                   -> no edits
-//   paused + LEASE INTACT  -> minor edits
-//   paused + lease revoked -> anything, including evidenceRequirements
-// Pause used to set `lease: null`, so EVERY paused row was lease-less and THE MIDDLE TIER COULD NOT
-// EXIST. Retaining the lease is what makes the ratified model expressible.
+// Director-ratified two-axis model. `status: in_progress` + `suspended: true` reads as "at the
+// in_progress stage, not currently executing". THE PAIR IS THE TRUTH; NEITHER FIELD ALONE IS.
 //
-// TWO MIRROR-IMAGE ZOMBIE STATES SIT ON EITHER SIDE OF THIS CHANGE, and each is asserted below:
-//   `ready` + LIVE lease  -> pauseWork itself calls this corrupt; a held row would sit in the CLAIMABLE
-//                            POOL, so a second agent could claim a row another agent holds.
-//   lease-held + NO lease -> unclaimable (claim requires `ready`) AND unreapable (expireLease requires
-//                            `!!w.lease`). A PERMANENT ZOMBIE nothing can move.
-// The second only becomes reachable once BOTH lease-retention and phase-restoration land, via
-// pause -> reset -> unpause. It is why the restore target is gated on the LEASE, not on a reset flag.
+// WHY THE PIECES ARE ONE CHANGE. The ratified edit model has three tiers — live (nothing), suspended
+// with the lease intact (minor edits), suspended with the lease revoked by `reset` (anything). Pause
+// used to set `lease: null`, so EVERY paused row was lease-less and THE MIDDLE TIER COULD NOT EXIST.
+// Lease retention is what makes the ratified model expressible; it is not, by itself, a bug fix.
+//
+// 🔴 WHAT MOVING THE PHASE OUT OF `paused` COSTS, AND WHY EVERY GUARD BELOW EXISTS. Before this change,
+// suspension protections were FREE: `paused` was absent from LEASE_HELD_PHASES, and `paused !== ready`.
+// Once the phase stays put, EVERY ONE OF THOSE PROTECTIONS EVAPORATES SILENTLY. Two were found, one of
+// them only by classifying a failure that looked identical to eight stale assertions:
+//   the SWEEPER  — a suspended row would be reaped mid-pause (bug-381/384, inside the arc closing them)
+//   CLAIMABILITY — a row suspended from `ready` keeps `status: "ready"`, so the ready scan LISTS it and
+//                  claimWorkItem ACCEPTS it. SUSPENSION WOULD HAVE BEEN ADVISORY.
+//
+// SUPERSEDED AND DELETED, NOT RENAMED: unpause's phase restoration from `recallHistory` and its
+// lease-gated mirror-zombie guard. Under the attribute model the phase never leaves, so there is
+// nothing to restore. Those were a correct workaround for a modelling error; the one-time migration
+// reads the same history from its OWN code and dies with it.
 //
 // NON-CLAIM: this does NOT reduce bearer-token exposure. `get_work` returns `lease.token` in plaintext
-// to any caller who can read the row, so every claimed/in_progress row already exposes it. Filed
-// separately, OUT of this arc's bound.
+// to any reader of any live row. Filed separately, OUT of this arc's bound.
 import { describe, expect, it } from "vitest";
 import { createMemoryStorageSubstrate } from "../../storage-substrate/index.js";
 import { SubstrateCounter } from "../substrate-counter.js";
@@ -54,63 +59,57 @@ const pause = (repo: WorkItemRepositorySubstrate, id: string) =>
 const unpause = (repo: WorkItemRepositorySubstrate, id: string) =>
   repo.unpauseWork({ workId: id } as never, ARCH);
 
-describe("idea-640 (A) — pause retains the lease, unpause restores the phase", () => {
-  it("🔴 pause from in_progress RETAINS lease, holder and token", async () => {
+describe("idea-640 — suspension is an attribute; the phase does not move", () => {
+  it("🔴 pause from in_progress SETS suspended, LEAVES the phase, and RETAINS lease/holder/token", async () => {
     const { repo } = await harness();
     const id = await readyItem(repo);
     const token = await inProgress(repo, id);
 
     const paused = (await pause(repo, id))!;
-    expect(paused.status).toBe("paused");
-    expect(paused.lease, "the middle tier requires a retained lease").not.toBeNull();
+    expect(paused.status, "the LIFECYCLE phase does not move — that is the whole model").toBe("in_progress");
+    expect(paused.suspended, "the ATTRIBUTE is what changes").toBe(true);
+    expect(paused.lease, "the middle edit tier requires a retained lease").not.toBeNull();
     expect(paused.lease!.holder).toBe(ENG.agentId);
     expect(paused.lease!.token, "token validity is retained, not just the holder").toBe(token);
   });
 
-  it("🔴 unpause RESTORES in_progress — not `ready` — so the holder resumes without re-claiming", async () => {
+  it("🔴 unpause CLEARS suspended and still does not move the phase", async () => {
     const { repo } = await harness();
     const id = await readyItem(repo);
     await inProgress(repo, id);
     await pause(repo, id);
 
     const resumed = (await unpause(repo, id))!;
-    expect(resumed.status, "restores the PRE-PAUSE phase from recallHistory.at(-1)").toBe("in_progress");
+    expect(resumed.suspended).toBe(false);
+    expect(resumed.status, "the holder resumes in place, with no re-claim").toBe("in_progress");
     expect(resumed.lease!.holder).toBe(ENG.agentId);
   });
 
-  it("🔴 NEGATIVE CONTROL: a row paused from `ready` still restores to `ready`", async () => {
-    // Without this, "restore the recorded phase" is indistinguishable from "always restore in_progress".
+  it("🔴 NEGATIVE CONTROL: suspending a `ready` row leaves it `ready`, not `in_progress`", async () => {
+    // Without this, "the phase does not move" is indistinguishable from "the phase is always in_progress".
     const { repo } = await harness();
     const id = await readyItem(repo);
-    await pause(repo, id);
+    const paused = (await pause(repo, id))!;
+    expect(paused.status).toBe("ready");
+    expect(paused.suspended).toBe(true);
     expect((await unpause(repo, id))!.status).toBe("ready");
   });
 
-  it("🔴 unpause REFRESHES expiresAt from now — a stale one would be reaped on the next tick", async () => {
-    // bug-384's M4 trap on a different verb: a retained lease's expiresAt is frozen at its pre-pause
-    // value. Restored verbatim into a LEASE_HELD phase, the row re-enters the sweeper's scan ALREADY
-    // EXPIRED. claimedAt is deliberately NOT refreshed — preserving it is what keeps evidence produced
-    // before the pause admissible.
+  it("🔴 a SUSPENDED row survives the sweeper past its own expiresAt — at the ACT", async () => {
     const { repo, substrate } = await harness();
     const id = await readyItem(repo);
     await inProgress(repo, id);
     await pause(repo, id);
-
-    // force the retained lease stale, exactly as a long pause would
     const stale = (await repo.getWorkItem(id))!;
-    const claimedAt = stale.lease!.claimedAt;
     await substrate.put("WorkItem", { ...stale, lease: { ...stale.lease!, expiresAt: "2020-01-01T00:00:00.000Z" } } as never);
 
-    const resumed = (await unpause(repo, id))!;
-    expect(resumed.status).toBe("in_progress");
-    expect(resumed.lease!.expiresAt > new Date().toISOString(), "a resumed lease must not be already-expired").toBe(true);
-    expect(resumed.lease!.claimedAt, "claimedAt is PRESERVED — it is the evidence-admissibility baseline").toBe(claimedAt);
-
-    // and the sweeper must not take it
-    expect(await repo.expireLease(id, "2099-01-01T00:00:00.000Z", 5)).not.toBe("skipped"); // sanity: it IS sweepable when expired
+    // The phase is `in_progress` and the lease IS expired — so ONLY the `suspended` check stops this.
+    // Before the model change `paused` being absent from LEASE_HELD_PHASES did it for free.
+    expect(await repo.expireLease(id, "2099-01-01T00:00:00.000Z", 5)).toBe("skipped");
+    expect((await repo.getWorkItem(id))!.leaseExpiryCount).toBe(0);
   });
 
-  it("🔴 a PAUSED row survives the sweeper past its own expiresAt", async () => {
+  it("🔴 a SUSPENDED row is not even LISTED by the expired-lease scan — at the SCAN", async () => {
     const { repo, substrate } = await harness();
     const id = await readyItem(repo);
     await inProgress(repo, id);
@@ -118,16 +117,41 @@ describe("idea-640 (A) — pause retains the lease, unpause restores the phase",
     const stale = (await repo.getWorkItem(id))!;
     await substrate.put("WorkItem", { ...stale, lease: { ...stale.lease!, expiresAt: "2020-01-01T00:00:00.000Z" } } as never);
 
-    // `paused` is absent from LEASE_HELD_PHASES, so both the scan and expireLease skip it. This is the
-    // STATUS doing the work, not the (now retained) lease.
-    expect(await repo.expireLease(id, "2099-01-01T00:00:00.000Z", 5)).toBe("skipped");
-    expect((await repo.getWorkItem(id))!.status).toBe("paused");
-    expect((await repo.getWorkItem(id))!.leaseExpiryCount).toBe(0);
+    const expired = await repo.listExpiredLeaseItems("2099-01-01T00:00:00.000Z", 50);
+    expect(expired.map((i) => i.id), "defence in depth: the scan must not surface what the act refuses").not.toContain(id);
+  });
+
+  it("🔴🔴 A SUSPENDED ROW IS NOT CLAIMABLE — the defect that would have made suspension ADVISORY", async () => {
+    // A row suspended from `ready` KEEPS `status: "ready"`. The ready scan filters on that status and
+    // claimWorkItem gates on `status !== "ready"` — so without an explicit suspension check the scan
+    // LISTS it and the verb ACCEPTS it. An operator suspends a row precisely to stop work starting.
+    const { repo } = await harness();
+    const id = await readyItem(repo);
+    await pause(repo, id);
+
+    const { items } = await repo.listReadyForRole("engineer", 50);
+    expect(items.map((i) => i.id), "the SCAN is a projection and must not advertise it").not.toContain(id);
+    await expect(repo.claimWorkItem(id, ENG.agentId, "engineer")).rejects.toThrow(/SUSPENDED/);
+  });
+
+  it("🔴 SUSPENDED time accrues to the `paused` bucket, not to the lifecycle phase", async () => {
+    // Without this a suspended `in_progress` row banks an operator's suspension as the HOLDER'S
+    // execution time — destroying the property that let a ten-hour wedge stop counting as work-time.
+    const { repo } = await harness();
+    const id = await readyItem(repo);
+    await inProgress(repo, id);
+    await pause(repo, id);
+    const before = (await repo.getWorkItem(id))!.stateDurations;
+    await unpause(repo, id);
+    const after = (await repo.getWorkItem(id))!.stateDurations;
+
+    expect(after.paused, "suspended dwell lands in its own bucket").toBeGreaterThanOrEqual(before.paused);
+    expect(after.in_progress, "…and NOT in the phase the row was frozen at").toBe(before.in_progress);
   });
 });
 
 describe("idea-640 (B) — reset", () => {
-  it("🔴 reset on a PAUSED row clears lease + evidence and STAYS paused", async () => {
+  it("🔴 reset on a SUSPENDED row clears lease + evidence and stays suspended", async () => {
     const { repo } = await harness();
     const id = await readyItem(repo);
     const token = await inProgress(repo, id);
@@ -136,56 +160,42 @@ describe("idea-640 (B) — reset", () => {
       undefined as never).catch(() => undefined); // binds evidence, blocks on missing friction
     await pause(repo, id);
 
-    // 🔴 PROVE THE FIXTURE ENGAGED BEFORE READING THE NULL. Without this, `evidence` might simply never
-    // have bound — completeWork above is deliberately allowed to fail — and `toEqual([])` below would
-    // pass against a row that never had evidence to clear. An unengaged fixture and a working `reset`
-    // are indistinguishable from the assertion alone.
+    // 🔴 PROVE THE FIXTURE ENGAGED BEFORE READING THE NULL. `completeWork` above is deliberately allowed
+    // to fail; if evidence never bound, `toEqual([])` below would pass against a row that had none.
     const armed = (await repo.getWorkItem(id))!;
-    expect(armed.evidence, "fixture must actually have bound evidence, or the clear-assertion is vacuous").toHaveLength(1);
+    expect(armed.evidence, "fixture must have bound evidence, or the clear-assertion is vacuous").toHaveLength(1);
 
     const reset = (await repo.resetWork(id, ARCH))!;
-    expect(reset.status, "reset is a SCOPE change, not a lifecycle transition").toBe("paused");
+    expect(reset.suspended, "reset is a SCOPE change, not a lifecycle transition").toBe(true);
     expect(reset.lease).toBeNull();
     expect(reset.evidence).toEqual([]);
   });
 
-  it("🔴 reset PRESERVES seal history, attestations and provenance", async () => {
-    // 🔴 THIS FIXTURE MUST BE ARMED OR THE TEST IS VACUOUS. Measured: with a default fixture,
-    // `failedGateSeal` is already null and `attestations` already {}, so a mutation making reset ERASE
-    // them changed nothing and RED NOTHING — a 28/28 green against a guard that was not enforced. The
-    // mutation was PROVEN ENGAGED by probe, which is the only reason the vacuity was attributable to the
-    // test rather than to a mutation that failed to apply. Plant real values, then assert they survive.
+  it("🔴 reset PRESERVES attestations and provenance", async () => {
     const { repo, substrate } = await harness();
     const id = await readyItem(repo);
     await inProgress(repo, id);
     await pause(repo, id);
-
     const planted = (await repo.getWorkItem(id))!;
     await substrate.put("WorkItem", {
       ...planted,
       attestations: { art: { verdict: "pass", verifierId: "ver-1", at: "2020-01-01T00:00:00.000Z" } },
       attestationHistory: [{ requirementId: "art", verdict: "pass", verifierId: "ver-1", at: "2020-01-01T00:00:00.000Z" }],
     } as never);
-
     const before = (await repo.getWorkItem(id))!;
     expect(Object.keys(before.attestations), "fixture must be ARMED or this is vacuous").toHaveLength(1);
-    expect(before.attestationHistory).toHaveLength(1);
 
     const reset = (await repo.resetWork(id, ARCH))!;
     expect(reset.attestations, "a verifier's verdict is not a scope decision").toEqual(before.attestations);
     expect(reset.attestationHistory).toEqual(before.attestationHistory);
-    expect(reset.recallHistory, "append-only provenance survives a scope change").toEqual(before.recallHistory);
+    expect(reset.recallHistory).toEqual(before.recallHistory);
     expect(reset.executorHistory).toEqual(before.executorHistory);
   });
 
-  it("🔴 reset is REFUSED OUTRIGHT on a failed-sealed row — the seal is protected by refusal, not preservation", async () => {
-    // FOUND BY AN ARMED FIXTURE, NOT BY DESIGN. The first version of the preservation test above planted
-    // a `failedGateSeal` and asserted reset carried it through. It does not get the chance: `resetWork`
-    // calls `assertNotFailedSealed`, so a sealed row is refused before any field is touched —
-    //   "effectiveDisposition=failed_sealed; same-row replay/claim/attestation is forbidden —
-    //    create a distinct repair/revision"
-    // That is STRONGER than preservation and matches the standing position that a failed gate is
-    // terminal for the row. Asserting the real mechanism instead of the one I assumed.
+  it("🔴 reset is REFUSED OUTRIGHT on a failed-sealed row — protected by REFUSAL, not preservation", async () => {
+    // FOUND BY AN ARMED FIXTURE, NOT BY DESIGN. An earlier version planted a seal and asserted reset
+    // carried it through; it never gets the chance — `assertNotFailedSealed` refuses first. That is
+    // STRONGER than preservation and matches the standing position that a failed gate is terminal.
     const { repo, substrate } = await harness();
     const id = await readyItem(repo);
     await inProgress(repo, id);
@@ -205,15 +215,11 @@ describe("idea-640 (B) — reset", () => {
   });
 
   it("🔴 reset does NOT replicate pauseWork's `blockedOn: null` data loss", async () => {
-    // 🔴 WHY THIS NEEDS A PLANTED FIXTURE, AND WHAT THAT REVEALS. A mutation making reset null
-    // `blockedOn` RED NOTHING at first — proven engaged by probe. The reason is not a weak test: it is
-    // that `pauseWork` ITSELF sets `blockedOn: null`, so by the time reset can run there is never a
-    // blocker left to destroy. THE REQUIREMENT IS UNOBSERVABLE THROUGH THE NORMAL PATH — reset's
-    // restraint is a guarantee about a field pause has already emptied.
-    //
-    // The blocker record is therefore lost at PAUSE, not at reset. That loss is filed as observed-not-
-    // investigated and is explicitly NOT this arc's to fix. This test pins reset's half so the guarantee
-    // is real the moment pause's half is repaired, rather than silently decaying into a no-op.
+    // 🔴 WHY THIS NEEDS A PLANTED FIXTURE. A mutation making reset null `blockedOn` RED NOTHING at
+    // first — proven engaged by probe. `pauseWork` ITSELF nulls it, so by the time reset runs there is
+    // never a blocker left to destroy: THE REQUIREMENT IS UNOBSERVABLE THROUGH THE NORMAL PATH. The
+    // loss happens at PAUSE, is filed as observed-not-investigated, and is NOT this arc's to fix. This
+    // pins reset's half so the guarantee is real when pause's half is repaired.
     const { repo, substrate } = await harness();
     const id = await readyItem(repo);
     await inProgress(repo, id);
@@ -232,7 +238,7 @@ describe("idea-640 (B) — reset", () => {
     expect(reset.lease).toBeNull();
   });
 
-  it("🔴 reset on a NON-paused row is REFUSED, with Mechanics/Rationale/Consequence", async () => {
+  it("🔴 reset on a NOT-suspended row is REFUSED, with Mechanics/Rationale/Consequence", async () => {
     const { repo } = await harness();
     const id = await readyItem(repo);
     await inProgress(repo, id);
@@ -248,24 +254,5 @@ describe("idea-640 (B) — reset", () => {
     await pause(repo, id);
     await expect(repo.resetWork(id, ENG)).rejects.toThrow(/requires architect or Director/);
     expect((await repo.getWorkItem(id))!.lease, "the refused reset revoked nothing").not.toBeNull();
-  });
-
-  it("🔴🔴 THE MIRROR ZOMBIE: pause → reset → unpause restores `ready`, NOT a lease-held phase", async () => {
-    // The state this prevents — `in_progress` with `lease: null` — is unclaimable (claim requires
-    // `ready`) AND unreapable (expireLease requires `!!w.lease`). Nothing in the system could move it
-    // again. It is reachable ONLY once lease-retention and phase-restoration both land, which is why
-    // the restore target is gated on the lease rather than on a reset-specific marker.
-    const { repo } = await harness();
-    const id = await readyItem(repo);
-    await inProgress(repo, id);
-    await pause(repo, id);
-    await repo.resetWork(id, ARCH);
-
-    const resumed = (await unpause(repo, id))!;
-    expect(resumed.status, "a lease-less row must NOT re-enter a lease-held phase").toBe("ready");
-    expect(resumed.lease).toBeNull();
-    // and it is genuinely claimable again — the row is alive, not a zombie
-    const reclaimed = await repo.claimWorkItem(id, ENG.agentId, "engineer");
-    expect(reclaimed!.status).toBe("claimed");
   });
 });

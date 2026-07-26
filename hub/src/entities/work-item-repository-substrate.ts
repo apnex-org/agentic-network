@@ -2648,6 +2648,14 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         if (!["ready", "claimed", "in_progress", "blocked"].includes(w.status)) {
           throw new TransitionRejected(`pause requires ready|claimed|in_progress|blocked, was ${w.status}`);
         }
+        // idea-640 / nodefix0: an ALREADY-SUSPENDED row cannot be suspended again. Previously this was
+        // free — a paused row's phase was `paused`, which the check above rejects. Now the phase stays
+        // in the allowed set, so a second pause would append a duplicate recallHistory entry and mint a
+        // second holder notice for a row nobody resumed. FOURTH instance of this class in one change:
+        // a guard that was satisfied by the phase and silently stops being satisfied by anything.
+        if (isSuspended(w)) {
+          throw new TransitionRejected(`pause rejected: ${w.id} is ALREADY suspended (status=${w.status}); unpause it before suspending again`);
+        }
         if (w.status === "ready" && w.lease) throw new TransitionRejected(`pause rejected corrupt ready row ${w.id}: unexpected live lease`);
         if (w.status !== "ready" && !w.lease) throw new TransitionRejected(`pause rejected corrupt active row ${w.id}: exact holder lease is missing`);
         if (w.status === "blocked" && !w.blockedOn) throw new TransitionRejected(`pause rejected corrupt blocked row ${w.id}: blocker projection is missing`);
@@ -2830,7 +2838,11 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     return this.tryCasUpdate(workId, async (w) => {
       this.assertNotFailedSealed(w);
       this.assertPauseExpectations(w, request);
-      if (w.status !== "paused") throw new TransitionRejected(`unpause requires paused, was ${w.status}`);
+      // idea-640 / nodefix0: gate on the ATTRIBUTE. `w.status !== "paused"` stopped matching the moment
+      // suspension left the phase, so unpause would have refused every row it exists to resume — the
+      // third instance of this class in one change (reset and claim were the others). The legacy
+      // `status: "paused"` population is covered by the same predicate.
+      if (!isSuspended(w)) throw new TransitionRejected(`unpause requires a SUSPENDED row; ${w.id} is not suspended (status=${w.status})`);
       const lastRecall = (w.recallHistory ?? []).at(-1);
       const currentAuthority = this.deriveFrozenRecallAuthority(w);
       this.assertFrozenRecallAuthorityUnchanged(lastRecall?.frozenAuthority, currentAuthority, w.id);
@@ -2920,9 +2932,13 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     if (!this.currentness.currentPin()) return this.withWriterFence(() => this.resetWork(workId, actor));
     return this.tryCasUpdate(workId, (w) => {
       this.assertNotFailedSealed(w);
-      if (w.status !== "paused") {
+      // idea-640 / nodefix0: gate on the ATTRIBUTE, not the phase. `w.status !== "paused"` would have
+      // refused EVERY row suspended under the new model — reset would never fire again, silently, on
+      // the exact rows it exists for. The legacy `status: "paused"` population is covered by the same
+      // predicate, so both remain resettable.
+      if (!isSuspended(w)) {
         throw new TransitionRejected(
-          `reset requires paused, was ${w.status}.\n` +
+          `reset requires a SUSPENDED row; ${w.id} is not suspended (status=${w.status}).\n` +
           `MECHANICS: reset revokes the lease and nullifies submitted evidence. It is legal ONLY from ` +
           `\`paused\`, and it leaves the row paused — it is a scope change, not a lifecycle transition.\n` +
           `RATIONALE: on a LIVE row this would yank the lease and delete evidence out from under an agent ` +
