@@ -1311,9 +1311,29 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     next.updatedAt = this.clock.now().toISOString();
     // ── work-553 / bug-390: RE-FREEZE THE PAUSED-ROW AUTHORITY BASELINE ON A SANCTIONED EDIT ───────
     //
-    // Reaching this line MEANS the mutation cleared every gate above — the tier gate, the pre-claim
-    // gates, the currentness fence. On a SUSPENDED row that is precisely a sanctioned MINOR-tier edit,
-    // and it is the only kind of edit that can arrive here in that state.
+    // TWO ENTRY PATHS REACH THIS LINE ON A SUSPENDED ROW, AND BOTH ARE SANCTIONED — BY DIFFERENT
+    // AUTHORITIES. An earlier version of this comment said "the only kind", which was FALSE, and a
+    // false completeness claim written beside a hash check is the exact defect this arc keeps finding
+    // (`resetWork`'s own JSDoc claims it preserves `attestations`; the code clears them). Enumerated:
+    //
+    //  1. AN OPERATOR EDIT via `updateWorkItem`. It CLEARED the tier gate at :1206 — on a suspended row
+    //     that is a MINOR-tier (or post-reset FULL-tier) edit, and clearing the gate IS the sanction.
+    //
+    //  2. A SYSTEM PROJECTION EDGE via `appendSystemProjectionEdge` (:1077), which delegates here with
+    //     `systemProjectionSeam: true`. That seam SKIPS the tier refusal rather than clearing it, so
+    //     its sanction comes from a different place: the path is not caller-reachable at all. Its one
+    //     live caller is the PR-review reconciler (pr-review-workitem-projection.ts:284), it builds its
+    //     own mutation (no `set` can arrive through it), and it stamps a system author.
+    //
+    // 🔴 THE SEAM CASE IS DELIBERATE AND IT CLOSES A STRANDING VECTOR NOBODY NAMED. A review-obligation
+    // edge landing on a SUSPENDED node moves `nodeTopologyHash`. Without the re-baseline that node is
+    // stranded exactly as bug-390 stranded operator-edited ones — except the edit came from the
+    // system's own hand, so no human did anything to explain it and nothing would name a cause.
+    //
+    // ⚠️ AND THIS IS THE SEAM THAT TOOK PRODUCTION DOWN (#682 refused this append on live rows and
+    // broke `complete_work` fleet-wide for ~50 minutes). The rule that incident bought: A MUTATION
+    // MATRIX PROVES A GUARD FIRES; IT SAYS NOTHING ABOUT WHO ELSE RELIES ON THE PATH. So the callers
+    // are enumerated here by name rather than left to be inferred from the parameter.
     //
     // Without this, `unpause` later recomputes the authority, compares it against the baseline frozen
     // at PAUSE time, finds the edit, and refuses with "claimant row or generation edges changed while
