@@ -1179,17 +1179,28 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // 🔴 decision-11 ⨯ idea-640 — THE RATIFIED THREE TIERS. See
     // docs/design/nodefix0-decision-11-supersession.md; BOTH contract ids are named deliberately.
     //
-    //   NOT suspended            -> refuse. `LIVE -> modify DOES NOT FUNCTION` (Director, absolute).
-    //   suspended + lease        -> MINOR: priority, targetRef, runbook, payload, roleEligibility.
-    //   suspended + NO lease     -> FULL: anything, including `evidenceRequirements`.
+    // 🔴 CORRECTED BY work-554 TO MATCH DELIVERED BEHAVIOUR. The previous version of this table was
+    // WRONG IN BOTH DIRECTIONS AT ONCE: it claimed three widenings that had not been built, and one
+    // narrowing that had not happened. IT READ EXACTLY LIKE A SPECIFICATION AND COULD NOT BE USED AS
+    // ONE — a reader checking whether `runbook` was editable on a suspended node would have been told
+    // yes by this comment and refused by the code twenty-five lines below.
     //
-    // THE DELTA RUNS BOTH WAYS AND THE NARROWING IS THE SURPRISE. decision-11 made `priority` and
-    // `targetRef` mutable UNTIL TERMINAL — i.e. on a live, claimed, in-flight row. Under the tiers they
-    // are MINOR, so BOTH LOSE AN AUTHORITY THEY HAD. That capability removal is nowhere in idea-640; it
-    // follows by implication from the Director's absolute, and is recorded as a DECISION so nobody
-    // later reports it as a regression. Conversely `runbook`/`payload`/`roleEligibility` were PRE-CLAIM
-    // ONLY and are now editable at MINOR — the amendment decision-11's own out-of-scope list invited:
-    // "lease-holder mutation authority (revisit with evidence)". idea-640 is that revisit.
+    //   NOT suspended, HELD      -> refuse claimant-tier fields. `LIVE -> modify DOES NOT FUNCTION`.
+    //   suspended + lease        -> MINOR: targetRef, runbook, payload, roleEligibility.
+    //   suspended + NO lease     -> FULL: anything, including `evidenceRequirements`.
+    //   ANY of the above         -> `priority` and `leaseWindowMs` are SCALAR and stay editable, incl.
+    //                               on a live held node. NOT narrowed — measured, and asserted by
+    //                               minor-tier-fields-v4 so a future narrowing cannot take them quietly.
+    //
+    // THE DELTA RUNS BOTH WAYS. decision-11 made `priority` and `targetRef` mutable UNTIL TERMINAL.
+    // `targetRef` IS now claimant-tier and so DOES lose an authority it had — that capability removal is
+    // nowhere in idea-640, follows by implication from the Director's absolute, and is recorded as a
+    // DECISION so nobody later reports it as a regression. `priority` DOES NOT: it is decision-11
+    // principle 3's coordination-metadata carve-out and stays live-editable.
+    // Conversely `runbook`/`payload`/`roleEligibility` were PRE-CLAIM ONLY and are NOW editable at MINOR
+    // — the amendment decision-11's own out-of-scope list invited ("lease-holder mutation authority
+    // (revisit with evidence)"), idea-640 is that revisit, AND work-554 IS WHERE IT WAS ACTUALLY BUILT.
+    // Between idea-640 and work-554 this paragraph described an intent, not the code.
     // 🔴 "LIVE" MEANS HELD, NOT MERELY UNSUSPENDED — and getting this wrong OVER-refuses.
     // An unclaimed `ready` row has no holder, so editing it disturbs nobody, and decision-11's
     // pre-claim authoring is untouched by the supersession: the table lists runbook/payload/
@@ -1285,16 +1296,52 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       }
       next.targetRef = set.targetRef;
     }
+    // ── work-554: THE MINOR TIER. SPECIFIED IN Q3, DOCUMENTED AT :1069, AND NOT BUILT UNTIL NOW ──────
+    //
+    // These three guards predate nodefix0 (5fbcd0be / #504, 2026-07-05) and are NOT a regression this
+    // arc caused — but this arc SPECIFIED an unlock and shipped the gate without it. `suspendedForEdit`
+    // is computed at :1203 and consulted by the tier gate; IT WAS NEVER CONSULTED HERE. And because a
+    // suspended node keeps `status: "in_progress"` — THIS ARC'S OWN CENTRAL DESIGN CHOICE — `preClaim`
+    // is false and all three threw on exactly the nodes the MINOR tier exists for.
+    //
+    // 🔴 THE USER-FACING EDGE: the LIVE-row refusal ends "CONSEQUENCE: pause the row, then edit."
+    // Following that instruction produced a SECOND refusal. It was the only remedy the system offered —
+    // A TRAP WITH AN INSTRUCTION MANUAL POINTING INTO IT. Fixing the guards is what fixes the message;
+    // editing the message would have hidden it.
+    //
+    // ROOT CAUSE, and it is the thing Q3 said it was avoiding: Q3 adopted the POLICY layer's
+    // ALLOWED_SET to avoid authoring "two overlapping definitions of safe-to-change". THE SECOND
+    // DEFINITION ALREADY EXISTED, ONE LAYER DOWN, on these same fields.
+    //   AN ALLOW-LIST AT ONE LAYER IS NOT A CAPABILITY CLAIM ABOUT THE LAYER BENEATH IT.
+    // ALLOWED_SET says which keys `update_work` may CARRY. It says nothing about what the substrate
+    // DOES with them.
+    const preClaimOrSuspended = preClaim || suspendedForEdit;
     if (set.runbook !== undefined) {
-      if (!preClaim) throw new TransitionRejected(`update rejected: runbook is pre-claim-only (status=${before.status}) — the claimant's contract froze at claim`);
+      if (!preClaimOrSuspended) throw new TransitionRejected(`update rejected: runbook is editable pre-claim or while SUSPENDED (status=${before.status}, suspended=false) — a live claimant's contract is frozen at claim.\nCONSEQUENCE: pause the node, then edit.`);
       next.runbook = set.runbook;
     }
     if (set.payload !== undefined) {
-      if (!preClaim) throw new TransitionRejected(`update rejected: payload is pre-claim-only (status=${before.status})`);
+      if (!preClaimOrSuspended) throw new TransitionRejected(`update rejected: payload is editable pre-claim or while SUSPENDED (status=${before.status}, suspended=false).\nCONSEQUENCE: pause the node, then edit.`);
       next.payload = set.payload as WorkItem["payload"];
     }
     if (set.roleEligibility !== undefined) {
-      if (!preClaim) throw new TransitionRejected(`update rejected: roleEligibility is pre-claim-only (status=${before.status})`);
+      if (!preClaimOrSuspended) throw new TransitionRejected(`update rejected: roleEligibility is editable pre-claim or while SUSPENDED (status=${before.status}, suspended=false).\nCONSEQUENCE: pause the node, then edit.`);
+      // 🔴 THE ARCHITECT-RULED HOLDER-ELIGIBILITY GUARD IS **NOT BUILT HERE**, AND THE REASON IS
+      // STRUCTURAL RATHER THAN A JUDGEMENT ABOUT ITS SCOPE. The ruling — "refuse a roleEligibility
+      // change that would make the CURRENT LEASE HOLDER ineligible" — needs the HOLDER'S ROLE.
+      // `lease.holder` is an agentId; `roleEligibility` is a list of role strings; mapping one to the
+      // other requires the agent registry, and THIS LAYER CANNOT SEE IT. The file already says so, at
+      // :1946, about a different gate: quarantine "lives in the policy-layer engineerRegistry the repo
+      // store cannot see". Same wall, second instance.
+      //
+      // I am NOT silently substituting a policy-layer guard for a substrate one. A guard placed one
+      // layer above the invariant it protects is bypassed by every substrate-direct caller — and this
+      // arc has spent the day on exactly that class: an allow-list at one layer read as a capability
+      // claim about the layer beneath (Q3), and seven tests that reached past a policy layer entirely
+      // (work-552). Where the guard belongs is an architect's call, not mine to make in a diff.
+      //
+      // REPORTED, NOT SMUGGLED. The three-field widening below is the node's core deliverable and is
+      // fully constructible; this one clause is not, at this layer, and is awaiting a ruling.
       next.roleEligibility = set.roleEligibility;
     }
     if (mutation.appendDependsOn?.length) {
