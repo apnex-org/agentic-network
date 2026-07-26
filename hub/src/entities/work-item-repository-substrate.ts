@@ -138,9 +138,19 @@ if (MIGRATION_PAGE_SIZE > SUBSTRATE_LIST_CLAMP) {
 const READY_SCAN_CAP = 500;
 const MAX_CAS_RETRIES = 50;
 
-/** The lease TTL (claim sets expiresAt = claimedAt + this; renewLease re-extends).
- *  A tunable knob — the sub-PR-4 lease-expiry sweeper re-queues past expiresAt.
- *  15 min default; flagged to architect for confirmation against the sweeper design. */
+/** The lease TTL. **`claim` sets `expiresAt = NOW + this`, NOT `claimedAt + this`** (see the claim
+ *  site: `new Date(now.getTime() + leaseTtlMsFor(w))`); `renewLease` re-extends from now likewise.
+ *
+ *  Today those two readings coincide, because a fresh claim also sets `claimedAt = now` — so the
+ *  old wording ("expiresAt = claimedAt + this") was true only BY COINCIDENCE. bug-384 breaks the
+ *  coincidence: a same-holder re-claim now PRESERVES an older `claimedAt` while still granting a
+ *  full fresh window. Deriving `expiresAt` from that preserved `claimedAt` would mint a lease that
+ *  is ALREADY EXPIRED at the moment of claim — which the sweeper immediately reaps, incrementing
+ *  the claim-thrash counter toward the lockout of bug-382, the bug this work partly relieves.
+ *
+ *  The two fields serve different purposes and must be derived differently: **`expiresAt` is the
+ *  lease clock (from now); `claimedAt` is the evidence-freshness baseline (from the holder's first
+ *  claim).** A tunable knob — the lease-expiry sweeper re-queues past `expiresAt`. 15 min default. */
 const LEASE_TTL_MS = 15 * 60 * 1000;
 
 /** work-164 (idea-395): the effective lease window for an item — its author-set
