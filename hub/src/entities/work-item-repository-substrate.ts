@@ -378,15 +378,56 @@ function addFrictionToRollup(acc: FrictionRollup, reflections: readonly Friction
  *      under the prior lease, so re-validating it would make the reap's evidence-
  *      preservation guarantee hollow. `priorKeys` is server-side state (w.evidence),
  *      never caller input — a completer cannot smuggle stale evidence through it.)
+ *
+ *      bug-384 EXTENDS that same intent to evidence PRODUCED under a prior lease of the
+ *      SAME holder but never BOUND. The clause above keys on evidence having been bound,
+ *      and evidence never binds if completion keeps being refused — so A RELIEF VALVE THAT
+ *      ONLY OPENS FOR EVIDENCE THAT ALREADY GOT THROUGH IS CLOSED TO EXACTLY THE CASE THAT
+ *      NEEDS IT. `priorHolderFloor` is likewise server-side (derived from recallHistory),
+ *      never caller input.
  *   #5 no-double-count (structural: one entry names one requirementId)
  *   #6 empty-req floor (>=1 freeform evidence; no silent zero-evidence close)
  */
+/**
+ * bug-384 — the freshness floor contributed by a PRIOR lease of the row's CURRENT holder.
+ *
+ * MECHANICS: scans `recallHistory` for entries whose frozen `before.lease.holder` is the current
+ * holder, and returns the EARLIEST such `claimedAt`. Null when there is none.
+ *
+ * RATIONALE: bug-222 already ruled that a re-claim must not invalidate a holder's legitimate
+ * evidence; it just keyed on evidence having been BOUND, which never happens if completion keeps
+ * being refused. This restores the intended guarantee for evidence that was merely PRODUCED.
+ *
+ * CONSEQUENCE / SCOPE, stated because it is a real limit rather than an oversight: this can only
+ * see leases that were RECORDED. A lease ended by `expireLease` before the same-commit fix below
+ * left no record at all, so rows whose only prior lease died to the timer BEFORE this shipped
+ * cannot be rescued — the datum was destroyed, not hidden. Those need a dispositioned successor.
+ *
+ * SERVER-SIDE ONLY: derived from persisted state, never from completer input, exactly as
+ * `priorKeys` is. A caller cannot widen their own freshness window.
+ */
+function priorLeaseFloorFor(item: Pick<WorkItem, "lease" | "recallHistory">): string | null {
+  const holder = item.lease?.holder;
+  if (!holder) return null;
+  let earliest: string | null = null;
+  for (const entry of item.recallHistory ?? []) {
+    const prior = entry.before?.lease;
+    if (!prior || prior.holder !== holder) continue;
+    if (earliest === null || prior.claimedAt < earliest) earliest = prior.claimedAt;
+  }
+  return earliest;
+}
+
 function evaluateEvidence(
   requirements: EvidenceRequirement[],
   evidence: EvidenceItem[],
   lease: WorkItemLease | null,
   isVerifierGate: boolean,
   priorKeys: ReadonlySet<string>,
+  /** bug-384: REQUIRED, not optional-with-default. A defaulted parameter lets a call site
+   *  silently keep the old behaviour — the one-rule-two-call-sites failure this codebase
+   *  keeps producing. Required makes an omission a COMPILE ERROR at all three call sites. */
+  priorHolderFloor: string | null,
 ): { nextPhase: WorkItemPhase; refsToResolve: RefToResolve[]; verifierChecks: VerifierCheck[] } {
   const claimedAt = lease?.claimedAt ?? null;
   const refsToResolve: RefToResolve[] = [];
@@ -442,9 +483,26 @@ function evaluateEvidence(
     }
     // #3 freshness (already-persisted evidence is grandfathered — bug-222)
     const fresh = kindMatched.filter((e) =>
-      req.allowPreClaim || priorKeys.has(evidenceKey(e)) || (claimedAt != null && producedAtOnOrAfter(e.producedAt, claimedAt)));
+      req.allowPreClaim || priorKeys.has(evidenceKey(e)) || (claimedAt != null && producedAtOnOrAfter(e.producedAt, claimedAt))
+      // bug-384: admitted under a PRIOR lease of the SAME holder (server-side, see above).
+      || (priorHolderFloor != null && producedAtOnOrAfter(e.producedAt, priorHolderFloor)));
     if (fresh.length === 0) {
-      throw new EvidencePredicateFailed(`requirement '${req.id}' evidence failed freshness (producedAt before lease.claimedAt=${claimedAt}; only the requirement author can waive this via the requirement-level allowPreClaim flag)`);
+      // bug-384 MESSAGE FIX. The old text told the caller that "only the requirement author can
+      // waive this via the requirement-level allowPreClaim flag" — MECHANICS that are true and a
+      // REMEDY that is unreachable: allowPreClaim lives inside evidenceRequirements, which is
+      // immutable, so even the requirement author cannot set it on an existing row. AN ERROR
+      // NAMING AN INAPPLICABLE REMEDY IS WORSE THAN ONE NAMING NONE — it sends the reader to
+      // spend time on a door that does not open. State what is true, and what actually works.
+      throw new EvidencePredicateFailed(
+        `requirement '${req.id}' evidence failed freshness: producedAt is before this lease's claimedAt=${claimedAt}` +
+        (priorHolderFloor != null ? ` and before your earliest recorded prior lease (claimedAt=${priorHolderFloor})` : "") +
+        `. MECHANICS: evidence must be produced under a lease you hold — CLAIM FIRST, THEN PRODUCE. ` +
+        `RATIONALE: it stops evidence made for other work being recycled into this claim. ` +
+        `CONSEQUENCE: an artifact that cannot be re-produced (a merge commit, a merged PR) is not admissible under a later lease ` +
+        `unless a prior lease of YOURS is recorded on this row. NOTE: allowPreClaim can only be set when the requirement is ` +
+        `AUTHORED — it lives inside immutable evidenceRequirements, so it is NOT settable on this row now; a successor node ` +
+        `authored with it is the sanctioned path. DO NOT restamp producedAt: the timestamp is the artifact's, not the claim's.`,
+      );
     }
     const e = fresh[0]; // the binding evidence
     // #4 refResolvable: OIS-internal → existence + RELEVANCE check (queued, audit-4103 #1);
@@ -2928,7 +2986,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // fail-fast the sync predicate + collect the async checks. priorKeys = the evidence
     // ALREADY persisted on the item (bound by a prior predicate-enforced complete) —
     // grandfathered through freshness (bug-222), never caller-suppliable.
-    const plan = evaluateEvidence(item.evidenceRequirements, mergeEvidence(item.evidence, evidence), item.lease, isVerifierGate, new Set(item.evidence.map(evidenceKey)));
+    const plan = evaluateEvidence(item.evidenceRequirements, mergeEvidence(item.evidence, evidence), item.lease, isVerifierGate, new Set(item.evidence.map(evidenceKey)), priorLeaseFloorFor(item));
     // #4 + audit-4103 #1: each OIS-internal ref must RESOLVE *and* RELATE to this work-item
     // or its targetRef (existence-AND-relevance — closes the existence-theatre where any
     // org-wide entity, incl. the item's own id, satisfied existence-only).
@@ -2992,7 +3050,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (!COMPLETABLE_PHASES.includes(w.status)) throw new TransitionRejected(`complete requires in_progress or review, was ${w.status}`);
       const nowISO = this.clock.now().toISOString();
       const merged = mergeEvidence(w.evidence, evidence);
-      const { nextPhase: evidencePhase } = evaluateEvidence(w.evidenceRequirements, merged, w.lease, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey)));
+      const { nextPhase: evidencePhase } = evaluateEvidence(w.evidenceRequirements, merged, w.lease, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey)), priorLeaseFloorFor(w));
       if (!frictionReflection) {
         return { ...w, evidence: merged, updatedAt: nowISO };
       }
@@ -3273,7 +3331,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
           const gate = evaluateCompletionGate({ evidenceRequirements: w.evidenceRequirements, attestations, payload: w.payload });
           let executorDone = false;
           try {
-            executorDone = evaluateEvidence(w.evidenceRequirements, w.evidence, w.lease, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey))).nextPhase === "done";
+            executorDone = evaluateEvidence(w.evidenceRequirements, w.evidence, w.lease, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey)), priorLeaseFloorFor(w)).nextPhase === "done";
           } catch {
             executorDone = false;
           }
