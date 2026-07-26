@@ -42,7 +42,7 @@ function makeStub(overrides: Partial<Record<keyof IWorkItemStore, (...a: unknown
     listWorkItems: m("listWorkItems"), listPrReviewBindingWorkItems: m("listPrReviewBindingWorkItems"), listWorkItemsByProjectionKey: m("listWorkItemsByProjectionKey"), listReadyForRole: m("listReadyForRole"),
     claimWorkItem: m("claimWorkItem"), startWork: m("startWork"), blockWork: m("blockWork"),
     resumeWork: m("resumeWork"), renewLease: m("renewLease"), releaseWork: m("releaseWork"),
-    abandonWork: m("abandonWork"), pauseWork: m("pauseWork"), recommitRevisionSet: m("recommitRevisionSet"), unpauseWork: m("unpauseWork"), completeWork: m("completeWork"),
+    abandonWork: m("abandonWork"), pauseWork: m("pauseWork"), recommitRevisionSet: m("recommitRevisionSet"), unpauseWork: m("unpauseWork"), resetWork: m("resetWork"), completeWork: m("completeWork"),
   } as unknown as StubStore;
 }
 
@@ -92,7 +92,7 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
   // exists. A `git grep` on the symbol misses what a compiler catches; the compiler misses what a
   // string grep catches. NEITHER INSTRUMENT IS COMPLETE AND THEY FAIL IN OPPOSITE DIRECTIONS.
   it("registers the WorkGraph cold-start, lifecycle, and SEAL tools", () => {
-    for (const t of ["create_work", "seed_blueprint", "get_work", "get_current_work", "get_current_stint", "get_next_action", "legal_moves", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "pause_work", "unpause_work", "complete_work", "attest_evidence", "verify_attestation"]) {
+    for (const t of ["create_work", "seed_blueprint", "get_work", "get_current_work", "get_current_stint", "get_next_action", "legal_moves", "list_work", "claim_work", "list_ready_work", "start_work", "block_work", "resume_work", "renew_lease", "release_work", "abandon_work", "pause_work", "unpause_work", "reset_work", "complete_work", "attest_evidence", "verify_attestation"]) {
       expect(router.getRegisteredTools()).toContain(t);
     }
   });

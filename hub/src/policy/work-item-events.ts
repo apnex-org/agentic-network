@@ -61,6 +61,11 @@ export type WorkTransitionVerb =
   | "resume_work"
   | "pause_work"
   | "unpause_work"
+  // idea-640 / work-552. Emitted with fromStatus === toStatus: reset is a SCOPE change that leaves
+  // the row paused, so the transition it reports is `paused→paused`. That is not a degenerate event
+  // — a revoked lease and discarded evidence are exactly what an observer needs told, and they are
+  // invisible in the phase.
+  | "reset_work"
   | "release_work"
   | "abandon_work"
   | "complete_work"

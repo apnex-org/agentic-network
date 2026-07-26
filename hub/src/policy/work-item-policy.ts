@@ -384,6 +384,45 @@ async function unpauseWork(args: Record<string, unknown>, ctx: IPolicyContext): 
   } catch (e) { return mapVerbError(e); }
 }
 
+/**
+ * idea-640 / work-552 — the DOOR for `resetWork`.
+ *
+ * AUTHORITY IS NOT RE-IMPLEMENTED HERE, DELIBERATELY. The substrate already refuses a non-steward
+ * (`architect`/`director`) and refuses a row that is not SUSPENDED, with throw text that explains the
+ * ordering. Duplicating either check in this layer would create a second place for them to drift, and
+ * the copy would be the one readers trust because it is nearer. This handler resolves the SERVER-STAMPED
+ * caller identity — never `args.role` — and passes it through; every refusal below is the substrate's.
+ *
+ * NOTE THE ONE EXCEPTION, BECAUSE IT IS NOT VISIBLE IN THIS FUNCTION: the `[Architect|Director]` prefix
+ * on the registration is PARSED BY `PolicyRouter` into an RBAC gate (router.ts:152) that runs BEFORE
+ * this handler. So a non-steward never arrives here at all. That is a second gate, not a duplicated
+ * one — it is declarative, it states exactly the substrate's flat rule, and it fails closed earlier.
+ * `pause_work` cannot use it because ITS authority is row-dependent (a ready row admits the creator);
+ * reset's never is.
+ */
+async function resetWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
+  const store = ctx.stores.workItem;
+  if (!store) return err("not_wired", "WorkItem store is not available");
+  const caller = await resolveCreatedBy(ctx);
+  try {
+    const before = await store.getWorkItem(args.workId as string);
+    const w = await store.resetWork(args.workId as string, { agentId: caller.agentId, role: caller.role });
+    if (!w) return notFound(args.workId as string);
+    // `reset` leaves the row PAUSED — the phase does not move, so `fromStatus` is the phase it keeps.
+    await emitWorkTransition(ctx, { item: w, verb: "reset_work", fromStatus: before?.status ?? null, actor: caller });
+    return ok({
+      workItem: w,
+      leaseToken: null,
+      // Stated because reset's whole purpose is what it DESTROYS: a caller that cannot see the lease
+      // and evidence it just discarded cannot tell a successful reset from a no-op.
+      revoked: {
+        lease: !!before?.lease,
+        evidenceDiscarded: before?.evidence?.length ?? 0,
+      },
+    });
+  } catch (e) { return mapVerbError(e); }
+}
+
 async function getCurrentWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
@@ -1857,6 +1896,13 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
       reason: z.string().min(1).optional(),
     },
     unpauseWork,
+  );
+
+  router.register(
+    "reset_work",
+    "[Architect|Director] idea-640 scope reset. Legal ONLY on a SUSPENDED row: revokes the lease and nullifies submitted evidence, and LEAVES THE ROW PAUSED — a scope change, not a lifecycle transition. This is the sanctioned gateway to the FULL edit tier of update_work (suspended + no lease + evidence-free), and it clears evidence FIRST so a contract cannot be rewritten to fit artifacts already produced against the old one. Does NOT touch failedGateSeal/attestations (a failed gate is never erased) or recallHistory/executorHistory/stateDurations (append-only provenance). Pause the row before calling; a live row rejects.",
+    { workId: z.string().min(1).describe("Exact physical WorkItem id; never follows a successor") },
+    resetWork,
   );
 
   router.register(
