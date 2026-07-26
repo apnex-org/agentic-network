@@ -84,6 +84,34 @@ describe("bug-384 — acceptance, BOTH directions", () => {
     expect(phase, "a genuinely-produced artifact must survive a re-claim by its producer").toBe("done");
   });
 
+  it("🔴 THE ALREADY-CLAIMED ROW — the case commit 2 exists for, and the only one that isolates it", async () => {
+    // WHY THIS CASE EXISTS: the mutation matrix caught that every other test here passes even with
+    // the prior-lease clause DISABLED, because the same-holder re-claim preserves claimedAt and
+    // ordinary freshness then succeeds. COMMIT 3 WAS MASKING COMMIT 2 COMPLETELY.
+    //
+    // The clause is load-bearing only for a row ALREADY HOLDING A LATE lease — one claimed before
+    // the preservation shipped, whose claimedAt is therefore AFTER the artifact. That is exactly
+    // the shape of the live rows this series was written to rescue: claimed hours after the work,
+    // holding artifacts that cannot be re-produced. No re-claim happens here, so nothing preserves
+    // the baseline for us — the floor must come from recallHistory at COMPLETION time.
+    const h = harness();
+    const LATE = "2020-01-02T00:00:00.000Z"; // lease claimed a day AFTER the artifact at T2
+    await h.substrate.put("Agent", { id: ME, role: "engineer" });
+    await h.substrate.put("WorkItem", rowWithPriorLease("w-late", ME, {
+      status: "in_progress",
+      lease: { holder: ME, token: "late-token", claimedAt: LATE, expiresAt: "2099-01-01T00:00:00.000Z", heartbeatAt: LATE } as never,
+    }) as unknown as Record<string, unknown>);
+
+    await h.repo.completeWork("w-late", ME, "late-token", [
+      { requirementId: "pr", kind: "pr", ref: "https://github.com/x/y/pull/1", producedAt: T2 } as never,
+    ], { summary: "s", observed: false } as never);
+
+    expect(
+      (await h.repo.getWorkItem("w-late"))!.status,
+      "an artifact produced under a recorded prior lease must be admitted even though the CURRENT lease postdates it",
+    ).toBe("done");
+  });
+
   it("🔴 NEGATIVE CONTROL: REFUSES the same artifact for a DIFFERENT agent", async () => {
     // The prior lease belongs to ME; OTHER claims and submits the same timestamp. A new holder
     // must never inherit a predecessor's baseline — without this the fix is a global relaxation.
