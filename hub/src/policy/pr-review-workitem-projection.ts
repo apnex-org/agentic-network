@@ -274,13 +274,14 @@ async function appendRelation(args: {
   reviewWorkId: string;
   relation: PrReviewProjectionRelation;
 }): Promise<void> {
-  await args.store.updateWorkItem(
-    args.binding.targetWorkId,
-    { role: "architect", agentId: "system-pr-review-rule" },
-    args.relation === "appendCompletionDependsOn"
-      ? { appendCompletionDependsOn: [args.reviewWorkId] }
-      : { appendDependsOn: [args.reviewWorkId] },
-  );
+  // 🔴 THE SYSTEM-PROJECTION SEAM, not updateWorkItem. The three-tier gate counts every edge append
+  // as claimant-authority-significant and demands a SUSPENDED row — but the row this projection
+  // targets is being COMPLETED, so it is always LIVE. Routing through the public seam blocked every
+  // PR-evidence completion fleet-wide (and this same function's webhook caller) until this changed.
+  // NOT AN EXCEPTION TO THE RULE — A BOUNDARY THE RULE WAS NEVER MEANT TO CROSS: the gate protects an
+  // executor from a runbook changing mid-turn, and this edge is appended synchronously BY that
+  // executor's own complete_work, as the completion gate they are invoking. It cannot surprise them.
+  await args.store.appendSystemProjectionEdge(args.binding.targetWorkId, args.relation, args.reviewWorkId);
 }
 
 export async function reconcilePrReviewProjection(args: {

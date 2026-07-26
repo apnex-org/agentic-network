@@ -103,7 +103,7 @@ describe("PR review WorkItem projection", () => {
       sourceMessageId: "01SOURCE",
       store: {
         createBlueprintNode: async () => ({ item: { id: "work-created" }, created: true }),
-        updateWorkItem: async () => { throw new Error("edge rejected"); },
+        appendSystemProjectionEdge: async () => { throw new Error("edge rejected"); },
         deleteWorkItem: async (id: string) => { deleted.push(id); },
       } as never,
     });
@@ -190,7 +190,7 @@ describe("PR review WorkItem projection", () => {
       sourceMessageId: "pr-evidence:work-123:pr",
       relation: "appendCompletionDependsOn",
       store: {
-        updateWorkItem: async (...args: unknown[]) => { updates.push(args); return { before: { id: "work-123" }, after: { id: "work-123", completionDependsOn: ["work-review-existing"] } }; },
+        appendSystemProjectionEdge: async (...args: unknown[]) => { updates.push(args); return { before: { id: "work-123" }, after: { id: "work-123", completionDependsOn: ["work-review-existing"] } }; },
       } as never,
     });
 
@@ -200,10 +200,14 @@ describe("PR review WorkItem projection", () => {
       workId: "work-review-existing",
       relation: "appendCompletionDependsOn",
     });
+    // idea-640 hotfix: the reconciler now goes through the SYSTEM-PROJECTION SEAM
+    // (appendSystemProjectionEdge), not the public updateWorkItem. The seam takes
+    // (workId, relation, edgeWorkId) — there is deliberately NO mutation object to pass, which is
+    // what makes the live-row exemption unable to carry a `set` with it.
     expect(updates).toEqual([[
       "work-123",
-      { role: "architect", agentId: "system-pr-review-rule" },
-      { appendCompletionDependsOn: ["work-review-existing"] },
+      "appendCompletionDependsOn",
+      "work-review-existing",
     ]]);
   });
 
@@ -270,7 +274,7 @@ describe("PR review WorkItem projection", () => {
       sourceMessageId: "01SOURCE",
       store: {
         createBlueprintNode: async (input: Record<string, unknown>) => { captured = input; return { item: { id: "work-created" }, created: true }; },
-        updateWorkItem: async () => ({ before: { id: "work-123" }, after: { id: "work-123" } }),
+        appendSystemProjectionEdge: async () => ({ before: { id: "work-123" }, after: { id: "work-123" } }),
       } as never,
     });
     expect(captured, "the reconciler must have reached createBlueprintNode").not.toBeNull();

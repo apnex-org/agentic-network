@@ -37,7 +37,7 @@ function makeStub(overrides: Partial<Record<keyof IWorkItemStore, (...a: unknown
   };
   return {
     calls,
-    createWorkItem: m("createWorkItem"), updateWorkItem: m("updateWorkItem"), createBlueprintNode: m("createBlueprintNode"), deleteWorkItem: m("deleteWorkItem"),
+    createWorkItem: m("createWorkItem"), updateWorkItem: m("updateWorkItem"), appendSystemProjectionEdge: m("appendSystemProjectionEdge"), createBlueprintNode: m("createBlueprintNode"), deleteWorkItem: m("deleteWorkItem"),
     getWorkItem: m("getWorkItem"), getCurrentWork: m("getCurrentWork"), reviseWork: m("reviseWork"), getCompletionProgress: m("getCompletionProgress"), getStintProjection: m("getStintProjection"), getNextAction: m("getNextAction"), getLegalMoves: m("getLegalMoves"), entityExists: m("entityExists"),
     listWorkItems: m("listWorkItems"), listPrReviewBindingWorkItems: m("listPrReviewBindingWorkItems"), listWorkItemsByProjectionKey: m("listWorkItemsByProjectionKey"), listReadyForRole: m("listReadyForRole"),
     claimWorkItem: m("claimWorkItem"), startWork: m("startWork"), blockWork: m("blockWork"),
@@ -376,7 +376,7 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
         createdNodes.push(input);
         return { item: sampleItem({ id: "work-review-621", status: "ready", payload: (input as { payload?: unknown }).payload }), created: true };
       },
-      updateWorkItem: (...args: unknown[]) => {
+      appendSystemProjectionEdge: (...args: unknown[]) => {
         updates.push(args);
         return { before, after: { ...before, completionDependsOn: ["work-review-621"] } };
       },
@@ -456,11 +456,10 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
         },
       },
     });
-    expect(updates).toEqual([[
-      "work-parent",
-      { role: "architect", agentId: "system-pr-review-rule" },
-      { appendCompletionDependsOn: ["work-review-621"] },
-    ]]);
+    // idea-640 hotfix: the projection reaches the substrate through the SYSTEM-PROJECTION SEAM,
+    // whose signature is (workId, relation, edgeWorkId) — no actor and no mutation object, which is
+    // precisely what stops the live-row exemption from ever carrying a `set`.
+    expect(updates).toEqual([["work-parent", "appendCompletionDependsOn", "work-review-621"]]);
     expect(stub.calls.some((c) => c.method === "completeWork")).toBe(false);
   });
 
@@ -671,7 +670,7 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
         items: [sampleItem({ id: "work-review-621", status: "done", payload: { projectionKey } })],
         truncated: false,
       }),
-      updateWorkItem: (...args: unknown[]) => {
+      appendSystemProjectionEdge: (...args: unknown[]) => {
         updates.push(args);
         return { before, after: before };
       },
@@ -721,11 +720,10 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
       requiredAction: "none",
     });
     expect(b.prEvidenceAdmission).toMatchObject({ status: "admitted", reviewWorkId: "work-review-621", requiredAction: "none" });
-    expect(updates).toEqual([[
-      "work-parent",
-      { role: "architect", agentId: "system-pr-review-rule" },
-      { appendCompletionDependsOn: ["work-review-621"] },
-    ]]);
+    // idea-640 hotfix: the projection reaches the substrate through the SYSTEM-PROJECTION SEAM,
+    // whose signature is (workId, relation, edgeWorkId) — no actor and no mutation object, which is
+    // precisely what stops the live-row exemption from ever carrying a `set`.
+    expect(updates).toEqual([["work-parent", "appendCompletionDependsOn", "work-review-621"]]);
     expect(completed).toEqual([["work-parent", "anonymous-engineer", "tok-abc", evidence, undefined]]);
   });
 

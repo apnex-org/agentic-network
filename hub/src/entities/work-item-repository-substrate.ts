@@ -54,7 +54,7 @@ import type {
   ReviseWorkResultV4,
   CurrentWorkProjectionV4,
 } from "./work-item.js";
-import { ALL_WORK_ITEM_VERBS, DEFAULT_STATE_DURATIONS, evaluateCompletionGate } from "./work-item.js";
+import { ALL_WORK_ITEM_VERBS, DEFAULT_STATE_DURATIONS, PR_REVIEW_PROJECTION_AUTHOR_AGENT_ID, evaluateCompletionGate } from "./work-item.js";
 import { SubstrateCounter } from "./substrate-counter.js";
 import { withAdvisoryLock, LOCK_CLASS } from "../storage-substrate/advisory-lock.js";
 import { decodeEnvelopeToFlat } from "./shape-helpers.js";
@@ -993,8 +993,74 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       appendReferences?: WorkItemReference[];
     },
   ): Promise<{ before: WorkItem; after: WorkItem }> {
-    const activePin = this.currentness.currentPin();
-    if (!activePin) return this.withWriterFence(() => this.updateWorkItem(workId, actor, mutation));
+    // The PUBLIC seam. Signature deliberately UNCHANGED and carrying no bypass flag: `update_work`
+    // lists appendCompletionDependsOn in TOP_LEVEL_PARAMS (work-item-policy.ts:826), so any opt-out
+    // parameter here would be caller-suppliable and would hand every caller a live-row claimant edit.
+    // The writer fence is entered HERE, at the public boundary, not inside the shared impl — the
+    // currentness inventory guard reads this method's own source and must be able to see it.
+    if (!this.currentness.currentPin()) return this.withWriterFence(() => this.updateWorkItem(workId, actor, mutation));
+    return this.applyWorkItemMutation(workId, actor, mutation, false);
+  }
+
+  /**
+   * 🔴 THE SYSTEM-PROJECTION SEAM. NOT a tool, NOT registered on the router, NOT reachable by any
+   * agent-supplied argument — the only callers are Hub's own review-obligation projections.
+   *
+   * WHY IT EXISTS: `complete_work` projects a review obligation onto the row being completed by
+   * appending a completionDependsOn edge (pr-review-workitem-projection.ts appendRelation). The
+   * three-tier gate counts EVERY edge append as claimant-authority-significant and requires the row
+   * to be SUSPENDED — but a row being completed is BY DEFINITION LIVE. Shipping that predicate
+   * blocked every PR-evidence completion fleet-wide, plus the inbound repo-event review projection,
+   * which use two different relations through this one path.
+   *
+   * WHY IT IS NOT A HOLE: the gate's own RATIONALE is "an executor working to a runbook must not
+   * have it change mid-turn." This edge is appended SYNCHRONOUSLY BY THE HOLDER'S OWN complete_work
+   * CALL, as the completion gate they are themselves invoking — it cannot surprise the holder,
+   * because the holder caused it. The rationale never reached this case; the predicate over-reached
+   * past it. So the exemption is scoped to THE SEAM, never to the RELATION: exempting
+   * appendCompletionDependsOn generally would reopen live-row edits for every public caller.
+   *
+   * WHAT IT CANNOT DO, STRUCTURALLY RATHER THAN BY POLICY: it builds its own mutation from a
+   * relation + one id, so there is NO `set` to pass. The system principal cannot move targetRef,
+   * runbook, payload or roleEligibility on a live row through here even by mistake — that is not a
+   * check that could be forgotten, it is an argument that does not exist.
+   *
+   * EVERY OTHER PROTECTION STILL APPLIES: writer fence, failed-seal refusal, generation currentness,
+   * terminal refusal, append-only set semantics and the single-shot CAS. Only the LIVE-row tier
+   * refusal is skipped.
+   */
+  async appendSystemProjectionEdge(
+    workId: string,
+    relation: "appendDependsOn" | "appendCompletionDependsOn",
+    edgeWorkId: string,
+  ): Promise<{ before: WorkItem; after: WorkItem }> {
+    if (!this.currentness.currentPin()) {
+      return this.withWriterFence(() => this.appendSystemProjectionEdge(workId, relation, edgeWorkId));
+    }
+    const mutation = relation === "appendCompletionDependsOn"
+      ? { appendCompletionDependsOn: [edgeWorkId] }
+      : { appendDependsOn: [edgeWorkId] };
+    return this.applyWorkItemMutation(
+      workId,
+      { role: "architect", agentId: PR_REVIEW_PROJECTION_AUTHOR_AGENT_ID },
+      mutation,
+      true,
+    );
+  }
+
+  private async applyWorkItemMutation(
+    workId: string,
+    actor: { agentId: string; role: string },
+    mutation: {
+      set?: { priority?: WorkItemPriority; targetRef?: { kind: string; id: string } | null; runbook?: string; payload?: unknown; roleEligibility?: string[] };
+      appendDependsOn?: string[];
+      appendCompletionDependsOn?: string[];
+      appendReferences?: WorkItemReference[];
+    },
+    systemProjectionSeam: boolean,
+  ): Promise<{ before: WorkItem; after: WorkItem }> {
+    // Both public entry points enter the fence before delegating here, so a pin is always active.
+    const activePin = this.currentness.currentPin()!;
     const setKeys = Object.keys(mutation.set ?? {});
     const hasAppends = (mutation.appendDependsOn?.length ?? 0) + (mutation.appendCompletionDependsOn?.length ?? 0) + (mutation.appendReferences?.length ?? 0) > 0;
     if (setKeys.length === 0 && !hasAppends) {
@@ -1084,7 +1150,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     //   lease + suspended        -> MINOR tier                              -> ALLOWED (these fields)
     //   lease + NOT suspended    -> LIVE AND HELD                           -> REFUSED
     const suspendedForEdit = isSuspended(before);
-    if (changesClaimantAuthority && (activePin.mode === "generation" || (!!before.lease && !suspendedForEdit))) {
+    // systemProjectionSeam: see appendSystemProjectionEdge. Skips ONLY this tier refusal, and only
+    // for a mutation the seam built itself (no `set` can reach here from that path).
+    if (!systemProjectionSeam && changesClaimantAuthority && (activePin.mode === "generation" || (!!before.lease && !suspendedForEdit))) {
       throw new WorkGraphCurrentnessRejected(
         "workgraph.currentness.revision_required",
         activePin.mode === "generation"
