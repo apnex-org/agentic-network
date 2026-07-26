@@ -2227,10 +2227,29 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
           }
           const now = this.clock.now();
           const nowISO = now.toISOString();
+          // bug-384 — a RE-CLAIM BY THE SAME HOLDER PRESERVES THE FRESHNESS BASELINE.
+          //
+          // MECHANICS: if this agent is already in executorHistory, carry the earliest recorded
+          // `claimedAt` forward instead of resetting it. A DIFFERENT holder always resets — a new
+          // holder must never inherit a predecessor's baseline.
+          //
+          // RATIONALE: `claimedAt` and `expiresAt` are different things wearing similar names.
+          // `expiresAt` is the lease clock; `claimedAt` is the evidence-freshness baseline. Only
+          // the clock needs restarting on a re-claim, and resetting the baseline strands evidence
+          // the holder legitimately produced under an earlier lease of the SAME node — reachable
+          // by a pause/unpause (an operator verb) or a lease expiry (a timer with no actor).
+          //
+          // CONSEQUENCE: the window widens from "since your current lease" to "since you first
+          // took this node", which is what the rule was always trying to say. It does NOT widen
+          // across holders, and it cannot be influenced by the completer.
+          const priorFloor = priorLeaseFloorFor({ lease: { holder: agentId } as WorkItemLease, recallHistory: w.recallHistory });
+          const sameHolderReturning = w.executorHistory.includes(agentId);
           const lease: WorkItemLease = {
             holder: agentId,
             token: randomUUID(), // audit-4082 #1: fences a stale zombie-process re-read
-            claimedAt: nowISO,
+            claimedAt: sameHolderReturning && priorFloor !== null ? priorFloor : nowISO,
+            // DERIVED FROM `now`, NEVER FROM THE (possibly preserved) claimedAt — see LEASE_TTL_MS.
+            // Deriving it from a preserved claimedAt would mint an already-expired lease.
             expiresAt: new Date(now.getTime() + leaseTtlMsFor(w)).toISOString(),
             heartbeatAt: nowISO,
           };
@@ -3529,9 +3548,54 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       const nextCount = poisonEligible ? w.leaseExpiryCount + 1 : w.leaseExpiryCount;
       const poisoned = poisonEligible && nextCount >= poisonCap;
       const accrued = accrueExitingState(w, nowISO);
+      // bug-384 — RECORD THE LEASE THE TIMER IS ABOUT TO DESTROY.
+      //
+      // MECHANICS: before clearing `lease`, append a recallHistory entry carrying the expiring
+      // lease's holder and claimedAt. Reuses the EXISTING persisted shape rather than adding a
+      // second overlapping history. NO `pendingRecallIntent` is minted, so this fires no holder
+      // notice — notices are driven by pendingRecallIntents, never by scanning recallHistory.
+      //
+      // RATIONALE: expiry previously set `lease: null` and preserved NOTHING. It did not merely
+      // move the freshness baseline — IT DELETED THE RECORD, so the same-holder relief above had
+      // nothing to key on. That is the actorless route: no verb, no operator, just a clock, and
+      // the holder loses the admissibility of work they genuinely did.
+      //
+      // CONSEQUENCE: a holder whose lease lapses can re-claim and still submit artifacts produced
+      // under the lapsed lease. It does NOT help across holders, and it is not retroactive — rows
+      // whose lease expired before this shipped have no record to recover.
+      const expiringLease = w.lease;
+      const recallHistory = expiringLease
+        ? [...(w.recallHistory ?? []), {
+            operationId: `lease-expiry:${workId}:${expiringLease.token}`,
+            requestHash: hashCanonicalDomain("workitem-lease-expiry-v4", { workId, token: expiringLease.token, expiresAt: expiringLease.expiresAt }),
+            actor: { role: "system", agentId: "lease-expiry-sweeper" },
+            reason: `Lease lapsed at ${expiringLease.expiresAt} (holder ${expiringLease.holder}); row ${poisoned ? "poison-abandoned" : "re-queued to ready"}. Recorded so the holder's already-produced evidence stays admissible on re-claim (bug-384). No holder notice is projected for a timer lapse.`,
+            recalledAt: nowISO,
+            beforeStateHash: recallStateHash(w),
+            before: {
+              physicalId: w.id,
+              logicalId: legacyRevisionIdentity(w).logicalId,
+              revision: legacyRevisionIdentity(w).revision,
+              topologyGeneration: w.topologyGeneration ?? null,
+              phase: w.status as RecallBeforeStateV4["phase"],
+              resourceVersion: existing.resourceVersion,
+              stateHash: recallStateHash(w),
+              blockedOn: null,
+              lease: {
+                holder: expiringLease.holder,
+                claimedAt: expiringLease.claimedAt,
+                expiresAt: expiringLease.expiresAt,
+                heartbeatAt: expiringLease.heartbeatAt,
+                tokenFingerprint: tokenFingerprint(expiringLease.token),
+              },
+            } as RecallBeforeStateV4,
+            frozenAuthority: this.deriveFrozenRecallAuthority(w),
+            holderNoticeIntentId: null,
+          } as RecallHistoryEntryV4]
+        : (w.recallHistory ?? []);
       const next: WorkItem = poisoned
-        ? { ...w, status: "abandoned", lease: null, blockedOn: null, leaseExpiryCount: nextCount, ...accrued, updatedAt: nowISO }
-        : { ...w, status: "ready", lease: null, blockedOn: null, leaseExpiryCount: nextCount, ...accrued, updatedAt: nowISO };
+        ? { ...w, status: "abandoned", lease: null, blockedOn: null, leaseExpiryCount: nextCount, recallHistory, ...accrued, updatedAt: nowISO }
+        : { ...w, status: "ready", lease: null, blockedOn: null, leaseExpiryCount: nextCount, recallHistory, ...accrued, updatedAt: nowISO };
       const result = await this.substrate.putIfMatch(KIND, next, existing.resourceVersion);
       if (result.ok) return poisoned ? "abandoned" : "requeued";
       // revision-mismatch → re-read + re-check (a concurrent renew may now make it not-expired)
