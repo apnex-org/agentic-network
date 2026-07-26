@@ -573,6 +573,14 @@ export interface WorkItem {
    *  in work-87 (idempotency rides the deterministic id, not a query) — cleanup-by-runId
    *  query is a deferred follow-on. */
   blueprintRunId?: string;
+  /** bug-383 — SERVER-STAMPED projection provenance. Written ONLY by a Hub projection reconciler
+   *  via `createBlueprintNode`; absent on every caller-authored row. `createWorkItem` (the
+   *  `create_work` path) does not accept it and it is NOT in `update_work`'s `ALLOWED_SET`, so no
+   *  caller-facing verb can write or alter it. It exists so an AUTHORITY decision
+   *  (`isProjectedPrReviewObligation` → the attestation carve-out) rests on a value its subject
+   *  cannot write. DELIBERATELY NOT INSIDE `payload`: `payload` is caller-writable on both write
+   *  paths, which is the whole of bug-383. Spec (intent), default-partitioned in the envelope. */
+  systemProjection?: { ruleId: string };
   /** Mission-140 immutable physical-revision identity. Legacy rows omit these
    *  fields and project logicalId=id/revision=1 without write-on-read. Contract
    *  and topology hashes are outputs of node-contract-v4/node-topology-v4,
@@ -665,22 +673,75 @@ export interface WorkItem {
  * `attest_evidence` tail (attest advances review→done when the gate flips true, no re-poke) — and
  * adds the hard fence (executor evidence cannot satisfy a `verifier-attestation` requirement).
  */
+/** bug-383 — the rule id stamped by the PR-review projection reconciler, server-side, at mint.
+ *  This is the ONLY value that opens the attestation carve-out on a new row. */
+export const PR_REVIEW_PROJECTION_RULE_ID = "pr_evidence_admission_review_gate_v0";
+
+/** bug-383 — the Hub-derived author of a projected PR-review obligation. `createdBy` is stamped
+ *  from the resolved session (`resolveCreatedBy`) on every caller-facing create path, so a caller
+ *  cannot supply it. Used ONLY by the bounded legacy branch below. */
+const PR_REVIEW_PROJECTION_AUTHOR_AGENT_ID = "system-pr-review-rule";
+
 /**
- * bug-377 — a PR-review obligation projected from a PR (`obligationKind`
- * `github_pr_review_request`). Identified by the projection's OWN payload marker rather than by
- * `type` or by `evidenceAuthority`, so the carve-out below cannot widen to any other node kind:
- * only a row the projection rule itself minted can match.
+ * bug-377 / bug-383 — is this row a PR-review obligation that the projection rule ITSELF minted?
+ *
+ * bug-383 (verifier-found, source-derived, deliberately not demonstrated) — this predicate used to
+ * key on `payload.obligationKind` alone. `payload` is CALLER-WRITABLE on BOTH write paths:
+ * `create_work` passes `args.payload` through untouched (`z.unknown()`, no coercion), and
+ * `update_work` carries `payload` in `ALLOWED_SET`. So ANY author could mint the marker on their
+ * own row and have EVERY `verifier-attestation` requirement skipped — a self-attestation bypass.
+ *
+ * MEASURED, first-party, against the pre-fix predicate: ONE `create_work` call carrying an OBJECT
+ * payload `{obligationKind:"github_pr_review_request"}` plus a `verifier-attestation` requirement
+ * returned `attestationReqsSatisfied: true`. The bypass needed NO `update_work` and no `ready`
+ * window — the belief that `create_work` was defended (because it "stores payload as a JSON
+ * string") was reading a caller's HABIT of passing strings as a control. It stores whatever it is
+ * given.
+ *
+ * MECHANICS: the carve-out now opens on `systemProjection.ruleId`, written ONLY by the projection
+ * reconciler through `createBlueprintNode`. `createWorkItem` (the `create_work` path) does not
+ * accept the field, and it is absent from `update_work`'s `ALLOWED_SET`, so NEITHER caller-facing
+ * verb can write or alter it. Authority and stamp share an origin.
+ *
+ * RATIONALE: an authority decision must not rest on a field its subject can write. Keying on a
+ * caller-declared value is bug-376's shape (payload-declared `provenance` beating an authorship
+ * check) wearing a different field name.
+ *
+ * CONSEQUENCE: rows projected BEFORE this shipped carry no `systemProjection`. They are admitted
+ * by a bounded legacy branch — the payload marker AND a Hub-derived `createdBy.agentId`. Without
+ * it every such row would lose the carve-out and become permanently unfinishable, wedging its
+ * parent forever (`completionDependsOn` clears only on `done`) — precisely the trap bug-377 fixed.
+ * The legacy branch is strictly narrower than what it replaces and cannot be reached by writing
+ * `payload` alone. Its residual is named in the closeout: it trusts that no agent is registered
+ * under the reserved id `system-pr-review-rule`.
+ *
+ * NOT CLOSED: the general class — a caller-declared field deciding an authority question — is
+ * closed HERE, on THIS predicate, and nowhere else.
  */
 export function isProjectedPrReviewObligation(
-  item: Pick<WorkItem, "payload">,
+  item: Pick<WorkItem, "payload" | "systemProjection" | "createdBy">,
 ): boolean {
+  if (item.systemProjection?.ruleId === PR_REVIEW_PROJECTION_RULE_ID) return true;
+  // Bounded legacy branch — pre-fix rows only. BOTH conjuncts required: the payload marker is
+  // caller-writable, so it is never sufficient on its own; `createdBy` is Hub-derived.
+  if (item.createdBy?.agentId !== PR_REVIEW_PROJECTION_AUTHOR_AGENT_ID) return false;
   const payload = item.payload;
   if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return false;
   return (payload as Record<string, unknown>).obligationKind === "github_pr_review_request";
 }
 
 export function evaluateCompletionGate(
-  item: Pick<WorkItem, "evidenceRequirements" | "attestations" | "payload">,
+  // bug-383 — HOW THE CARVE-OUT INPUTS ARE ENFORCED, stated accurately because the obvious
+  // reading is wrong. `Pick` PRESERVES OPTIONALITY: `systemProjection?:` and `createdBy?:` are
+  // optional on WorkItem, so they stay optional here and a hand-built object literal can OMIT
+  // them and still compile. MEASURED on this change: the `attest_evidence` tail did exactly
+  // that, passing a 3-field literal that silently supplied `undefined` for both and closed the
+  // carve-out on a legitimately projected row. Widening the type to required KEYS does not fix
+  // it either — a whole `WorkItem` then stops being assignable, because `payload?:` is optional.
+  // SO THE TYPE CANNOT CARRY THIS GUARANTEE. Every call site instead passes the WHOLE ROW
+  // (spreading it where a field must be overridden), and the both-call-sites property is held by
+  // TEST, not by the compiler. Do not "simplify" a call site back to a field-by-field literal.
+  item: Pick<WorkItem, "evidenceRequirements" | "attestations" | "payload" | "systemProjection" | "createdBy">,
 ): { attestationReqsSatisfied: boolean; pendingAttestationReqs: string[] } {
   // bug-377 CARVE-OUT — a PR-review obligation is ONE PERSON'S TASK.
   //
@@ -777,6 +838,9 @@ export interface IWorkItemStore {
     /** W1 (idea-446 / work-181): born-native backstop — the blueprint declares the node's pulse. */
     nodeConfig?: NodeConfig;
     createdBy?: EntityProvenance;
+    /** bug-383: server-stamped projection provenance. A repository-level input with NO
+     *  caller-facing handler forwarding it — that is what makes the marker unforgeable. */
+    systemProjection?: { ruleId: string };
   }): Promise<{ item: WorkItem; created: boolean }>;
 
   /** work-87 (seed_blueprint): hard-delete a WorkItem by id. INTERNAL — the

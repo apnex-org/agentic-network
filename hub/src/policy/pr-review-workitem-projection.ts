@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { EvidenceRequirement, IWorkItemStore, WorkItem, WorkItemReference } from "../entities/work-item.js";
+import { PR_REVIEW_PROJECTION_RULE_ID } from "../entities/work-item.js";
 import {
   PR_EVIDENCE_REVIEW_GATE_RULE_ID,
   PR_EVIDENCE_REVIEW_REQUIRED_EVENT_TYPE,
@@ -324,6 +325,11 @@ export async function reconcilePrReviewProjection(args: {
     references: projectionReferences({ sourceMessageId: args.sourceMessageId, binding, prUrl: spec.payload.prUrl }),
     evidenceRequirements: spec.evidenceRequirements as EvidenceRequirement[],
     createdBy: { role: "architect", agentId: "system-pr-review-rule" },
+    // bug-383: THE stamp. This reconciler is the only writer of `systemProjection`, and it is
+    // what `isProjectedPrReviewObligation` reads to open the attestation carve-out. It is
+    // deliberately NOT taken from `spec.payload` — `payload` is caller-writable on both write
+    // paths, so a marker living there decides an authority question the subject can answer.
+    systemProjection: { ruleId: PR_REVIEW_PROJECTION_RULE_ID },
   });
 
   try {

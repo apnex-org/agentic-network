@@ -1053,6 +1053,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
      *  node's pulse so a charter is node-native at birth (proof-1 anti-skip). */
     nodeConfig?: NodeConfig;
     createdBy?: EntityProvenance;
+    /** bug-383: server-stamped projection provenance. Reachable ONLY from a Hub reconciler —
+     *  this is a repository method, not a verb, and no caller-facing handler forwards it. */
+    systemProjection?: { ruleId: string };
   }): Promise<{ item: WorkItem; created: boolean }> {
     const activePin = this.currentness.currentPin();
     if (!activePin) return this.withWriterFence((pin) => { this.currentness.assertCreateAllowed(pin); return this.createBlueprintNode(input); });
@@ -1072,6 +1075,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       payload: input.payload,
       blueprintRunId: input.blueprintRunId,
       ...(input.nodeConfig ? { nodeConfig: input.nodeConfig } : {}),
+      // bug-383: server-stamped projection provenance, omitted entirely when absent so a
+      // caller-authored row never carries the key at all.
+      ...(input.systemProjection ? { systemProjection: input.systemProjection } : {}),
       status: "ready",
       lease: null,
       evidence: [],
@@ -3347,7 +3353,11 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
           // bug-377: `payload` is load-bearing here — the PR-review carve-out keys on it. Passing a
           // narrowed literal without it would silently disable the carve-out on THIS edge only,
           // which is the one-rule-two-call-sites failure this codebase keeps producing.
-          const gate = evaluateCompletionGate({ evidenceRequirements: w.evidenceRequirements, attestations, payload: w.payload });
+          // bug-383: pass the WHOLE ROW with only `attestations` overridden. The previous
+          // field-by-field literal silently omitted `systemProjection`/`createdBy` — `Pick` keeps
+          // them optional, so it compiled — and a projected PR-review row discharging through
+          // THIS edge lost its carve-out. A spread cannot forget a field that is added later.
+          const gate = evaluateCompletionGate({ ...w, attestations });
           let executorDone = false;
           try {
             executorDone = evaluateEvidence(w.evidenceRequirements, w.evidence, w.lease, w.type === "verifier-gate", new Set(w.evidence.map(evidenceKey)), priorLeaseFloorFor(w)).nextPhase === "done";
