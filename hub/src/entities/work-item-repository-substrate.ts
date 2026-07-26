@@ -1039,22 +1039,30 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // CONSEQUENCE: the generation freeze is UNCHANGED and still absolute. What changes is that a
     // SUSPENDED row is now editable in a bounded way instead of being frozen outright, and a LIVE row
     // is refused for a reason that names the remedy.
-    const suspendedForEdit = isSuspended(before);
-    const fullEditTier = suspendedForEdit && !before.lease;
-    if (changesClaimantAuthority && (activePin.mode === "generation" || !fullEditTier)) {
+    // idea-640 / nodefix0 — BEHAVIOUR-PRESERVING ONLY. `before.status === "paused"` became
+    // `isSuspended(before)`, and NOTHING ELSE CHANGED HERE.
+    //
+    // 🔴 THE THREE-TIER PREDICATE IS DELIBERATELY NOT BUILT AT THIS SITE, AND THE REASON IS A CONFLICT
+    // BETWEEN TWO RATIFIED DECISIONS, NOT AN IMPLEMENTATION GAP.
+    //
+    // decision-11 (work-136/idea-419 v1.0), executable as update-work-mutability-table.test.ts:
+    //     targetRef — PRE-TERMINAL **EXCEPT PAUSED**;  runbook/payload/roleEligibility — PRE-CLAIM only
+    // idea-640's three-tier model:
+    //     live -> nothing;  suspended + lease -> minor;  suspended + no lease -> anything
+    //
+    // THEY ARE INVERTED ON `targetRef`: decision-11 makes it editable while LIVE and frozen while
+    // PAUSED; idea-640 makes suspension the state in which editing becomes possible. Implementing the
+    // tiers here would silently overturn a ratified, executable contract — 84 test failures measured, of
+    // which the mutability table is the load-bearing set, because A RED ROW THERE IS A CONTRACT
+    // VIOLATION, NOT A STALE ASSERTION.
+    //
+    // Adapting the mechanism (status -> attribute) preserves decision-11 exactly under the new model and
+    // keeps the freeze from VANISHING SILENTLY, which is the failure the ratification specifically
+    // warned about. Choosing between the two contracts is a governance decision and is escalated.
+    if (changesClaimantAuthority && (activePin.mode === "generation" || isSuspended(before))) {
       throw new WorkGraphCurrentnessRejected(
         "workgraph.currentness.revision_required",
-        activePin.mode === "generation"
-          ? `update rejected: ${workId} claimant contract/topology is frozen by active generation ${activePin.head.generation}; create a semantic revision`
-          : !suspendedForEdit
-            ? `update rejected: ${workId} is LIVE (status=${before.status}); a claimant contract may not move under its holder.\n` +
-              `MECHANICS: claimant-significant fields (targetRef/runbook/payload/roleEligibility) and edge appends require the row to be suspended.\n` +
-              `RATIONALE: an executor working to a runbook must not have it change mid-turn; suspending first makes the edit visible to the holder and reversible by the controller.\n` +
-              `CONSEQUENCE: pause the row, then edit. Nothing has been changed by this call.`
-            : `update rejected: ${workId} is suspended but STILL LEASED — that is the MINOR edit tier.\n` +
-              `MECHANICS: with the lease intact, only the scalar mutable set is editable. Claimant-contract and edge edits need the FULL tier, which requires the lease to be revoked.\n` +
-              `RATIONALE: the holder still owns this row; revoking their lease is a decision that should be taken deliberately, not implied by an edit.\n` +
-              `CONSEQUENCE: \`reset\` the suspended row to revoke the lease, then edit. Nothing has been changed by this call.`,
+        `update rejected: ${workId} claimant contract/topology is frozen ${isSuspended(before) ? "while suspended" : `by active generation ${activePin.mode === "generation" ? activePin.head.generation : "unknown"}`}; create a semantic revision`,
       );
     }
     const preClaim = before.status === "ready";
