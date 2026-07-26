@@ -2554,15 +2554,48 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
           frozenAuthority,
           holderNoticeIntentId,
         };
-        const notice: PendingRecallIntentV4 | null = w.lease ? {
-          intentId: holderNoticeIntentId!,
+        // 🔴 work-540 — THE AUTHOR IS NOTIFIED TOO, AND ONE AGENT NEVER GETS TWO NOTICES.
+        //
+        // Director-ratified: pause = set suspended + stop both clocks + notify the holder AND the
+        // author. The holder half already existed. The author half is what makes the notification
+        // COMPLETE rather than merely present:
+        //   - a row suspended from `ready` HAS NO HOLDER, so the holder channel notifies NOBODY.
+        //     That is the case the Director asked for and the one the old code silently skipped —
+        //     `w.lease ? notice : null` produced no notice at all, and nothing said so.
+        //   - holder and author are OFTEN THE SAME AGENT, so a naive second notice would double-send.
+        //
+        // DE-DUPE IS ON agentId AND IS THE POINT, not a nicety: two notices for one pause read as two
+        // pauses to anyone counting them, and `recallNoticePending` is a boolean the reader trusts.
+        // Built as a Map keyed by recipient so the de-dupe is STRUCTURAL — you cannot add a duplicate
+        // recipient to it, rather than remembering to check before pushing.
+        //
+        // The intentId is hashed over the RECIPIENT as well as the operation, so the holder notice
+        // and the author notice are distinct records with distinct idempotency keys; re-running the
+        // same pause reproduces both exactly.
+        const noticeFor = (recipient: string, kind: "holder" | "author"): PendingRecallIntentV4 => ({
+          intentId: hashCanonicalDomain("workitem-recall-notice-v4", {
+            physicalId: w.id, operationId: request.operationId,
+            exactHolder: recipient, beforeStateHash: stateHash,
+          }),
           operationId: request.operationId,
-          exactHolderAgentId: w.lease.holder,
+          exactHolderAgentId: recipient,
+          recipientKind: kind,
           beforeStateHash: stateHash,
           createdAt: nowISO,
           projectedMessageId: null,
           projectedAt: null,
-        } : null;
+        });
+        const recipients = new Map<string, PendingRecallIntentV4>();
+        if (w.lease) recipients.set(w.lease.holder, noticeFor(w.lease.holder, "holder"));
+        const authorAgentId = w.createdBy?.agentId;
+        // The holder wins the slot when they are also the author: the holder notice carries the
+        // pre-existing intentId shape that `recall-notice-projector` and its tests already assert on,
+        // and the author learns the same fact from the same message.
+        if (authorAgentId && !recipients.has(authorAgentId)) {
+          recipients.set(authorAgentId, noticeFor(authorAgentId, "author"));
+        }
+        const notices: PendingRecallIntentV4[] = [...recipients.values()];
+        const notice: PendingRecallIntentV4 | null = w.lease ? recipients.get(w.lease.holder)! : null;
         return {
           ...w,
           // idea-640 / nodefix0 — SUSPENSION IS AN ATTRIBUTE, NOT A PHASE. Director-ratified.
@@ -2603,8 +2636,12 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
           // by the same-holder `claimedAt` preservation in claimWorkItem (:2251). This does not fix that.
           blockedOn: null,
           recallHistory: [...(w.recallHistory ?? []), history],
-          pendingRecallIntents: notice ? [...(w.pendingRecallIntents ?? []), notice] : (w.pendingRecallIntents ?? []),
-          recallNoticePending: notice ? true : (w.recallNoticePending ?? false),
+          pendingRecallIntents: [...(w.pendingRecallIntents ?? []), ...notices],
+          // work-540: ANY unprojected notice makes this true, not just the holder's. Keyed on
+          // `notice` alone, an author-only notice (a row suspended from `ready`, which has no
+          // holder) would sit in pendingRecallIntents while this flag said nothing was pending —
+          // the notice would exist and the projector's own trigger would not fire for it.
+          recallNoticePending: notices.length > 0 ? true : (w.recallNoticePending ?? false),
           ...accrueExitingState(w, nowISO),
           updatedAt: nowISO,
         };

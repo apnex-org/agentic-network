@@ -77,8 +77,13 @@ describe("pause/recall-v4 authority and exact state", () => {
     // one paused row while every live row stays plaintext would be a control that looks like protection
     // and delivers none. Filed as a separate bug, OUT of this arc's bound; NOT fixed or claimed here.
     expect(JSON.stringify(paused.recallHistory)).not.toContain(token);
-    expect(paused.pendingRecallIntents).toHaveLength(1);
-    expect(paused.pendingRecallIntents![0]).toMatchObject({ exactHolderAgentId: HOLDER, operationId: "pause-op-1", projectedMessageId: null });
+    // work-540: the HOLDER notice is unchanged — same shape, same intentId derivation. The author
+    // notice is additional, and asserted by identity rather than by position so this does not depend
+    // on array order.
+    expect(paused.pendingRecallIntents).toHaveLength(2);
+    const holderIntent = paused.pendingRecallIntents!.find((i) => i.exactHolderAgentId === HOLDER)!;
+    expect(holderIntent).toMatchObject({ exactHolderAgentId: HOLDER, operationId: "pause-op-1", projectedMessageId: null, recipientKind: "holder" });
+    expect(paused.pendingRecallIntents!.some((i) => i.recipientKind === "author"), "the author is notified too").toBe(true);
     expect(paused.recallNoticePending).toBe(true);
   });
 
@@ -257,8 +262,17 @@ describe("pause/recall-v4 authority and exact state", () => {
 
 describe("pause/recall-v4 exact-holder outbox", () => {
   it("is persist-first, exact-agent-only, restart-idempotent across the after-message crash gap", async () => {
-    const { substrate, repo, item } = await fixture(); const token = await driveBlocked(repo, item.id);
+    // 🔴 work-540: AUTHOR == HOLDER here, DELIBERATELY. This test's subject is the projector's
+    // persist-first / restart-idempotent behaviour across a crash gap, which is a PER-INTENT
+    // property — a second recipient would multiply the failpoint trace and the error count without
+    // testing anything the first intent does not already prove.
+    // AND IT DOUBLES AS THE DE-DUPE PROOF: one agent is both holder and author, and the assertions
+    // below require EXACTLY ONE notice and EXACTLY ONE message. If the de-dupe regressed, this test
+    // reds on `toHaveLength(1)` before the projector is even reached.
+    const { substrate, repo, item } = await fixture({ role: "engineer", agentId: HOLDER });
+    const token = await driveBlocked(repo, item.id);
     await repo.pauseWork(request(item.id), ARCH);
+    expect((await repo.getWorkItem(item.id))!.pendingRecallIntents, "holder==author -> ONE notice").toHaveLength(1);
     const messages = new MessageRepositorySubstrate(substrate);
     const firstTrace: RecallProjectorTraceEntry[] = [];
     const first = await projectPendingRecallNotices(ctx(messages), repo, {
