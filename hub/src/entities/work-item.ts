@@ -1036,6 +1036,16 @@ export interface IWorkItemStore {
   /** Scalar paused→ready compatibility. */
   unpauseWork(request: UnpauseWorkRequestV4, actor: { agentId: string; role: string }): Promise<WorkItem | null>;
 
+  /** idea-640 scope reset: architect/Director only, SUSPENDED rows only. Revokes the lease and
+   *  nullifies submitted evidence, LEAVING THE ROW PAUSED — a scope change, not a lifecycle move.
+   *  It is the sanctioned gateway to the FULL edit tier (`suspended` + no lease + evidence-free).
+   *
+   *  🔴 work-552: THIS DECLARATION IS THE DEFECT THAT SHIPPED. `resetWork` was implemented on the
+   *  substrate and advertised by `getLegalMoves`, but never crossed THIS interface — so no policy
+   *  handler could call it and no tool could expose it. The verb existed and was unreachable.
+   *  tsc was silent because an undeclared method nothing references is not an error anywhere. */
+  resetWork(workId: string, actor: { agentId: string; role: string }): Promise<WorkItem | null>;
+
   /** Mission-140 persist-first exact-holder recall outbox projection support. */
   listPendingRecallNoticeItems(limit?: number): Promise<{ items: WorkItem[]; truncated: boolean }>;
   markRecallNoticeProjected(workId: string, intentId: string, messageId: string): Promise<WorkItem | null>;
