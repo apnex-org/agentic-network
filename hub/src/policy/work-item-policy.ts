@@ -928,13 +928,44 @@ async function updateWork(args: Record<string, unknown>, ctx: IPolicyContext): P
     if (problem) return err("unresolvable_ref", `update rejected: ${problem}`);
   }
 
+  // 🔴 work-560 — RESOLVE THE HOLDER FOR THE SUBSTRATE'S GUARD. THIS LAYER RESOLVES; IT DOES NOT DECIDE.
+  //
+  // The eligibility invariant lives on the ROW, so the refusal lives in the substrate (see
+  // updateWorkItem's JSDoc). But `lease.holder` is an agentId and `roleEligibility` is role strings,
+  // and only THIS layer can bridge them — the substrate has no registry handle (the wall this file's
+  // sibling documents at :1946 for quarantine). So the mapping happens here and the ENFORCEMENT
+  // happens there. Deliberately NOT a check: if this function returned a verdict, a substrate-direct
+  // caller would bypass it, which is the whole reason work-554 refused to build the guard here.
+  //
+  // Resolved ONLY when `roleEligibility` is actually being set — every other update keeps its current
+  // cost and touches no registry.
+  //
+  // NO LIVENESS FILTER, ARCHITECT-RULED: `getAgent` recomputes liveness on read, but an OFFLINE holder
+  // is a normal transient state and is still the rightful holder. Gating on reachability would strand
+  // any node whose holder is momentarily disconnected.
+  //
+  // A holder that does not resolve leaves this `null`, and the substrate FAILS CLOSED on it — but ONLY
+  // when the edit could actually orphan the holder. That predicate ("can this narrow past them?") lives
+  // in the substrate and is DELIBERATELY NOT REPLICATED HERE. Restating it would create two definitions
+  // of when the guard applies, drifting apart one edit at a time with a green suite throughout — the
+  // exact defect (bug-390, bug-392) this arc has spent the day deduping. This layer answers one
+  // question, "who holds it and what is their role", and lets the row's own guard decide.
+  let resolvedHolder: { agentId: string; role: string } | null = null;
+  if (set.roleEligibility !== undefined) {
+    const holderId = (await store.getWorkItem(workId))?.lease?.holder;
+    if (holderId) {
+      const holderAgent = await ctx.stores.engineerRegistry.getAgent(holderId);
+      if (holderAgent?.role) resolvedHolder = { agentId: holderId, role: holderAgent.role };
+    }
+  }
+
   try {
     const { before, after } = await store.updateWorkItem(workId, { agentId: caller.agentId, role: caller.role }, {
       set: Object.keys(set).length ? set : undefined,
       appendDependsOn: appendDependsOn.length ? appendDependsOn : undefined,
       appendCompletionDependsOn: appendCompletionDependsOn.length ? appendCompletionDependsOn : undefined,
       appendReferences: appendReferences.length ? appendReferences : undefined,
-    });
+    }, resolvedHolder);
     // The contract's loudness: one audit entry per accepted call, before→after
     // per touched field...
     const changes: Record<string, { before: unknown; after: unknown }> = {};

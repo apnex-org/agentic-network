@@ -850,6 +850,14 @@ export interface IWorkItemStore {
       appendCompletionDependsOn?: string[];
       appendReferences?: WorkItemReference[];
     },
+    /**
+     * work-560: the current lease holder + their role, resolved by the policy layer (which owns the
+     * agent registry; this layer does not). Carries the agentId WITH the role so the implementation
+     * can verify the resolution describes the holder it is actually enforcing against and REFUSE if
+     * the lease moved in between — a wrong answer is not caught by fail-closed-on-absent.
+     * Omitted/null = UNRESOLVED, which is FAIL-CLOSED for a roleEligibility edit on a leased row.
+     */
+    resolvedHolder?: { agentId: string; role: string } | null,
   ): Promise<{ before: WorkItem; after: WorkItem }>;
 
   /** work-87 (seed_blueprint): create ONE blueprint node at a DETERMINISTIC id (the run-key
