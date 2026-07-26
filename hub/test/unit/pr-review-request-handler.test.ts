@@ -266,6 +266,7 @@ describe("PR review request handler", () => {
       },
       createBlueprintNode: async (input: unknown) => ({ item: { id: "work-prrev-created", status: "ready", payload: (input as { payload?: unknown }).payload }, created: true }),
       updateWorkItem: async (id: string) => ({ before: { id }, after: { id } }),
+      appendSystemProjectionEdge: async (id: string) => ({ before: { id }, after: { id } }),
     };
     const ctx = makeCtx([makeAgent("agent-lily", "architect", "apnex-lily")], workItem);
 
@@ -308,6 +309,7 @@ describe("PR review request handler", () => {
         return { item: { id: "work-prrev-created", status: "ready", payload: (input as { payload?: unknown }).payload }, created: true };
       },
       updateWorkItem: async (id: string) => ({ before: { id }, after: { id } }),
+      appendSystemProjectionEdge: async (id: string) => ({ before: { id }, after: { id } }),
     };
     const ctx = makeCtx([makeAgent("agent-lily", "architect", "apnex-lily")], workItem);
 
@@ -366,6 +368,7 @@ describe("PR review request handler", () => {
       listWorkItems: async () => ({ items: [bindingItem], truncated: false }),
       createBlueprintNode: async () => { throw new Error("must not materialize without eligibility"); },
       updateWorkItem: async () => { throw new Error("must not append relation without eligibility"); },
+      appendSystemProjectionEdge: async () => { throw new Error("must not append relation without eligibility"); },
     };
     const ctx = makeCtx([makeAgent("agent-lily", "architect", "apnex-lily")], workItem);
 
@@ -411,6 +414,7 @@ describe("PR review request handler", () => {
       listWorkItems: async () => ({ items: [bindingItem], truncated: false }),
       createBlueprintNode: async () => { throw new Error("must not materialize without deterministic last pusher"); },
       updateWorkItem: async () => { throw new Error("must not append relation without deterministic last pusher"); },
+      appendSystemProjectionEdge: async () => { throw new Error("must not append relation without deterministic last pusher"); },
     };
     const ctx = makeCtx([makeAgent("agent-lily", "architect", "apnex-lily")], workItem);
 
@@ -461,6 +465,7 @@ describe("PR review request handler", () => {
         return { item: { id: "work-prrev-created", status: "ready", payload: (input as { payload?: unknown }).payload }, created: true };
       },
       updateWorkItem: async (id: string) => ({ before: { id }, after: { id } }),
+      appendSystemProjectionEdge: async (id: string) => ({ before: { id }, after: { id } }),
     };
     const ctx = makeCtx([
       makeAgent("agent-greg", "engineer", "apnex-greg"),
@@ -527,6 +532,7 @@ describe("PR review request handler", () => {
         return { item: { id: "work-prrev-mission-kit", status: "ready", payload: (input as { payload?: unknown }).payload }, created: true };
       },
       updateWorkItem: async (id: string) => ({ before: { id }, after: { id } }),
+      appendSystemProjectionEdge: async (id: string) => ({ before: { id }, after: { id } }),
     };
     const ctx = makeCtx([
       makeAgent("agent-greg", "engineer", "apnex-greg"),
@@ -609,8 +615,10 @@ describe("PR review request handler", () => {
         createdNodes.push(input);
         return { item: { id: "work-prrev-created", status: "ready", payload: (input as { payload?: unknown }).payload }, created: true };
       },
-      updateWorkItem: async (id: string, actor: unknown, mutation: unknown) => {
-        updates.push({ id, actor, mutation });
+      // idea-640 hotfix: the reconciler now uses the SYSTEM-PROJECTION SEAM, which takes
+      // (workId, relation, edgeWorkId) and carries no mutation object at all.
+      appendSystemProjectionEdge: async (id: string, relation: unknown, edgeWorkId: unknown) => {
+        updates.push({ id, actor: relation, mutation: edgeWorkId });
         return { before: { id }, after: { id } };
       },
     };
@@ -624,7 +632,8 @@ describe("PR review request handler", () => {
     expect(payload.projectionDecision).toMatchObject({ action: "create_review_workitem" });
     expect(payload.materialization).toMatchObject({ materialized: true, created: true, relation: "appendDependsOn" });
     expect(createdNodes).toHaveLength(1);
-    expect(updates).toMatchObject([{ id: "work-target", mutation: { appendDependsOn: ["work-prrev-created"] } }]);
+    // seam signature: (workId, relation, edgeWorkId) — recorded into the same slots by the stub.
+    expect(updates).toMatchObject([{ id: "work-target", actor: "appendDependsOn", mutation: "work-prrev-created" }]);
   });
 
   it("keeps projection-key idempotency stable across redelivery with different source message ids", async () => {
@@ -636,6 +645,7 @@ describe("PR review request handler", () => {
       listWorkItems: async () => ({ items: [bindingItem], truncated: false }),
       createBlueprintNode: async (input: unknown) => ({ item: { id: "work-created", payload: (input as { payload?: unknown }).payload }, created: true }),
       updateWorkItem: async (id: string) => ({ before: { id }, after: { id } }),
+      appendSystemProjectionEdge: async (id: string) => ({ before: { id }, after: { id } }),
     };
     const ctx = makeCtx([makeAgent("agent-lily", "architect", "apnex-lily")], workItem);
     const firstMsg = wrapAsMessage(first);

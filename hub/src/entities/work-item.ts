@@ -706,7 +706,7 @@ export const PR_REVIEW_PROJECTION_RULE_ID = "pr_evidence_admission_review_gate_v
 /** bug-383 — the Hub-derived author of a projected PR-review obligation. `createdBy` is stamped
  *  from the resolved session (`resolveCreatedBy`) on every caller-facing create path, so a caller
  *  cannot supply it. Used ONLY by the bounded legacy branch below. */
-const PR_REVIEW_PROJECTION_AUTHOR_AGENT_ID = "system-pr-review-rule";
+export const PR_REVIEW_PROJECTION_AUTHOR_AGENT_ID = "system-pr-review-rule";
 
 /**
  * bug-377 / bug-383 — is this row a PR-review obligation that the projection rule ITSELF minted?
@@ -830,6 +830,17 @@ export interface IWorkItemStore {
    *  empty-mutation + terminal rejection, and the single-shot CAS
    *  (stale write → reject with the current version; caller re-reads).
    *  Returns {before, after} for the mutation audit. */
+  /** 🔴 SYSTEM-PROJECTION SEAM — Hub's own review-obligation projections ONLY. Never a tool, never
+   *  routed. Appends ONE structural edge, skipping the live-row tier refusal that would otherwise
+   *  block every PR-evidence completion (a row being completed is by definition LIVE). It takes a
+   *  relation + one id rather than a mutation, so there is NO `set` to pass: the exemption buys the
+   *  edge append and structurally nothing else. All other protections still apply. */
+  appendSystemProjectionEdge(
+    workId: string,
+    relation: "appendDependsOn" | "appendCompletionDependsOn",
+    edgeWorkId: string,
+  ): Promise<{ before: WorkItem; after: WorkItem }>;
+
   updateWorkItem(
     workId: string,
     actor: { agentId: string; role: string },

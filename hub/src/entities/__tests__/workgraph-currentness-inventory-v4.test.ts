@@ -6,6 +6,9 @@ import { WorkItemRepositorySubstrate } from "../work-item-repository-substrate.j
 /** Mission-140 mechanical inventory: adding a public WorkItem writer/read projection
  * without updating this table is a red test, not a prose-review dependency. */
 const WRITERS = [
+  // idea-640 hotfix: the system-projection seam is a PUBLIC WRITER and is held to the same
+  // fence standard as every other one — it is exempt from the live-row TIER refusal, nothing else.
+  "appendSystemProjectionEdge",
   "createWorkItem", "updateWorkItem", "createBlueprintNode", "deleteWorkItem",
   "claimWorkItem", "startWork", "blockWork", "resumeWork", "systemUnblock",
   "renewLease", "releaseWork", "abandonWork", "pauseWork", "unpauseWork",
