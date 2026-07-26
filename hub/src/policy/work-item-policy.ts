@@ -393,32 +393,6 @@ async function getCurrentWork(args: Record<string, unknown>, ctx: IPolicyContext
   } catch (e) { return mapVerbError(e); }
 }
 
-async function reviseWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
-  const store = ctx.stores.workItem;
-  if (!store) return err("not_wired", "WorkItem store is not available");
-  const caller = await resolveCreatedBy(ctx);
-  try {
-    const result = await store.reviseWork({
-      workId: args.workId as string | undefined,
-      logicalId: args.logicalId as string | undefined,
-      operationId: args.operationId as string,
-      reason: args.reason as string,
-      expectedGeneration: args.expectedGeneration as number,
-      expectedAffectedSet: args.expectedAffectedSet as string[] | undefined,
-      set: args.set as never,
-      dependsOn: args.dependsOn as string[] | undefined,
-      completionDependsOn: args.completionDependsOn as string[] | undefined,
-      references: args.references as WorkItemReference[] | undefined,
-    }, { agentId: caller.agentId, role: caller.role });
-    if (!result.operationReplay) {
-      for (const binding of result.current) {
-        const item = await store.getWorkItem(binding.physicalId);
-        if (item) await emitWorkUpdated(ctx, item, caller, ["semantic_revision", "topology_generation"]);
-      }
-    }
-    return ok(result);
-  } catch (e) { return mapVerbError(e); }
-}
 
 async function completeWork(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   const store = ctx.stores.workItem;
@@ -796,15 +770,20 @@ async function updateWork(args: Record<string, unknown>, ctx: IPolicyContext): P
   if (!store) return err("not_wired", "WorkItem store is not available");
   const caller = await resolveCreatedBy(ctx);
   const workId = args.workId as string;
-  const set = (args.set ?? {}) as { priority?: WorkItemPriority; targetRef?: { kind: string; id: string } | null; runbook?: string; payload?: unknown; roleEligibility?: string[] };
+  const set = (args.set ?? {}) as { priority?: WorkItemPriority; targetRef?: { kind: string; id: string } | null; runbook?: string; payload?: unknown; roleEligibility?: string[]; evidenceRequirements?: EvidenceRequirement[]; leaseWindowMs?: number };
   // Handler-level strictness (the bug-227 lesson: router.handle does not run
   // zod — the schema's .strict() only guards the MCP boundary). An unknown
   // set-key is the contract's own rejection row: status/evidence/type must
   // never be reachable through this verb.
-  const ALLOWED_SET = ["priority", "targetRef", "runbook", "payload", "roleEligibility"];
+  // idea-640: `evidenceRequirements` is FULL-tier-only and `leaseWindowMs` is coordination metadata.
+  // BOTH are listed here because this array is the SHAPE contract; the TIER rules are the substrate's
+  // (updateWorkItem owns authority + phase, this layer owns shape — the stated division). The
+  // misplacement affordance below reads this array rather than restating it, so both are covered
+  // automatically, which is exactly why the array is the single source rather than a second list.
+  const ALLOWED_SET = ["priority", "targetRef", "runbook", "payload", "roleEligibility", "evidenceRequirements", "leaseWindowMs"];
   const unknownKey = Object.keys(set).find((k) => !ALLOWED_SET.includes(k));
   if (unknownKey !== undefined) {
-    return err("invalid_arguments", `update rejected: unknown set field "${unknownKey}" — mutable via set: ${ALLOWED_SET.join("/")}; structural edges are explicit append params; type/evidenceRequirements/status are immutable via this verb`);
+    return err("invalid_arguments", `update rejected: unknown set field "${unknownKey}" — mutable via set: ${ALLOWED_SET.join("/")}; structural edges are explicit append params; type/status are immutable via this verb (evidenceRequirements is FULL-tier only: suspended, lease-revoked, evidence-free)`);
   }
   // 🔴 TOP-LEVEL MISPLACEMENT AFFORDANCE (mission-140 residue).
   //
@@ -823,8 +802,25 @@ async function updateWork(args: Record<string, unknown>, ctx: IPolicyContext): P
   // MESSAGE-ONLY. Nothing about what `update_work` permits changes — a request that was rejected
   // before is still rejected, and one that worked still works. Only the silent-no-op case, which
   // was never a legitimate success, now names the field and where it belongs.
+  // 🔴 idea-640 — `leaseWindowMs` REMOVED FROM THIS LIST, AND THE REMOVAL IS THE FIX.
+  //
+  // It was accepted here, validated below, and then NEVER FORWARDED to the store: the handler passes
+  // only {set, appendDependsOn, appendCompletionDependsOn, appendReferences}. Measured on the live
+  // driver: `update_work {set:{priority}, leaseWindowMs:3600000}` -> `changed:["priority"]` and the
+  // window stayed 15 minutes. Accepted, checked, DISCARDED WITHOUT A WORD.
+  //
+  // AND THE IRONY IS A MECHANISM, NOT A JOKE. This list exists SPECIFICALLY to kill silent no-ops —
+  // its own comment says a verb that accepts a request, reports success and does nothing is worse
+  // than one that refuses, written after exactly that cost mission-140 an arc. `leaseWindowMs` being
+  // INSIDE it is precisely why it was never flagged as misplaced. AN ALLOW-LIST OF "THINGS THAT ARE
+  // FINE" SILENTLY BECOMES AN ALLOW-LIST OF "THINGS NOBODY CHECKS".
+  //
+  // Removing it from here, now that it IS in ALLOWED_SET, makes the affordance below do the work with
+  // no new code: a top-level `leaseWindowMs` is now MISPLACED, and because it is settable the caller
+  // gets `did you mean "set.leaseWindowMs"?`. The guard that was granting the exemption now issues
+  // the refusal. LOUD, not silent — which was the whole requirement.
   const TOP_LEVEL_PARAMS = [
-    "workId", "set", "appendDependsOn", "appendCompletionDependsOn", "appendReferences", "leaseWindowMs",
+    "workId", "set", "appendDependsOn", "appendCompletionDependsOn", "appendReferences",
   ];
   const misplaced = Object.keys(args).filter((k) => !TOP_LEVEL_PARAMS.includes(k));
   if (misplaced.length > 0) {
@@ -919,7 +915,16 @@ async function updateWork(args: Record<string, unknown>, ctx: IPolicyContext): P
     }
     // ...and one work-updated event on the work-124 role-targeted path.
     await emitWorkUpdated(ctx, after, { agentId: caller.agentId, role: caller.role }, Object.keys(changes));
-    return ok({ workItem: after, changed: Object.keys(changes) });
+    // 🔴 idea-640 — THE ANNOUNCEMENT. `leaseWindowMs` takes effect at the NEXT renew, never on the
+    // lease already held (leaseTtlMsFor is read at claim/renew). A caller who is not told that will
+    // reasonably believe they just widened the window for the seat struggling RIGHT NOW, and be
+    // wrong for up to a full lease period. ACCEPTED-AND-DEFERRED IS ONLY HONEST IF IT IS ANNOUNCED —
+    // an unannounced deferral is a slower silent no-op, which is the exact defect this field fixes.
+    // The caller must not have to know the renewal semantics to understand what just happened.
+    const notices = set.leaseWindowMs !== undefined
+      ? [`leaseWindowMs updated to ${set.leaseWindowMs}ms; TAKES EFFECT AT THE NEXT RENEW — the current lease still expires at ${after.lease?.expiresAt ?? "(no active lease)"}`]
+      : undefined;
+    return ok({ workItem: after, changed: Object.keys(changes), ...(notices ? { notices } : {}) });
   } catch (e) {
     if (e instanceof TransitionRejected || e instanceof WorkGraphCurrentnessRejected) {
       return err("update_rejected", e.message);
@@ -1652,6 +1657,8 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
         runbook: z.string().optional(),
         payload: z.unknown().optional(),
         roleEligibility: z.array(z.string()).optional(),
+        evidenceRequirements: z.array(evidenceRequirementSchema).optional().describe("idea-640 FULL TIER ONLY: the anti-gameability contract. Editable ONLY on a SUSPENDED, lease-revoked row carrying NO evidence and NO attestationHistory — `reset` is the gateway BECAUSE it discards evidence first, so the contract can never be rewritten to fit evidence already submitted against it."),
+        leaseWindowMs: z.number().positive().optional().describe("idea-640: node-type-aware lease window in ms; coordination metadata, same tier as `priority` (editable on a LIVE row — it changes no claimant contract). TAKES EFFECT AT THE NEXT RENEW: the current lease keeps its expiresAt, because shortening a live window could expire a healthy holder mid-turn."),
       }).strict().optional().describe("Replace-semantics fields, per-field phase rules; UNKNOWN KEYS REJECT (strict)"),
       appendDependsOn: z.array(z.string()).optional().describe("Append claim-gate deps (while ready; existence+cycle checked)"),
       appendCompletionDependsOn: z.array(z.string()).optional().describe("Append completion-gate children in legacy non-paused mode (until done; existence+cycle checked); active-generation or paused rows require semantic revision"),
@@ -1821,30 +1828,6 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
     getCurrentWork,
   );
 
-  router.register(
-    "revise_work",
-    "[Any] Mission-140 semantic revision. Creates immutable paused successors for the exact exhaustive reverse-dependent closure, recomputes contracts/topology, and publishes them through one generation-head CAS. Original creators are narrow (single-family, no role expansion); architect/Director may revise within the immutable family scope. type/evidenceRequirements/history/status are never mutable. No evidence or attestation migrates.",
-    {
-      workId: z.string().optional().describe("Exact current physical id; historical/draft ids reject"),
-      logicalId: z.string().optional().describe("Stable logical id resolved at expectedGeneration"),
-      operationId: z.string().min(1),
-      reason: z.string().min(1),
-      expectedGeneration: z.number().int().positive(),
-      expectedAffectedSet: z.array(z.string().min(1)).optional().describe("Optional exact closure CAS; mismatch rejects"),
-      set: z.object({
-        runbook: z.string().optional(),
-        payload: z.unknown().optional(),
-        targetRef: z.object({ kind: z.string().min(1), id: z.string().min(1) }).strict().nullable().optional(),
-        roleEligibility: z.array(z.string().min(1)).optional(),
-        leaseWindowMs: z.number().positive().nullable().optional(),
-        nodeConfig: nodeConfigSchema.nullable().optional(),
-      }).strict().optional(),
-      dependsOn: z.array(z.string().min(1)).optional().describe("Replacement stable-logical start edges"),
-      completionDependsOn: z.array(z.string().min(1)).optional().describe("Replacement stable-logical completion edges"),
-      references: z.array(referenceSchema).optional().describe("Replacement references; Hub re-resolves inline/document/entity bytes/state; changed git refs fail closed without authoritative blob bytes"),
-    },
-    reviseWork,
-  );
 
   router.register(
     "pause_work",
