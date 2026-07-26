@@ -137,14 +137,31 @@ describe("update_work (work-136 / idea-419: the ratified WorkItem mutation contr
       { appendCompletionDependsOn: [child] },
       { appendReferences: [{ kind: "doc", ref: "inline", storage: "inline", mode: "read", required: false }] },
     ];
+    // 🔴 decision-11 ⨯ idea-640 — THIS PROPERTY IS OVERTURNED, NOT STALE. See the mutability table
+    // (MINOR_TIER) and docs/design/nodefix0-decision-11-supersession.md. decision-11 froze every
+    // semantic alias while paused; the supersession makes a SUSPENDED row the MINOR EDIT TIER, which
+    // is the entire point of retaining the lease — the tier could not exist while pause nulled it.
+    // Asserting it end-to-end HERE, at the public update_work surface, because the substrate table
+    // alone would not catch a policy layer that kept its own independent freeze.
     for (const mutation of mutations) {
       const result = await router.handle("update_work", { workId: item, ...mutation }, ctx);
-      expect(result.isError, JSON.stringify(mutation)).toBe(true);
-      expect(String(body(result).error)).toMatch(/revision_required|frozen while paused/);
+      expect(result.isError, `MINOR tier: ${JSON.stringify(mutation)} is legal on a suspended row`).toBeFalsy();
     }
     const scalar = await router.handle("update_work", { workId: item, set: { priority: "high" } }, ctx);
     expect(scalar.isError).toBeFalsy();
-    expect((await repo.getWorkItem(item))!).toMatchObject({ status: "paused", priority: "high" });
+    const after = (await repo.getWorkItem(item))!;
+    expect(after).toMatchObject({ suspended: true, priority: "high" });
+    expect(after.status, "the widening must not have moved the phase").not.toBe("paused");
+
+    // …AND THE OTHER DIRECTION, or the widening is unbounded: the SAME mutations on a LIVE HELD row
+    // still refuse. A test that only proves the new permission would pass an implementation that
+    // permitted everything everywhere.
+    const live = await created({ roleEligibility: [] });
+    await repo.claimWorkItem(live, "agent-live");
+    for (const mutation of mutations) {
+      const result = await router.handle("update_work", { workId: live, ...mutation }, ctx);
+      expect(result.isError, `LIVE held row still refuses ${JSON.stringify(mutation)}`).toBe(true);
+    }
   });
 
   it("rejects: terminal items (done and abandoned) refuse all mutation", async () => {
@@ -163,7 +180,15 @@ describe("update_work (work-136 / idea-419: the ratified WorkItem mutation contr
     for (const set of [{ runbook: "rewrite" }, { payload: "swap" }, { roleEligibility: ["verifier"] }]) {
       const r = await router.handle("update_work", { workId: item, set }, ctx);
       expect(r.isError, `${Object.keys(set)[0]} post-claim must reject`).toBe(true);
-      expect(String(body(r).error)).toMatch(/pre-claim/);
+      // idea-640: the REFUSAL IS INTACT; only its source moved. The claimant's contract freeze is now
+      // enforced by the tier gate, which refuses with a currentness code rather than the "pre-claim"
+      // wording. Pinned to the EXACT code rather than widened to /pre-claim|revision_required/ —
+      // adding an alternative is the cheap repair that turns an assertion into /.*/ over time.
+      expect(String(body(r).error)).toMatch(/workgraph\.currentness\.revision_required/);
+      // post-state: a refusal that mutated anything is not a refusal.
+      const unchanged = (await repo.getWorkItem(item))!;
+      expect(unchanged.runbook, "the refused edit landed nowhere").not.toBe("rewrite");
+      expect(unchanged.roleEligibility).toEqual([]);
     }
     // ...but coordination metadata stays mutable post-claim:
     const ok = await router.handle("update_work", { workId: item, set: { priority: "critical" } }, ctx);

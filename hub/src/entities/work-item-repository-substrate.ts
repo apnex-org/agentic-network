@@ -1927,10 +1927,20 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (!child) {
         children.push({ id: childId, status: "missing", leaseHolder: null, stateDurations: { ...DEFAULT_STATE_DURATIONS } });
       } else {
-        children.push({ id: childId, status: child.status, leaseHolder: child.lease?.holder ?? null, stateDurations: child.stateDurations });
+        children.push({ id: childId, status: child.status, suspended: isSuspended(child), leaseHolder: child.lease?.holder ?? null, stateDurations: child.stateDurations });
       }
     }
-    const countOf = (s: string) => children.filter((c) => c.status === s).length;
+    // 🔴 idea-640: BUCKET ON THE PAIR, NOT ON THE PHASE. Suspension no longer moves the phase, so
+    // `countOf("paused")` became PERMANENTLY ZERO — and, far worse, a suspended `in_progress` child
+    // stayed in the `in_progress` bucket and therefore in `inFlight`. That is not a missing reading,
+    // it is a FALSE one: the projection would report a row withdrawn from execution as EXECUTING,
+    // to the architect who withdrew it. A field that silently means nothing is survivable; a field
+    // that confidently means the opposite is not.
+    // The rule is IDENTICAL to the one already ratified for duration accrual (accrueExitingState:
+    // `isSuspended(w) ? "paused" : w.status`), deliberately — two different bucketings of the same
+    // two-axis state is how the histogram and the dwell-time drift apart. The histogram still sums
+    // to `total`, and `paused` means what it has always meant to a reader: withdrawn from execution.
+    const countOf = (s: string) => children.filter((c) => (c.suspended ? "paused" : c.status) === s).length;
     const total = children.length;
     const done = countOf("done");
     const statusCounts: Record<string, number> = {

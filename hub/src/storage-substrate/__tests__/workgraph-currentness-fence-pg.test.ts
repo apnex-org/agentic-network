@@ -158,7 +158,7 @@ describe("Mission-140 WorkGraph writer/read fence real PostgreSQL", () => {
     // idea-640 (A): pause RETAINS the lease, so `lease: null` no longer holds. This test is about the
     // writer/read FENCE, not about lease clearing — the fence properties (paused status, recall notice)
     // are what it exists to assert, and both are unchanged.
-    expect(recalled).toMatchObject({ status: "paused", recallNoticePending: true });
+    expect(recalled).toMatchObject({ suspended: true, recallNoticePending: true });
     expect(recalled.recallHistory).toHaveLength(1);
     expect(recalled.recallHistory![0].before.phase).toBe("claimed");
     expect(recalled.pendingRecallIntents![0].exactHolderAgentId).toBe("engineer-1");

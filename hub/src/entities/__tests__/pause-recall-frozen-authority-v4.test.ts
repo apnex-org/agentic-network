@@ -98,7 +98,7 @@ describe("Mission-140 frozen paused-generation authority", () => {
     }
 
     const scalar = await repo.updateWorkItem(parent.id, CREATOR, { set: { priority: "high" } });
-    expect(scalar.after).toMatchObject({ status: "paused", priority: "high" });
+    expect(scalar.after).toMatchObject({ suspended: true, priority: "high" });
     const unpaused = (await repo.unpauseWork({ workId: parent.id, expectedRevision: 1, expectedGeneration: 1 }, CREATOR))!;
     expect(unpaused).toMatchObject({ status: "ready", priority: "high", targetRef: { kind: "mission", id: "mission-140" } });
     expect(unpaused.completionDependsOn).toEqual([]);
@@ -127,7 +127,7 @@ describe("Mission-140 frozen paused-generation authority", () => {
 
     const retained = (await restarted.getWorkItem(parent.id))!;
     expect(retained).toMatchObject({
-      status: "paused",
+      suspended: true,
       targetRef: { kind: "mission", id: "mission-other" },
       completionDependsOn: [child.id],
       lease: null,
@@ -181,7 +181,7 @@ describe("Mission-140 frozen paused-generation authority", () => {
         { workId: stable.id, expectedRevision: 1, expectedGeneration: 1 },
         CREATOR,
       )).rejects.toMatchObject({ code: "workgraph.currentness.revision_required" });
-      expect((await restarted.getWorkItem(stable.id))!.status).toBe("paused");
+      expect((await restarted.getWorkItem(stable.id))!.suspended).toBe(true);
     }
   });
 });

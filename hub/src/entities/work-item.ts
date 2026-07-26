@@ -149,6 +149,10 @@ export type ReadyEmptyReason = "wip_capped" | "no_claimable_ready" | "quarantine
 export interface StintChild {
   id: string;
   status: WorkItemPhase | "missing";
+  /** idea-640: THE PAIR IS THE TRUTH. `status` is the lifecycle phase; `suspended` is the
+   *  management attribute. A reader that looks at `status` alone will read a withdrawn row as a
+   *  live one — which is exactly what statusCounts did until this field existed. */
+  suspended?: boolean;
   leaseHolder: string | null;
   /** idea-384 Part A (work-98): per-state wall-clock (ms) for this child — the per-node
    *  duration surface on get_current_stint. Zeroed for a `missing` child. (PART B's

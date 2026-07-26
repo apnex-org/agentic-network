@@ -49,7 +49,7 @@ describe("pause/recall-v4 authority and exact state", () => {
     const exactBefore = (await repo.getWorkItem(item.id))!;
     const paused = (await repo.pauseWork(request(item.id), ARCH))!;
 
-    expect(paused.status).toBe("paused");
+    expect(paused.suspended, "idea-640: the attribute carries suspension; the phase stays put").toBe(true);
     // idea-640 (A): pause RETAINS the lease. Was `expect(paused.lease).toBeNull()`.
     expect(paused.lease, "pause retains the lease so the minor-edit tier can exist").not.toBeNull();
     expect(paused.lease!.holder).toBe(HOLDER);
@@ -84,11 +84,11 @@ describe("pause/recall-v4 authority and exact state", () => {
 
   it("allows ready original creator/architect/Director, but active recall only architect/Director", async () => {
     const readyCreator = await fixture({ role: "engineer", agentId: ENGINEER_CREATOR.agentId });
-    expect((await readyCreator.repo.pauseWork(request(readyCreator.item.id, "ready-creator"), ENGINEER_CREATOR))!.status).toBe("paused");
+    expect((await readyCreator.repo.pauseWork(request(readyCreator.item.id, "ready-creator"), ENGINEER_CREATOR))!.suspended).toBe(true);
 
     for (const [actor, operationId] of [[ARCH, "active-arch"], [DIRECTOR, "active-director"]] as const) {
       const f = await fixture(); await driveBlocked(f.repo, f.item.id);
-      expect((await f.repo.pauseWork(request(f.item.id, operationId), actor))!.status).toBe("paused");
+      expect((await f.repo.pauseWork(request(f.item.id, operationId), actor))!.suspended).toBe(true);
     }
 
     const denied = await fixture({ role: "engineer", agentId: ENGINEER_CREATOR.agentId });
@@ -222,20 +222,23 @@ describe("pause/recall-v4 authority and exact state", () => {
         holderVerb(),
       ]);
       const final = (await repo.getWorkItem(item.id))!;
-      trace.push({ verb, pause: pauseResult.status, holder: holderResult.status, final: final.status, recalledFrom: final.recallHistory?.[0]?.before.phase ?? null });
+      trace.push({ verb, pause: pauseResult.status, holder: holderResult.status, final: final.status, suspended: final.suspended ?? false, recalledFrom: final.recallHistory?.[0]?.before.phase ?? null });
       if (["complete", "abandon"].includes(verb)) {
         expect([pauseResult.status, holderResult.status].filter((status) => status === "fulfilled")).toHaveLength(1);
-        expect(["paused", "done", "abandoned"]).toContain(final.status);
+        // idea-640: a WON pause leaves the phase alone, so the disjunction is now over the PAIR:
+        // either the terminal verb won (done/abandoned) or pause won (suspended, phase preserved).
+        expect(final.suspended === true || ["done", "abandoned"].includes(final.status),
+          `race outcome must be terminal-or-suspended, got status=${final.status} suspended=${final.suspended}`).toBe(true);
       } else {
         expect(pauseResult.status).toBe("fulfilled");
-        expect(final.status).toBe("paused");
+        expect(final.suspended).toBe(true);
         expect(final.recallHistory).toHaveLength(1);
       }
       // idea-640 (A): was `expect(final.lease).toBeNull()`. THE PROPERTY THIS TEST NAMES IS "WITHOUT
       // ZOMBIE AUTHORITY", and that is asserted on the NEXT line by the renew rejection — which holds
       // because every holder verb gates on STATUS, not on the lease being absent. A paused row now
       // RETAINS its lease and holder by design; the terminal paths (complete/abandon) clear it as before.
-      if (final.status === "paused") {
+      if (final.suspended) {
         expect(final.lease, "a paused row retains its lease").not.toBeNull();
         expect(final.lease!.holder).toBe(HOLDER);
       }
