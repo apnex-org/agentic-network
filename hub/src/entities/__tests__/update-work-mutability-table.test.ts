@@ -66,6 +66,38 @@ const PRE_CLAIM: WorkItemPhase[] = ["ready"];
 const PRE_TERMINAL: WorkItemPhase[] = ["ready", "claimed", "in_progress", "blocked", "review"];
 const SCALAR_PRE_TERMINAL: WorkItemPhase[] = [...PRE_TERMINAL, "paused"];
 const UNTIL_DONE = PRE_TERMINAL; // paused contract/topology is frozen; done + abandoned terminal
+
+// 🔴 decision-11 ⨯ idea-640 — SUPERSESSION. See docs/design/nodefix0-decision-11-supersession.md.
+// BOTH contract ids are named here on purpose: the table below is not a stale assertion being
+// corrected, it is a RATIFIED CONTRACT BEING REPLACED, and a future reader must find the conflict and
+// its resolution in the same place.
+//
+// decision-11 governed mutability by PHASE (pre-claim / until-terminal / forever). idea-640 governs it
+// by MANAGEMENT TIER (live / suspended+lease / suspended+no-lease). Different axes, so every row moves.
+//
+//   NARROWED   `targetRef` was mutable UNTIL TERMINAL — i.e. on a live, claimed, in-flight row.
+//              It is now refused while HELD. THAT IS A REAL CAPABILITY REMOVAL. It appears nowhere in
+//              idea-640; it follows by implication from the Director's absolute `LIVE -> modify DOES
+//              NOT FUNCTION`, and is recorded as a DECISION so nobody later reports it as a regression.
+//   WIDENED    `runbook`/`payload`/`roleEligibility` were PRE-CLAIM ONLY and are now editable on a
+//              SUSPENDED row — the amendment decision-11's own out-of-scope list invited:
+//              "lease-holder mutation authority (revisit with evidence)". idea-640 is that revisit.
+//   UNCHANGED  pre-claim authoring. An unclaimed `ready` row has NO HOLDER, so editing it disturbs
+//              nobody. Reading the absolute as "not suspended => refuse" would ALSO delete pre-claim
+//              editing — a narrowing the supersession does not record. Measured twice: this table red
+//              `targetRef @ ready -> ALLOW` both times that was got wrong.
+//
+// ⚠️ `priority` IS NOT NARROWED HERE, AND THAT IS A FLAG, NOT A DECISION. The supersession lists it as
+// NARROWED to the MINOR tier, but `priority` is not a claimant-contract field — it is scalar metadata,
+// absent from `changesClaimantAuthority`, and narrowing it has no anti-gameability or
+// contract-stability rationale. Implementing that removal is a behaviour change with a cost and no
+// stated benefit, so it is REPORTED rather than taken unilaterally. Table left at the ratified
+// decision-11 behaviour for this one field pending a ruling.
+//
+// SUSPENDED ROWS: `itemAt(repo, "paused")` drives pauseWork, which under the attribute model leaves the
+// phase alone and sets `suspended`. A row suspended from `ready` therefore has NO LEASE — the FULL
+// tier — so every claimant-contract field is editable there.
+const MINOR_TIER: WorkItemPhase[] = [...PRE_CLAIM, "paused"];
 const TERMINAL: WorkItemPhase[] = ["done", "abandoned"];
 const ALL: WorkItemPhase[] = [...SCALAR_PRE_TERMINAL, ...TERMINAL];
 
@@ -75,13 +107,13 @@ const upd = (repo: WorkItemRepositorySubstrate, id: string, mutation: Parameters
 /** A field's mutation payload + the allowed-phase set. */
 const FIELDS: Array<{ name: string; allowed: WorkItemPhase[]; mut: () => Parameters<WorkItemRepositorySubstrate["updateWorkItem"]>[2]; assertApplied: (after: any) => void }> = [
   { name: "priority", allowed: SCALAR_PRE_TERMINAL, mut: () => ({ set: { priority: "high" } }), assertApplied: (a) => expect(a.priority).toBe("high") },
-  { name: "targetRef", allowed: PRE_TERMINAL, mut: () => ({ set: { targetRef: { kind: "mission", id: "m-2" } } }), assertApplied: (a) => expect(a.targetRef).toEqual({ kind: "mission", id: "m-2" }) },
-  { name: "runbook", allowed: PRE_CLAIM, mut: () => ({ set: { runbook: "amended" } }), assertApplied: (a) => expect(a.runbook).toBe("amended") },
-  { name: "payload", allowed: PRE_CLAIM, mut: () => ({ set: { payload: { v: 1 } } }), assertApplied: (a) => expect(a.payload).toEqual({ v: 1 }) },
-  { name: "roleEligibility", allowed: PRE_CLAIM, mut: () => ({ set: { roleEligibility: ["engineer"] } }), assertApplied: (a) => expect(a.roleEligibility).toEqual(["engineer"]) },
-  { name: "appendDependsOn", allowed: PRE_CLAIM, mut: () => ({ appendDependsOn: ["work-dep"] }), assertApplied: (a) => expect(a.dependsOn).toContain("work-dep") },
-  { name: "appendCompletionDependsOn", allowed: UNTIL_DONE, mut: () => ({ appendCompletionDependsOn: ["work-dep"] }), assertApplied: (a) => expect(a.completionDependsOn).toContain("work-dep") },
-  { name: "appendReferences", allowed: PRE_CLAIM, mut: () => ({ appendReferences: [{ kind: "doc", ref: "d", storage: "inline", mode: "read", required: false }] }), assertApplied: (a) => expect(a.references.length).toBeGreaterThan(0) },
+  { name: "targetRef", allowed: MINOR_TIER, mut: () => ({ set: { targetRef: { kind: "mission", id: "m-2" } } }), assertApplied: (a) => expect(a.targetRef).toEqual({ kind: "mission", id: "m-2" }) },
+  { name: "runbook", allowed: MINOR_TIER, mut: () => ({ set: { runbook: "amended" } }), assertApplied: (a) => expect(a.runbook).toBe("amended") },
+  { name: "payload", allowed: MINOR_TIER, mut: () => ({ set: { payload: { v: 1 } } }), assertApplied: (a) => expect(a.payload).toEqual({ v: 1 }) },
+  { name: "roleEligibility", allowed: MINOR_TIER, mut: () => ({ set: { roleEligibility: ["engineer"] } }), assertApplied: (a) => expect(a.roleEligibility).toEqual(["engineer"]) },
+  { name: "appendDependsOn", allowed: MINOR_TIER, mut: () => ({ appendDependsOn: ["work-dep"] }), assertApplied: (a) => expect(a.dependsOn).toContain("work-dep") },
+  { name: "appendCompletionDependsOn", allowed: MINOR_TIER, mut: () => ({ appendCompletionDependsOn: ["work-dep"] }), assertApplied: (a) => expect(a.completionDependsOn).toContain("work-dep") },
+  { name: "appendReferences", allowed: MINOR_TIER, mut: () => ({ appendReferences: [{ kind: "doc", ref: "d", storage: "inline", mode: "read", required: false }] }), assertApplied: (a) => expect(a.references.length).toBeGreaterThan(0) },
 ];
 
 describe("S2 mutability-table — {field × phase} allow/deny (the executable contract)", () => {
@@ -94,12 +126,14 @@ describe("S2 mutability-table — {field × phase} allow/deny (the executable co
         if (shouldAllow) {
           const { after } = await upd(repo, id, field.mut());
           field.assertApplied(after);
-        } else if (phase === "paused") {
+        } else if (TERMINAL.includes(phase)) {
+          // terminal rows reject all mutation, unchanged by the supersession
+          await expect(upd(repo, id, field.mut())).rejects.toThrow(TransitionRejected);
+        } else {
+          // LIVE AND HELD — the tier refusal. Carries the currentness code and names the remedy.
           await expect(upd(repo, id, field.mut())).rejects.toMatchObject({
             code: "workgraph.currentness.revision_required",
           });
-        } else {
-          await expect(upd(repo, id, field.mut())).rejects.toThrow(TransitionRejected);
         }
       });
     }
@@ -118,12 +152,29 @@ describe("S2 mutability-table — immutability + relocation freeze + append inte
     expect(after!.evidenceRequirements).toEqual(before!.evidenceRequirements);
   });
 
-  it("targetRef is FROZEN once an attestation exists (SEAL-C relocation guard)", async () => {
+  it("🔴 targetRef is FROZEN once an attestation exists — SEAL-C, ON THE PATH WHERE IT NOW MATTERS", async () => {
+    // 🔴 decision-11 ⨯ idea-640 — THE SUPERSESSION MOVED SEAL-C'S LOAD-BEARING PATH, AND THAT IS EASY
+    // TO MISS. On a LIVE HELD row, targetRef is now refused by the TIER gate first, so SEAL-C never
+    // runs there — it is shadowed, not removed. But the supersession WIDENED targetRef to SUSPENDED
+    // rows, and on those the tier ALLOWS the edit, so SEAL-C at :1103 is the ONLY thing standing
+    // between an attested row and a relocation that would launder a pass verdict onto a different
+    // deliverable. THE GUARD DID NOT CHANGE; THE PATH THAT DEPENDS ON IT DID.
     const { repo } = await setup();
     const id = await itemAt(repo, "in_progress", [{ id: "att", kind: "freeform", evidenceAuthority: "verifier-attestation" }]);
     await repo.attestEvidence(id, "att", "agent-verifier", "pass", [{ kind: "entity", ref: "mission/m-1" }]);
-    await expect(upd(repo, id, { set: { targetRef: { kind: "mission", id: "m-2" } } })).rejects.toThrow(TransitionRejected);
-    // ...but a non-frozen field still amends fine while attested.
+
+    // (a) LIVE + HELD: refused by the tier, before SEAL-C is reached.
+    await expect(upd(repo, id, { set: { targetRef: { kind: "mission", id: "m-2" } } }))
+      .rejects.toMatchObject({ code: "workgraph.currentness.revision_required" });
+
+    // (b) SUSPENDED: the tier now ALLOWS a targetRef edit — and SEAL-C must refuse it anyway.
+    // Without this case, the widening silently opens a relocation path on every attested row.
+    await repo.pauseWork({ workId: id, operationId: "sealc-suspend", reason: "seal-c path" } as never, ARCH);
+    await expect(upd(repo, id, { set: { targetRef: { kind: "mission", id: "m-2" } } }))
+      .rejects.toThrow(TransitionRejected);
+    expect((await repo.getWorkItem(id))!.targetRef, "the relocation did not land").toEqual({ kind: "mission", id: "m-1" });
+
+    // ...and a non-frozen field still amends fine while attested + suspended.
     const { after } = await upd(repo, id, { set: { priority: "high" } });
     expect(after.priority).toBe("high");
   });

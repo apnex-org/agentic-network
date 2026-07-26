@@ -37,6 +37,14 @@ async function phaseOf(h: SimHarness, arch: SimClient, workId: string): Promise<
   return w?.status as Phase | undefined;
 }
 
+/** idea-640: the SECOND axis. The pair (phase, suspended) is the state; neither field alone is. */
+async function suspendedOf(h: SimHarness, arch: SimClient, workId: string): Promise<boolean> {
+  const r = await arch.call("get_work", { workId });
+  const d = r.data as Record<string, unknown>;
+  const w = (d?.workItem as Record<string, unknown>) ?? d;
+  return (w?.suspended as boolean | undefined) === true;
+}
+
 // Fresh evidence each call: producedAt must be >= the item's lease.claimedAt (the real
 // freshness predicate — bug-261), so it is stamped NOW, after the drive's claim.
 const evidence = (): unknown[] => [
@@ -162,7 +170,21 @@ export async function oracleLegalMovesAccepted(): Promise<OracleResult[]> {
           : expected === "gate"
             ? now === "review" || now === "done"
             : now === expected;
-      out.push({ name, pass: ok, detail: ok ? undefined : `expected ${expected}, got ${now}` });
+      // idea-640: assert the SECOND axis in BOTH directions. Checking only the phase would let
+      // `to: "same"` pass an implementation where pause did nothing whatsoever; checking suspension
+      // only where it is expected would let an unrelated verb suspend a row unnoticed.
+      const suspended = await suspendedOf(s.h, s.arch, s.workId);
+      const wantSuspended = move.suspends === true;
+      const suspendOk = suspended === wantSuspended;
+      out.push({
+        name,
+        pass: ok && suspendOk,
+        detail: !ok
+          ? `expected ${expected}, got ${now}`
+          : suspendOk
+            ? undefined
+            : `expected suspended=${wantSuspended}, got ${suspended} (phase ${now} was correct — the PAIR is the state)`,
+      });
     } catch (e) {
       out.push({ name, pass: false, detail: `setup/drive threw: ${(e as Error).message}` });
     }

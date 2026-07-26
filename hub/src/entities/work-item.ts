@@ -149,6 +149,10 @@ export type ReadyEmptyReason = "wip_capped" | "no_claimable_ready" | "quarantine
 export interface StintChild {
   id: string;
   status: WorkItemPhase | "missing";
+  /** idea-640: THE PAIR IS THE TRUTH. `status` is the lifecycle phase; `suspended` is the
+   *  management attribute. A reader that looks at `status` alone will read a withdrawn row as a
+   *  live one — which is exactly what statusCounts did until this field existed. */
+  suspended?: boolean;
   leaseHolder: string | null;
   /** idea-384 Part A (work-98): per-state wall-clock (ms) for this child — the per-node
    *  duration surface on get_current_stint. Zeroed for a `missing` child. (PART B's
@@ -228,7 +232,17 @@ export interface NextActionProjection {
  *  + gate-aware (an arc with an unmet completion-gate → complete is NOT legal; a leaf → it is). */
 export type WorkItemVerb =
   | "claim" | "start" | "block" | "resume" | "complete" | "release" | "abandon" | "renew"
-  | "pause" | "unpause";
+  | "pause" | "unpause" | "reset";
+
+// 🔴 COMPILER-ENFORCED ENUMERATION. getLegalMoves previously carried the verb list as TWO
+// hand-maintained literal arrays. Adding a verb to the union above did NOT break them — the
+// early-return paths would simply stop mentioning it, and a surface that omits a verb is a
+// surface that under-advertises SILENTLY. `satisfies Record<WorkItemVerb, 0>` makes the omission
+// a COMPILE ERROR: the enumeration can no longer drift from the type it enumerates.
+export const ALL_WORK_ITEM_VERBS = Object.keys({
+  claim: 0, start: 0, block: 0, resume: 0, complete: 0, release: 0, abandon: 0, renew: 0,
+  pause: 0, unpause: 0, reset: 0,
+} satisfies Record<WorkItemVerb, 0>) as WorkItemVerb[];
 export interface LegalMove {
   verb: WorkItemVerb;
   legal: boolean;
@@ -573,6 +587,18 @@ export interface WorkItem {
    *  in work-87 (idempotency rides the deterministic id, not a query) — cleanup-by-runId
    *  query is a deferred follow-on. */
   blueprintRunId?: string;
+  /** idea-640 / nodefix0 — SUSPENSION IS A MANAGEMENT ATTRIBUTE, NOT A LIFECYCLE STATE.
+   *  Director-ratified 2026-07-26. A node that is `in_progress` and suspended IS STILL `in_progress` —
+   *  withdrawn from execution, not moved along its lifecycle. THE PAIR IS THE TRUTH; NEITHER FIELD
+   *  ALONE IS: `status: in_progress` + `suspended: true` reads as "at the in_progress stage, not
+   *  currently executing". Same shape as a paused Deployment, where `status.phase` stays Running and
+   *  `spec.paused` says why nothing moves — you read both.
+   *
+   *  🔴 EVERY GUARD THAT USED TO GET SUSPENSION FOR FREE VIA `status === "paused"` MUST NOW READ THIS
+   *  FIELD EXPLICITLY. `expireLease` and its scans were safe only because `paused` was absent from
+   *  LEASE_HELD_PHASES; once `status` says `in_progress` that protection evaporates. Absent = not
+   *  suspended, so legacy rows and every row that never paused behave exactly as before. */
+  suspended?: boolean;
   /** bug-383 — SERVER-STAMPED projection provenance. Written ONLY by a Hub projection reconciler
    *  via `createBlueprintNode`; absent on every caller-authored row. `createWorkItem` (the
    *  `create_work` path) does not accept it and it is NOT in `update_work`'s `ALLOWED_SET`, so no

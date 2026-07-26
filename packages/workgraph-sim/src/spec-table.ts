@@ -79,6 +79,16 @@ export interface Move {
    * `"gate"` = review OR done, resolved by the completion-gate + evidence predicate.
    */
   readonly to?: Phase | "same" | "gate";
+  /**
+   * idea-640: SUSPENSION IS A MANAGEMENT ATTRIBUTE, NOT A PHASE. `pause_work` no longer moves the
+   * row along its lifecycle — a suspended `in_progress` row IS STILL `in_progress`, withdrawn from
+   * execution rather than advanced. This spec table models ONE axis (the phase), so `to: "same"`
+   * alone would under-specify pause into vacuity: an implementation where pause did NOTHING AT ALL
+   * would satisfy it. `suspends` is the second axis, and the oracle asserts it in BOTH directions —
+   * set here and true on the row, absent here and false — so a verb that spuriously suspends reds
+   * just as loudly as one that fails to.
+   */
+  readonly suspends?: boolean;
   readonly note?: string;
 }
 
@@ -95,19 +105,19 @@ function row(legal: Partial<Record<SpecVerb, Move>>): Record<SpecVerb, Move> {
 export const SPEC: Record<Phase, Record<SpecVerb, Move>> = {
   ready: row({
     claim_work: { legal: true, to: "claimed" },
-    pause_work: { legal: true, to: "paused" },
+    pause_work: { legal: true, to: "same", suspends: true },
     abandon_work: { legal: true, to: "abandoned", note: "creator-only guard (separate)" },
   }),
   claimed: row({
     start_work: { legal: true, to: "in_progress" },
-    pause_work: { legal: true, to: "paused", note: "architect/Director active recall; holder alone denied" },
+    pause_work: { legal: true, to: "same", suspends: true, note: "architect/Director active recall; holder alone denied; PHASE PRESERVED (idea-640)" },
     release_work: { legal: true, to: "ready" },
     abandon_work: { legal: true, to: "abandoned" },
     renew_lease: { legal: true, to: "same" },
   }),
   in_progress: row({
     block_work: { legal: true, to: "blocked" },
-    pause_work: { legal: true, to: "paused", note: "architect/Director active recall; token invalidated" },
+    pause_work: { legal: true, to: "same", suspends: true, note: "architect/Director active recall; lease RETAINED but inert; PHASE PRESERVED (idea-640)" },
     complete_work: { legal: true, to: "gate", note: "review|done per completion-gate + evidence + explicit frictionReflection; missing friction persists valid evidence but stays same" },
     release_work: { legal: true, to: "ready" },
     abandon_work: { legal: true, to: "abandoned" },
@@ -115,11 +125,14 @@ export const SPEC: Record<Phase, Record<SpecVerb, Move>> = {
   }),
   blocked: row({
     resume_work: { legal: true, to: "in_progress" },
-    pause_work: { legal: true, to: "paused", note: "architect/Director active recall; blocker preserved in recall history" },
+    pause_work: { legal: true, to: "same", suspends: true, note: "architect/Director active recall; blocker preserved in recall history; PHASE PRESERVED (idea-640)" },
     release_work: { legal: true, to: "ready" },
     abandon_work: { legal: true, to: "abandoned" },
     renew_lease: { legal: true, to: "same" },
   }),
+  // idea-640: this row is keyed `paused` for continuity with the Phase union, but it now models a
+  // SUSPENDED row whose phase was `ready` — suspension no longer occupies the phase slot. Reaching
+  // it drives a ready row and suspends it; unpause clears the attribute and the phase was never lost.
   paused: row({
     unpause_work: { legal: true, to: "ready" },
   }),

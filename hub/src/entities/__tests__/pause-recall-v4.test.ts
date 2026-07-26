@@ -43,14 +43,16 @@ const request = (workId: string, operationId = "pause-op-1", reason = "revise cl
   ({ workId, operationId, reason });
 
 describe("pause/recall-v4 authority and exact state", () => {
-  it("atomically captures the full blocked before-state, clears live authority, and never persists the bearer token", async () => {
+  it("atomically captures the full blocked before-state, and never persists the bearer token IN RECALLHISTORY", async () => {
     const { repo, item } = await fixture();
     const token = await driveBlocked(repo, item.id);
     const exactBefore = (await repo.getWorkItem(item.id))!;
     const paused = (await repo.pauseWork(request(item.id), ARCH))!;
 
-    expect(paused.status).toBe("paused");
-    expect(paused.lease).toBeNull();
+    expect(paused.suspended, "idea-640: the attribute carries suspension; the phase stays put").toBe(true);
+    // idea-640 (A): pause RETAINS the lease. Was `expect(paused.lease).toBeNull()`.
+    expect(paused.lease, "pause retains the lease so the minor-edit tier can exist").not.toBeNull();
+    expect(paused.lease!.holder).toBe(HOLDER);
     expect(paused.blockedOn).toBeNull();
     expect(paused.recallHistory).toHaveLength(1);
     const recall = paused.recallHistory![0];
@@ -62,7 +64,19 @@ describe("pause/recall-v4 authority and exact state", () => {
     expect(recall.before.stateHash).toBe(recallStateHash(exactBefore));
     expect(recall.beforeStateHash).toBe(recall.before.stateHash);
     expect(recall.before.lease!.tokenFingerprint).toMatch(/^[0-9a-f]{64}$/);
-    expect(JSON.stringify(paused)).not.toContain(token);
+    // idea-640 (A): scoped from the WHOLE ROW to RECALLHISTORY. Was `JSON.stringify(paused)`.
+    //
+    // THE HISTORY DISCIPLINE IS A REAL, DELIBERATELY-DESIGNED CONTROL AND IT STAYS: the recall record
+    // keeps a SHA-256 `tokenFingerprint`, never the bearer token, so an append-only audit trail cannot
+    // become a credential store.
+    //
+    // THE ROW-LEVEL SCRUB WAS NOT A CONTROL. It held only because pause nulled the lease, and it
+    // protected nothing: `get_work` returns `lease.token` IN PLAINTEXT to any caller who can read the
+    // row, so every claimed/in_progress row already exposes it — measured first-party by the architect,
+    // who read a live holder's token off held rows in the ordinary course of driving an arc. Scrubbing
+    // one paused row while every live row stays plaintext would be a control that looks like protection
+    // and delivers none. Filed as a separate bug, OUT of this arc's bound; NOT fixed or claimed here.
+    expect(JSON.stringify(paused.recallHistory)).not.toContain(token);
     expect(paused.pendingRecallIntents).toHaveLength(1);
     expect(paused.pendingRecallIntents![0]).toMatchObject({ exactHolderAgentId: HOLDER, operationId: "pause-op-1", projectedMessageId: null });
     expect(paused.recallNoticePending).toBe(true);
@@ -70,11 +84,11 @@ describe("pause/recall-v4 authority and exact state", () => {
 
   it("allows ready original creator/architect/Director, but active recall only architect/Director", async () => {
     const readyCreator = await fixture({ role: "engineer", agentId: ENGINEER_CREATOR.agentId });
-    expect((await readyCreator.repo.pauseWork(request(readyCreator.item.id, "ready-creator"), ENGINEER_CREATOR))!.status).toBe("paused");
+    expect((await readyCreator.repo.pauseWork(request(readyCreator.item.id, "ready-creator"), ENGINEER_CREATOR))!.suspended).toBe(true);
 
     for (const [actor, operationId] of [[ARCH, "active-arch"], [DIRECTOR, "active-director"]] as const) {
       const f = await fixture(); await driveBlocked(f.repo, f.item.id);
-      expect((await f.repo.pauseWork(request(f.item.id, operationId), actor))!.status).toBe("paused");
+      expect((await f.repo.pauseWork(request(f.item.id, operationId), actor))!.suspended).toBe(true);
     }
 
     const denied = await fixture({ role: "engineer", agentId: ENGINEER_CREATOR.agentId });
@@ -121,8 +135,59 @@ describe("pause/recall-v4 authority and exact state", () => {
       () => repo.completeWork(item.id, HOLDER, token, [], { observed: false, summary: "none" }),
       () => repo.abandonWork(item.id, HOLDER, { leaseToken: token }),
     ];
-    for (const call of calls) await expect(call()).rejects.toThrow(/no active lease|lease holder mismatch|lease-holder \(none\)|abandon requires the lease-holder/);
-    expect((await repo.getWorkItem(item.id))!.status).toBe("paused");
+    // idea-640 (A): pause now RETAINS the lease and token, so these can no longer be refused for
+    // "no active lease". THE PROPERTY IS UNCHANGED AND WAS NEVER THE LEASE'S DOING: every holder verb
+    // gates on STATUS, and `paused` is absent from every phase set — WIP_PHASES, LEASE_HELD_PHASES,
+    // RELEASABLE_PHASES, COMPLETABLE_PHASES — as well as from claim/start/block's individual checks.
+    // The old assertion matched the refusal MESSAGE and so credited the null lease for a guarantee the
+    // phase was always providing; retaining the token restores no capability whatsoever.
+    // Asserting on `paused` rather than on a lease phrase pins the refusal to its ACTUAL mechanism, so
+    // this reds if a verb ever starts admitting a paused row.
+    // 🔴 A TABLE, NOT AN ALTERNATION — AND THIS IS THE POINT OF THE WHOLE TEST.
+    // What stood here was ONE regex applied to all seven verbs. Its failure direction was FAIL-OPEN
+    // ON *WHY*, NOT ON *WHETHER*: a verb that refused for an unrelated reason still passed. That is
+    // precisely how a suspension guard silently regresses into a lease guard — delete the suspension
+    // check, leave the lease check standing, and the suite stays green.
+    //
+    // AN ASSERTION WHOSE CHEAPEST REPAIR IS TO WEAKEN IT IS A RATCHET POINTING THE WRONG WAY. When a
+    // verb legitimately changes its message the alternation reds, and the minimum-effort green is one
+    // more `|alternative`. Every repair widens it monotonically; the limit is /.*/ . Each row below
+    // names ONE verb and the ONE mechanism it must refuse on, so a wrong-reason refusal REDS.
+    //
+    // 🔴 AND THE OLD REGEX DOCUMENTED THE BUG IT SHOULD HAVE FAILED ON. Its fourth alternative was
+    // `abandon requires the lease-holder` — which exists ONLY because abandonWork does NOT route
+    // through the shared assertLease seam. Someone met that divergence and recorded it as an accepted
+    // alternative instead of raising it. `abandon` keeps its own row here, with its own distinct
+    // wording, so the divergence is ASSERTED IN THE OPEN rather than absorbed by an alternation.
+    const expected: Array<[string, RegExp]> = [
+      ["start", /start rejected: .* is SUSPENDED .*accepts no holder verb/],
+      ["block", /block rejected: .* is SUSPENDED .*accepts no holder verb/],
+      ["resume", /resume rejected: .* is SUSPENDED .*accepts no holder verb/],
+      ["renew", /renew rejected: .* is SUSPENDED .*accepts no holder verb/],
+      ["release", /release rejected: .* is SUSPENDED .*accepts no holder verb/],
+      ["complete", /complete rejected: .* is SUSPENDED .*accepts no holder verb/],
+      // abandon guards SEPARATELY (not via assertLease) and says so in its own words.
+      ["abandon", /abandon rejected: .* is SUSPENDED .*cannot be abandoned/],
+    ];
+    expect(expected).toHaveLength(calls.length);
+    for (const [index, call] of calls.entries()) {
+      const [verb, pattern] = expected[index];
+      const message = await call().then(() => "RESOLVED — the verb was ADMITTED on a suspended row", (e: Error) => e.message);
+      expect(message, `${verb} must refuse ON SUSPENSION, by its own name`).toMatch(pattern);
+      // POST-STATE, PER VERB: a refusal that mutated anything is not a refusal. Checked after EACH
+      // call, not once at the end — a verb that moved the row and a later verb that moved it back
+      // would be invisible to a single trailing assertion.
+      const after = (await repo.getWorkItem(item.id))!;
+      expect(after.status, `${verb} must not move the phase`).toBe("blocked");
+      expect(after.suspended, `${verb} must not clear suspension`).toBe(true);
+      expect(after.lease?.token, `${verb} must not disturb the retained lease`).toBe(token);
+      expect(after.lease?.holder, `${verb} must not disturb the holder`).toBe(HOLDER);
+    }
+    // …and the retained lease is intact and still the holder's — the point of the change.
+    const paused = (await repo.getWorkItem(item.id))!;
+    expect(paused.lease, "pause RETAINS the lease").not.toBeNull();
+    expect(paused.lease!.holder).toBe(HOLDER);
+    expect(paused.lease!.token).toBe(token);
   });
 
   it("linearizes pause against every holder verb and the expiry sweeper without zombie authority", async () => {
@@ -157,16 +222,26 @@ describe("pause/recall-v4 authority and exact state", () => {
         holderVerb(),
       ]);
       const final = (await repo.getWorkItem(item.id))!;
-      trace.push({ verb, pause: pauseResult.status, holder: holderResult.status, final: final.status, recalledFrom: final.recallHistory?.[0]?.before.phase ?? null });
+      trace.push({ verb, pause: pauseResult.status, holder: holderResult.status, final: final.status, suspended: final.suspended ?? false, recalledFrom: final.recallHistory?.[0]?.before.phase ?? null });
       if (["complete", "abandon"].includes(verb)) {
         expect([pauseResult.status, holderResult.status].filter((status) => status === "fulfilled")).toHaveLength(1);
-        expect(["paused", "done", "abandoned"]).toContain(final.status);
+        // idea-640: a WON pause leaves the phase alone, so the disjunction is now over the PAIR:
+        // either the terminal verb won (done/abandoned) or pause won (suspended, phase preserved).
+        expect(final.suspended === true || ["done", "abandoned"].includes(final.status),
+          `race outcome must be terminal-or-suspended, got status=${final.status} suspended=${final.suspended}`).toBe(true);
       } else {
         expect(pauseResult.status).toBe("fulfilled");
-        expect(final.status).toBe("paused");
+        expect(final.suspended).toBe(true);
         expect(final.recallHistory).toHaveLength(1);
       }
-      expect(final.lease).toBeNull();
+      // idea-640 (A): was `expect(final.lease).toBeNull()`. THE PROPERTY THIS TEST NAMES IS "WITHOUT
+      // ZOMBIE AUTHORITY", and that is asserted on the NEXT line by the renew rejection — which holds
+      // because every holder verb gates on STATUS, not on the lease being absent. A paused row now
+      // RETAINS its lease and holder by design; the terminal paths (complete/abandon) clear it as before.
+      if (final.suspended) {
+        expect(final.lease, "a paused row retains its lease").not.toBeNull();
+        expect(final.lease!.holder).toBe(HOLDER);
+      }
       await expect(repo.renewLease(item.id, HOLDER, token)).rejects.toThrow();
     }
     expect(trace.map((entry) => entry.verb)).toEqual(cases);

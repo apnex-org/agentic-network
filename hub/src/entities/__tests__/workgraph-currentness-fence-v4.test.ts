@@ -171,7 +171,7 @@ describe("Mission-140 universal WorkGraph currentness fence v4", () => {
       logicalId: "a", operationId: "logical-pause", reason: "current logical target",
       expectedRevision: 2, expectedGeneration: 2,
     }, { role: "architect", agentId: "architect-1" });
-    expect(paused).toMatchObject({ id: "a-r2", status: "paused", revision: 2 });
+    expect(paused).toMatchObject({ id: "a-r2", suspended: true, revision: 2 });
     await repo.unpauseWork({ logicalId: "a", expectedRevision: 2, expectedGeneration: 2 }, { role: "architect", agentId: "architect-1" });
     const current = await repo.claimWorkItem("a-r2", "engineer-1", "engineer");
     expect(current?.status).toBe("claimed");

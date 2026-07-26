@@ -147,7 +147,7 @@ describe("Mission-140 frozen pause authority real PostgreSQL", () => {
     }, CREATOR)).rejects.toMatchObject({ code: "workgraph.currentness.revision_required" });
     const retained = (await restarted.getWorkItem(parent.id))!;
     expect(retained).toMatchObject({
-      status: "paused",
+      suspended: true,
       targetRef: { kind: "mission", id: "mission-other" },
       completionDependsOn: [child.id],
       lease: null,
