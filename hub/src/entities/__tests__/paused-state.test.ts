@@ -35,7 +35,14 @@ describe("paused-state — FSM + authority", () => {
     expect(w!.lease, "a ready row had no lease to retain").toBeNull();
     expect(w!.recallHistory).toHaveLength(1);
     expect(w!.recallHistory![0].before.phase).toBe("ready");
-    expect(w!.pendingRecallIntents).toEqual([]);
+    // 🔴 work-540: WAS `toEqual([])`. A row suspended from `ready` has NO HOLDER, so the holder
+    // channel notified nobody and this asserted that silence. The AUTHOR is now notified — which is
+    // precisely the case the Director asked for and the one the holder channel structurally cannot
+    // cover. The test name still says "without a lease notice" and that remains true: there is no
+    // HOLDER notice, because there is no holder.
+    expect(w!.pendingRecallIntents).toHaveLength(1);
+    expect(w!.pendingRecallIntents![0]).toMatchObject({ recipientKind: "author", exactHolderAgentId: "arch-1" });
+    expect(w!.recallNoticePending, "an unprojected author notice must flag as pending").toBe(true);
   });
 
   it("Director may pause ready work; unrelated engineer may not", async () => {
@@ -64,7 +71,10 @@ describe("paused-state — FSM + authority", () => {
       expect(w!.lease, "pause retains the lease").not.toBeNull();
       expect(w!.lease!.holder).toBe("agent-eng");
       expect(w!.blockedOn).toBeNull();
-      expect(w!.pendingRecallIntents).toHaveLength(1);
+      // work-540: holder (agent-eng) AND author (arch-1) are different agents here, so BOTH are
+      // notified — one notice each, never two for one recipient.
+      expect(w!.pendingRecallIntents).toHaveLength(2);
+      expect(new Set(w!.pendingRecallIntents!.map((i) => i.exactHolderAgentId))).toEqual(new Set(["agent-eng", "arch-1"]));
     }
   });
 

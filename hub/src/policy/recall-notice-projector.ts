@@ -27,9 +27,22 @@ function pendingIntents(item: WorkItem): PendingRecallIntentV4[] {
 }
 
 function historyFor(item: WorkItem, intent: PendingRecallIntentV4): RecallHistoryEntryV4 {
+  // 🔴 work-540: MATCHES ON operationId + beforeStateHash, NOT ON holderNoticeIntentId.
+  //
+  // The old linkage was `candidate.holderNoticeIntentId === intent.intentId`, and a history entry
+  // records exactly ONE such id — the holder's. That made the whole notice mechanism STRUCTURALLY
+  // SINGLE-RECIPIENT: an author intent matched no history entry, threw "no exact before-state
+  // history", and was never delivered. The intents existed and looked correct in the row; only the
+  // messages were missing. Found by a test that asserts on MESSAGES ACTUALLY DELIVERED rather than
+  // on the intent array — asserting the array alone would have passed while nobody was notified.
+  //
+  // THE EXACTNESS GUARANTEE IS UNCHANGED. `operationId` identifies the pause and `beforeStateHash`
+  // pins the exact row state it was taken against; both must match, and a mismatch still throws.
+  // What is dropped is the assumption that one pause produces one notice — which was never a
+  // property of the pause, only of the code that read it.
   const entry = (item.recallHistory ?? []).find((candidate) =>
-    candidate.operationId === intent.operationId && candidate.holderNoticeIntentId === intent.intentId);
-  if (!entry || entry.beforeStateHash !== intent.beforeStateHash) {
+    candidate.operationId === intent.operationId && candidate.beforeStateHash === intent.beforeStateHash);
+  if (!entry) {
     throw new Error(`recall intent ${intent.intentId} has no exact before-state history`);
   }
   return entry;

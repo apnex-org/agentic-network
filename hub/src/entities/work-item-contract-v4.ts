@@ -862,7 +862,26 @@ export interface RecallHistoryEntryV4 {
 export interface PendingRecallIntentV4 {
   intentId: string;
   operationId: string;
+  /**
+   * THE RECIPIENT ROUTING KEY. `recall-notice-projector.ts` sends to
+   * `target: { agentId: intent.exactHolderAgentId }`, so this field decides who is notified.
+   *
+   * 🔴 work-540: FOR AN AUTHOR NOTICE THIS CARRIES THE AUTHOR, NOT A HOLDER. The name predates the
+   * author channel and is now narrower than the field's meaning — read `recipientKind` to know which
+   * you are looking at. Renaming it would touch a REQUIRED, INDEXED storage field
+   * (`workrevnotice_spec_holder_idx`) for a cosmetic gain, so the name stays and the ambiguity is
+   * resolved by an explicit discriminator instead of by a reader's assumption.
+   */
   exactHolderAgentId: string;
+  /**
+   * work-540: which channel produced this intent. `"holder"` when the row had a live lease (the
+   * pre-existing behaviour, and the default when absent so every already-persisted intent reads
+   * correctly); `"author"` for the notice sent to `createdBy.agentId`.
+   *
+   * The author notice exists because THE HOLDER CHANNEL CANNOT COVER A ROW WITH NO HOLDER — a row
+   * suspended from `ready` has nobody to notify, which is the case the Director asked for.
+   */
+  recipientKind?: "holder" | "author";
   beforeStateHash: Sha256Hex;
   createdAt: string;
   projectedMessageId: string | null;
