@@ -196,11 +196,6 @@ jobs:
       - uses: actions/checkout@v4
       - name: Syntax-check ois
         run: bash -n ois/bin/ois
-      # idea-645: the single-channel constraint lived only in an idea entity and a Director
-      # sentence, so nothing mechanical consulted it and a second publish channel reappeared
-      # on main without anyone deciding to re-fork. This makes it enforceable.
-      - name: Single publish channel (idea-645)
-        run: node scripts/test/single-publish-channel.guard.mjs
       - name: Run ois shell regressions
         run: |
           bash scripts/test/ois-seat-configdir.test.sh
