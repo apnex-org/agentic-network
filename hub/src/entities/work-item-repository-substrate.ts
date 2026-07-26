@@ -1309,6 +1309,41 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       next.references = [...(before.references ?? []), ...mutation.appendReferences];
     }
     next.updatedAt = this.clock.now().toISOString();
+    // ── work-553 / bug-390: RE-FREEZE THE PAUSED-ROW AUTHORITY BASELINE ON A SANCTIONED EDIT ───────
+    //
+    // Reaching this line MEANS the mutation cleared every gate above — the tier gate, the pre-claim
+    // gates, the currentness fence. On a SUSPENDED row that is precisely a sanctioned MINOR-tier edit,
+    // and it is the only kind of edit that can arrive here in that state.
+    //
+    // Without this, `unpause` later recomputes the authority, compares it against the baseline frozen
+    // at PAUSE time, finds the edit, and refuses with "claimant row or generation edges changed while
+    // paused; create a semantic revision" — STRANDING THE ROW. The remedy that refusal names was
+    // `revise_work`, retired in #685, and it never worked on legacy rows anyway (its `!head` throw).
+    // So the row had no exit at all: pause -> modify -> unpause is idea-640's headline workflow and its
+    // last step refused because its middle step succeeded.
+    //
+    // 🔴 THIS RIDES THE SAME `putIfMatch` AS THE EDIT, DELIBERATELY. A separate write would open a
+    // crash window in which the row carries the edit but not the updated baseline — which is exactly
+    // the stranded state this repairs, reintroduced as a race. One CAS: both or neither.
+    //
+    // `frozenAuthority` is NOT touched — it stays the immutable record of the row at pause time.
+    // ONLY when the authority ACTUALLY MOVED. A `priority`-only amendment is legal on a suspended row
+    // but `priority` is not in the claimant projection at all, so it cannot trip the freeze — writing a
+    // baseline there would record a value identical to the one already stored, perturbing the row (and
+    // its recallHistory) for no reason. Narrowing here is what lets the pre-existing
+    // `pause-recall-frozen-authority-v4` deep-equal contract test stay green WITHOUT EDITING IT, which
+    // is the evidence that this change preserves behaviour rather than the evidence being my say-so.
+    if (isSuspended(next) && (next.recallHistory?.length ?? 0) > 0) {
+      const history = [...next.recallHistory!];
+      const lastIndex = history.length - 1;
+      const last = history[lastIndex]!;
+      const baseline = last.sanctionedAuthority ?? last.frozenAuthority;
+      const rederived = this.deriveFrozenRecallAuthority(next);
+      if (baseline && baseline.authorityHash !== rederived.authorityHash) {
+        history[lastIndex] = { ...last, sanctionedAuthority: rederived };
+        next.recallHistory = history;
+      }
+    }
     const result = await this.substrate.putIfMatch(KIND, next, existing.resourceVersion);
     if (!result.ok) {
       throw new TransitionRejected(`update rejected: stale write on ${workId} (the row changed under you) — re-read and re-decide`);
@@ -2691,7 +2726,15 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (!isSuspended(w)) throw new TransitionRejected(`unpause requires a SUSPENDED row; ${w.id} is not suspended (status=${w.status})`);
       const lastRecall = (w.recallHistory ?? []).at(-1);
       const currentAuthority = this.deriveFrozenRecallAuthority(w);
-      this.assertFrozenRecallAuthorityUnchanged(lastRecall?.frozenAuthority, currentAuthority, w.id);
+      // work-553 / bug-390: compare against the LATEST SANCTIONED baseline, falling back to the
+      // pause-time freeze when no gated edit landed. The fallback is what keeps this fail-closed for
+      // rows paused before work-553 shipped and for rows nobody edited — the guard is unchanged in
+      // every case except the one it was wrongly firing on.
+      this.assertFrozenRecallAuthorityUnchanged(
+        lastRecall?.sanctionedAuthority ?? lastRecall?.frozenAuthority,
+        currentAuthority,
+        w.id,
+      );
       const isCreator = await this.originalCreatorAgentId(w) === actor.agentId;
       const creatorCompatibility = isCreator
         && !w.predecessorPhysicalId
@@ -2834,7 +2877,40 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       // preservation throughout this arc, and here it is exactly backwards. The protection lives in a
       // DIFFERENT verb from the tier it protects, so nobody reading the FULL-tier branch sees why
       // evidence-freeness matters. Softening this silently reopens bug-383's class.
-      return { ...w, lease: null, evidence: [], attestations: {}, attestationHistory: [], updatedAt: nowISO };
+      // ── work-553 / bug-390: RESET IS ALSO THE RECOVERY DOOR FOR AN ALREADY-STRANDED ROW ──────────
+      //
+      // The re-freeze on the `update_work` write path PREVENTS stranding from here on. IT RECOVERS
+      // NOTHING. A row stranded BEFORE that shipped carries no `sanctionedAuthority`, so `unpause`
+      // falls back to a `frozenAuthority` that no longer describes it, mismatches, and refuses — which
+      // is precisely the state work-551, work-556 and the arc's own controller are in right now.
+      // Prevention and recovery are DIFFERENT REPAIRS and shipping only the first leaves them frozen.
+      //
+      // WHY RESET IS THE RIGHT DOOR AND NOT A LOOPHOLE: it is steward-only, and by the time we reach
+      // this line it has ALREADY discarded evidence, attestations and attestationHistory. The bug-383
+      // attack needs forward-satisfying artifacts to SURVIVE a re-scope; none do. So "the steward
+      // deliberately re-scoped this node and accepts its current shape as the baseline" is exactly what
+      // reset already means — this only writes that down where `unpause` can read it.
+      //
+      // It is NOT unconditional forgiveness: nothing here re-baselines a row a steward has not
+      // explicitly reset, and the re-freeze never runs inside `unpause` itself. If it did, every drift
+      // would become forgivable and the guard would be decorative.
+      // ONLY when the row has ACTUALLY DRIFTED from its baseline — i.e. only when it is stranded.
+      // A reset on an undrifted row writes NOTHING to recallHistory, which is what keeps the
+      // pre-existing `pause-retains-lease-reset-v4` assertion — "provenance of what happened TO the row
+      // survives" — green WITHOUT EDITING IT. That test is the counter-control that pays for the
+      // evidenceRequirements widening, and a fix of mine that forced an edit to it would be removing a
+      // control to make my own change fit.
+      const resetRecall = w.recallHistory ?? [];
+      const resetLast = resetRecall.at(-1);
+      const resetBaseline = resetLast?.sanctionedAuthority ?? resetLast?.frozenAuthority;
+      const resetRederived = resetLast
+        ? this.deriveFrozenRecallAuthority({ ...w, lease: null, evidence: [], attestations: {}, attestationHistory: [] })
+        : undefined;
+      const rebaselined = resetLast && resetBaseline && resetRederived
+        && resetBaseline.authorityHash !== resetRederived.authorityHash
+        ? resetRecall.map((entry, i) => (i === resetRecall.length - 1 ? { ...entry, sanctionedAuthority: resetRederived } : entry))
+        : resetRecall;
+      return { ...w, lease: null, evidence: [], attestations: {}, attestationHistory: [], recallHistory: rebaselined, updatedAt: nowISO };
     });
   }
 
