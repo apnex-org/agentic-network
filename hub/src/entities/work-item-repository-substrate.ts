@@ -1073,8 +1073,18 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // later reports it as a regression. Conversely `runbook`/`payload`/`roleEligibility` were PRE-CLAIM
     // ONLY and are now editable at MINOR — the amendment decision-11's own out-of-scope list invited:
     // "lease-holder mutation authority (revisit with evidence)". idea-640 is that revisit.
+    // 🔴 "LIVE" MEANS HELD, NOT MERELY UNSUSPENDED — and getting this wrong OVER-refuses.
+    // An unclaimed `ready` row has no holder, so editing it disturbs nobody, and decision-11's
+    // pre-claim authoring is untouched by the supersession: the table lists runbook/payload/
+    // roleEligibility as WIDENED only. Reading the Director's absolute as "not suspended => refuse"
+    // would silently ALSO remove pre-claim editing — a narrowing the supersession does not record, and
+    // one that breaks the binding rows this fleet authors constantly. MEASURED TWICE: the mutability
+    // table redded `targetRef @ ready -> ALLOW` and `runbook @ ready -> ALLOW` both times I got it wrong.
+    //   no lease                 -> ready/unclaimed OR post-reset FULL tier -> ALLOWED
+    //   lease + suspended        -> MINOR tier                              -> ALLOWED (these fields)
+    //   lease + NOT suspended    -> LIVE AND HELD                           -> REFUSED
     const suspendedForEdit = isSuspended(before);
-    if (changesClaimantAuthority && (activePin.mode === "generation" || !suspendedForEdit)) {
+    if (changesClaimantAuthority && (activePin.mode === "generation" || (!!before.lease && !suspendedForEdit))) {
       throw new WorkGraphCurrentnessRejected(
         "workgraph.currentness.revision_required",
         activePin.mode === "generation"
