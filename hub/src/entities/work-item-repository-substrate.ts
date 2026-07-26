@@ -1080,14 +1080,46 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       appendCompletionDependsOn?: string[];
       appendReferences?: WorkItemReference[];
     },
+    /**
+     * work-560: the CURRENT LEASE HOLDER, resolved to a role by the policy layer.
+     *
+     * 🔴 IT CARRIES THE agentId AS WELL AS THE role, AND THAT PAIRING IS THE POINT — NOT PADDING.
+     * The policy layer reads the row, resolves `lease.holder -> role`, and calls; the substrate then
+     * re-reads the row inside the CAS. Those are two different reads, so the holder CAN move between
+     * them. A bare role would let this guard enforce a role belonging to a DIFFERENT agent than the
+     * one it is protecting, and it would do so CONFIDENTLY — a fail-open wearing a fail-closed's
+     * clothes, which is the precise shape work-560's runbook told me to handle:
+     *   "fail-closed on UNRESOLVABLE is not enough if the store can resolve a WRONG answer confidently."
+     * A stale-by-race answer IS a confidently wrong answer. Carrying the subject with the claim lets
+     * the substrate verify the resolution is ABOUT the holder it is actually enforcing against, and
+     * REFUSE when it is not. THE RESOLUTION AND ITS SUBJECT TRAVEL TOGETHER OR NEITHER IS TRUSTWORTHY.
+     *
+     * 🔴 IT IS A RESOLVED FACT, NOT A CALLER INPUT, AND THAT DISTINCTION IS THE WHOLE SAFETY ARGUMENT.
+     * The seam comment below warns that a new parameter here could become caller-suppliable. VERIFIED
+     * IT CANNOT: `update_work`'s TOP_LEVEL_PARAMS is a fixed list (work-item-policy.ts:862) and any
+     * other top-level key is rejected at :864, while `set` is a `.strict()` zod object that rejects
+     * unknown keys. There is no route from an agent's arguments to this parameter — the policy layer
+     * computes it from `before.lease.holder` via the agent registry.
+     *
+     * WHY IT IS PASSED DOWN RATHER THAN CHECKED ABOVE: the invariant lives HERE, on the row. A guard
+     * placed in the policy layer would be real for `update_work` callers and ABSENT for every
+     * substrate-direct caller — the exact class this arc filed twice (Q3 reading ALLOWED_SET as a
+     * capability claim about this layer; seven tests reaching past the policy layer to a doorless
+     * verb). The substrate cannot resolve agentId -> role itself: it has NO registry handle, a wall
+     * this file already documents at :1946 about quarantine. So the resolution happens where the
+     * registry is and the ENFORCEMENT happens where the invariant is.
+     *
+     * `undefined`/`null` mean UNRESOLVED and are FAIL-CLOSED for a roleEligibility edit on a leased row.
+     */
+    resolvedHolder?: { agentId: string; role: string } | null,
   ): Promise<{ before: WorkItem; after: WorkItem }> {
-    // The PUBLIC seam. Signature deliberately UNCHANGED and carrying no bypass flag: `update_work`
+    // The PUBLIC seam. Carries no bypass flag: `update_work`
     // lists appendCompletionDependsOn in TOP_LEVEL_PARAMS (work-item-policy.ts:826), so any opt-out
     // parameter here would be caller-suppliable and would hand every caller a live-row claimant edit.
     // The writer fence is entered HERE, at the public boundary, not inside the shared impl — the
     // currentness inventory guard reads this method's own source and must be able to see it.
-    if (!this.currentness.currentPin()) return this.withWriterFence(() => this.updateWorkItem(workId, actor, mutation));
-    return this.applyWorkItemMutation(workId, actor, mutation, false);
+    if (!this.currentness.currentPin()) return this.withWriterFence(() => this.updateWorkItem(workId, actor, mutation, resolvedHolder));
+    return this.applyWorkItemMutation(workId, actor, mutation, false, resolvedHolder);
   }
 
   /**
@@ -1133,6 +1165,10 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       { role: "architect", agentId: PR_REVIEW_PROJECTION_AUTHOR_AGENT_ID },
       mutation,
       true,
+      // work-560: NO holderRole, and it is not an omission. This seam builds its own mutation from a
+      // relation + one id (above), so `set` is structurally absent and `set.roleEligibility` can never
+      // be present — the holder-eligibility guard cannot be reached from here. Passing a resolved role
+      // would be inventing an input for a code path that has no way to consume it.
     );
   }
 
@@ -1146,6 +1182,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       appendReferences?: WorkItemReference[];
     },
     systemProjectionSeam: boolean,
+    /** work-560: the lease holder + their resolved role. See updateWorkItem's JSDoc for why both. */
+    resolvedHolder?: { agentId: string; role: string } | null,
   ): Promise<{ before: WorkItem; after: WorkItem }> {
     // Both public entry points enter the fence before delegating here, so a pin is always active.
     const activePin = this.currentness.currentPin()!;
@@ -1369,23 +1407,93 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     }
     if (set.roleEligibility !== undefined) {
       if (!preClaimOrSuspended) throw new TransitionRejected(`update rejected: roleEligibility is editable pre-claim or while SUSPENDED (status=${before.status}, suspended=false).\nCONSEQUENCE: pause the node, then edit.`);
-      // 🔴 THE ARCHITECT-RULED HOLDER-ELIGIBILITY GUARD IS **NOT BUILT HERE**, AND THE REASON IS
-      // STRUCTURAL RATHER THAN A JUDGEMENT ABOUT ITS SCOPE. The ruling — "refuse a roleEligibility
-      // change that would make the CURRENT LEASE HOLDER ineligible" — needs the HOLDER'S ROLE.
-      // `lease.holder` is an agentId; `roleEligibility` is a list of role strings; mapping one to the
-      // other requires the agent registry, and THIS LAYER CANNOT SEE IT. The file already says so, at
-      // :1946, about a different gate: quarantine "lives in the policy-layer engineerRegistry the repo
-      // store cannot see". Same wall, second instance.
+      // 🔴 THE HOLDER-ELIGIBILITY GUARD — BUILT HERE, WHERE THE INVARIANT LIVES. (work-560, architect
+      // option (b).) work-554 deferred this clause rather than shipping it in the policy layer, because
+      // A GUARD PLACED ONE LAYER ABOVE THE INVARIANT IT PROTECTS IS BYPASSED BY EVERY SUBSTRATE-DIRECT
+      // CALLER — the class this arc filed twice (Q3 reading the policy ALLOWED_SET as a capability claim
+      // about THIS layer; work-552's seven tests reaching past the policy layer to a doorless verb).
+      // The resolution happens where the registry is; the ENFORCEMENT happens where the row is.
       //
-      // I am NOT silently substituting a policy-layer guard for a substrate one. A guard placed one
-      // layer above the invariant it protects is bypassed by every substrate-direct caller — and this
-      // arc has spent the day on exactly that class: an allow-list at one layer read as a capability
-      // claim about the layer beneath (Q3), and seven tests that reached past a policy layer entirely
-      // (work-552). Where the guard belongs is an architect's call, not mine to make in a diff.
+      // 🔴 THE PRECONDITION THE RUNBOOK DEMANDED, MEASURED RATHER THAN INHERITED — AND IT CAME BACK
+      // INVERTED. The node warned that the registry might be STALE, so that `resolvable` would not mean
+      // `correct` and the guard would be a fail-open dressed as a fail-closed. Measured:
+      //   work-item-policy.ts:145  engineerRegistry.listAgents() IS the reviewer-eligibility source
+      //   agent-repository-substrate.ts:300  listAgentsRaw applies NO archived and NO liveness filter
+      //   live: get_agents default -> 3 rows;  get_agents includeAll -> 37 rows
+      // THE REGISTRY IS NOT STALE, IT IS COMPLETE; the OPERATOR VIEW hides tombstoned seats by default
+      // (bug-264). The "agent that does not exist" was `npmclaude0-verify-steve`, a real persisted row.
+      // NEVER ENUMERATE A POPULATION THROUGH A SURFACE THAT FILTERS IT.
       //
-      // REPORTED, NOT SMUGGLED. The three-field widening below is the node's core deliverable and is
-      // fully constructible; this one clause is not, at this layer, and is awaiting a ruling.
-      next.roleEligibility = set.roleEligibility;
+      // AND THE PRECONDITION HOLDS HERE FOR A NARROWER REASON THAN "THE REGISTRY IS FINE": bug-395 is a
+      // SELECTION defect, and this guard PERFORMS NO SELECTION. It resolves ONE id that the LEASE
+      // ITSELF ATTESTS — the holder claimed this row, so the row existed at claim time. A pinpoint read
+      // cannot pick the wrong candidate out of a population it never enumerates.
+      //
+      // NO LIVENESS GATE, ARCHITECT-RULED: an OFFLINE holder is a normal transient state (this seat was
+      // offline four times today). Eligibility is about ROLE, not reachability, and conflating them
+      // would strand every node whose holder is momentarily disconnected.
+      // 🔴 THE HOLDER IS READ FROM `before` — THE ROW THE CAS ITSELF LOADED — NOT FROM THE CALLER.
+      // Deriving the subject inside the compare-and-swap is what makes the check about the row being
+      // written rather than about a row someone observed earlier (the work-168 lesson).
+      const holder = before.lease?.holder;
+      const proposed = set.roleEligibility;
+      const current = before.roleEligibility ?? [];
+      // 🔴 ONLY A NARROWING CAN ORPHAN ANYONE — SO ONLY A NARROWING NEEDS A RESOLUTION.
+      //
+      // THIS CLAUSE EXISTS BECAUSE THE FIRST VERSION OF THIS GUARD BROKE work-554's DELIVERED
+      // CAPABILITY, AND ONLY work-554's OWN PRE-EXISTING TEST CAUGHT IT. Demanding a resolved holder
+      // for EVERY roleEligibility edit meant that any unresolvable holder turned a working MINOR-tier
+      // edit into a hard refusal — a fail-closed correctly protecting an invariant that this edit could
+      // not have violated. A GUARD PROVEN SIX WAYS STILL SAYS NOTHING ABOUT WHO RELIED ON WHAT IT NOW
+      // REFUSES; the mutation matrix was green and the regression was one file away.
+      //
+      //   proposed EMPTY            -> ANY-ROLE (audit-4085; assertRoleEligible at :339 agrees).
+      //                                Excludes nobody. Cannot orphan. No resolution needed.
+      //   current ⊆ proposed        -> a WIDENING. The holder was eligible under `current` (claim
+      //                                asserted it), and `proposed` contains `current`, so they remain
+      //                                eligible WHATEVER their role is. No resolution needed.
+      //   current EMPTY, proposed not -> NOT a widening, it is the sharpest NARROWING there is: from
+      //                                any-role to a named set. Falls through to the check. This is the
+      //                                case a naive superset test gets wrong, because ⊇ ∅ is always true.
+      //
+      // The registry is consulted ONLY when the edit can actually strand the holder. That is the
+      // ruling implemented precisely — "refuse a change that would EXCLUDE the current holder" — rather
+      // than a broader refusal that merely contains it.
+      const canOrphan = proposed.length > 0 && !(current.length > 0 && current.every((r) => proposed.includes(r)));
+      if (holder && canOrphan) {
+        if (!resolvedHolder) {
+          // FAIL-CLOSED ON UNRESOLVABLE. A guard that silently no-ops when its input is missing is the
+          // fail-open shape this arc has filed three times; skipping the check here would make the
+          // protection depend on the caller having remembered to supply it.
+          throw new TransitionRejected(
+            `update rejected: ${workId} is held by ${holder}, and their role could not be resolved, so the holder-eligibility guard cannot be evaluated.\n` +
+            `MECHANICS: a roleEligibility edit on a LEASED row requires the holder's resolved role. The substrate has no agent-registry handle (the same wall documented at :1946 for quarantine), so the policy layer resolves it and passes it down.\n` +
+            `RATIONALE: refusing is the only safe answer. Proceeding would let an unresolvable holder pass a check that exists precisely to protect them — a guard that no-ops on missing input protects nothing while reading as protection.\n` +
+            `CONSEQUENCE: nothing has been changed by this call. If the holder is a live agent this is a wiring fault, not a policy refusal — report it rather than working around it.`,
+          );
+        }
+        if (resolvedHolder.agentId !== holder) {
+          // 🔴 THE RESOLUTION IS ABOUT SOMEONE ELSE. The policy layer read the row, resolved a role, and
+          // called; this CAS re-read the row and found a DIFFERENT holder. Enforcing the supplied role
+          // here would check the wrong agent's eligibility while reporting success — CONFIDENTLY WRONG,
+          // which the runbook named as the failure mode that fail-closed-on-missing does not cover.
+          throw new TransitionRejected(
+            `update rejected: ${workId}'s holder changed between resolution and write — the role supplied describes ${resolvedHolder.agentId} (${resolvedHolder.role}) but the row is now held by ${holder}.\n` +
+            `MECHANICS: the policy layer resolves the holder's role from the agent registry; the substrate re-reads the row inside the CAS. A lease that moves between those two reads makes the resolution describe a different agent than the one being protected.\n` +
+            `RATIONALE: a guard that evaluated the supplied role anyway would be checking the wrong agent and would report success — an answer that is wrong rather than missing, which no fail-closed-on-absent check catches.\n` +
+            `CONSEQUENCE: nothing has been changed by this call. Retry: the retry resolves against the current holder.`,
+          );
+        }
+        if (!proposed.includes(resolvedHolder.role)) {
+          throw new TransitionRejected(
+            `update rejected: ${workId} is held by ${holder} (role ${resolvedHolder.role}), and the proposed roleEligibility [${proposed.join(", ")}] does not include ${resolvedHolder.role}.\n` +
+            `MECHANICS: the edit would leave the current lease holder ineligible for the node they are holding — they could keep working it but could never re-claim it, and no other ${resolvedHolder.role} could take it either.\n` +
+            `RATIONALE: roleEligibility is the claim predicate. Narrowing it past a sitting holder orphans live work without abandoning it — the same stranded state bug-392 produced by a different route, and nothing else in this file would catch it.\n` +
+            `CONSEQUENCE: nothing has been changed by this call. Include ${resolvedHolder.role} in the set, use an empty set (any-role), or release/abandon the lease first — then narrow.`,
+          );
+        }
+      }
+      next.roleEligibility = proposed;
     }
     if (mutation.appendDependsOn?.length) {
       if (!preClaim) throw new TransitionRejected(`update rejected: dependsOn appends only while ready (status=${before.status}) — re-gating a claimed item would yank a claimant's floor`);
