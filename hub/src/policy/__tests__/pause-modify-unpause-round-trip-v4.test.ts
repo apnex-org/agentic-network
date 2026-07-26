@@ -163,6 +163,33 @@ describe("work-553 / bug-390 — pause -> modify -> unpause completes through th
     expect((await repo.getWorkItem(id))!.suspended).toBe(false);
   });
 
+  it("🔴 THE SYSTEM PROJECTION SEAM re-baselines too — a review edge cannot strand a suspended node", async () => {
+    // THE SECOND ENTRY PATH INTO THE RE-FREEZE, and it does NOT clear the tier gate — it SKIPS it
+    // (`systemProjectionSeam: true`). Its sanction is that the path is not caller-reachable: one live
+    // caller, the PR-review reconciler, which builds its own mutation and stamps a system author.
+    //
+    // Asserted rather than left as a side effect, because an intended behaviour nobody wrote down is
+    // indistinguishable from an accident the next reader will "clean up". Without this, a review
+    // obligation landing on a SUSPENDED node moves `nodeTopologyHash` and strands it — bug-390 again,
+    // but arriving from the system's own hand, so no human action would explain it.
+    //
+    // This is also the seam whose #682 change broke `complete_work` fleet-wide: A MUTATION MATRIX
+    // PROVES A GUARD FIRES; IT SAYS NOTHING ABOUT WHO ELSE RELIES ON THE PATH. This is that check.
+    const { ctx, repo } = realCtx("architect");
+    const { id } = await liveRow(repo);
+    const reviewId = await otherRow(repo);
+    await router.handle("pause_work", { workId: id, operationId: "op-rt-S", reason: "seam" }, ctx);
+
+    await repo.appendSystemProjectionEdge(id, "appendCompletionDependsOn", reviewId);
+    expect((await repo.getWorkItem(id))!.completionDependsOn, "the system edge landed").toContain(reviewId);
+
+    const resumed = await router.handle("unpause_work", { workId: id }, ctx);
+    expect(resumed.isError, JSON.stringify(body(resumed))).toBeFalsy();
+    const after = (await repo.getWorkItem(id))!;
+    expect(after.suspended, "the node is NOT stranded by the system's own edge").toBe(false);
+    expect(after.completionDependsOn).toContain(reviewId);
+  });
+
   it("a pause with NO edit still round-trips — the untouched path is unchanged", async () => {
     // The control. This is the case that already worked (work-551 was the accidental live control),
     // and a fix that only makes the edited path pass while breaking this one would be no fix.
