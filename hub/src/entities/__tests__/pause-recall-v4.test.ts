@@ -143,14 +143,46 @@ describe("pause/recall-v4 authority and exact state", () => {
     // phase was always providing; retaining the token restores no capability whatsoever.
     // Asserting on `paused` rather than on a lease phrase pins the refusal to its ACTUAL mechanism, so
     // this reds if a verb ever starts admitting a paused row.
-    const messages: string[] = [];
-    for (const call of calls) {
-      await expect(call()).rejects.toThrow();
-      await call().catch((e: Error) => messages.push(e.message));
+    // 🔴 A TABLE, NOT AN ALTERNATION — AND THIS IS THE POINT OF THE WHOLE TEST.
+    // What stood here was ONE regex applied to all seven verbs. Its failure direction was FAIL-OPEN
+    // ON *WHY*, NOT ON *WHETHER*: a verb that refused for an unrelated reason still passed. That is
+    // precisely how a suspension guard silently regresses into a lease guard — delete the suspension
+    // check, leave the lease check standing, and the suite stays green.
+    //
+    // AN ASSERTION WHOSE CHEAPEST REPAIR IS TO WEAKEN IT IS A RATCHET POINTING THE WRONG WAY. When a
+    // verb legitimately changes its message the alternation reds, and the minimum-effort green is one
+    // more `|alternative`. Every repair widens it monotonically; the limit is /.*/ . Each row below
+    // names ONE verb and the ONE mechanism it must refuse on, so a wrong-reason refusal REDS.
+    //
+    // 🔴 AND THE OLD REGEX DOCUMENTED THE BUG IT SHOULD HAVE FAILED ON. Its fourth alternative was
+    // `abandon requires the lease-holder` — which exists ONLY because abandonWork does NOT route
+    // through the shared assertLease seam. Someone met that divergence and recorded it as an accepted
+    // alternative instead of raising it. `abandon` keeps its own row here, with its own distinct
+    // wording, so the divergence is ASSERTED IN THE OPEN rather than absorbed by an alternation.
+    const expected: Array<[string, RegExp]> = [
+      ["start", /start rejected: .* is SUSPENDED .*accepts no holder verb/],
+      ["block", /block rejected: .* is SUSPENDED .*accepts no holder verb/],
+      ["resume", /resume rejected: .* is SUSPENDED .*accepts no holder verb/],
+      ["renew", /renew rejected: .* is SUSPENDED .*accepts no holder verb/],
+      ["release", /release rejected: .* is SUSPENDED .*accepts no holder verb/],
+      ["complete", /complete rejected: .* is SUSPENDED .*accepts no holder verb/],
+      // abandon guards SEPARATELY (not via assertLease) and says so in its own words.
+      ["abandon", /abandon rejected: .* is SUSPENDED .*cannot be abandoned/],
+    ];
+    expect(expected).toHaveLength(calls.length);
+    for (const [index, call] of calls.entries()) {
+      const [verb, pattern] = expected[index];
+      const message = await call().then(() => "RESOLVED — the verb was ADMITTED on a suspended row", (e: Error) => e.message);
+      expect(message, `${verb} must refuse ON SUSPENSION, by its own name`).toMatch(pattern);
+      // POST-STATE, PER VERB: a refusal that mutated anything is not a refusal. Checked after EACH
+      // call, not once at the end — a verb that moved the row and a later verb that moved it back
+      // would be invisible to a single trailing assertion.
+      const after = (await repo.getWorkItem(item.id))!;
+      expect(after.status, `${verb} must not move the phase`).toBe("blocked");
+      expect(after.suspended, `${verb} must not clear suspension`).toBe(true);
+      expect(after.lease?.token, `${verb} must not disturb the retained lease`).toBe(token);
+      expect(after.lease?.holder, `${verb} must not disturb the holder`).toBe(HOLDER);
     }
-    expect(messages).toHaveLength(calls.length);
-    for (const m of messages) expect(m, `refusal must be PHASE-based: ${m}`).toMatch(/paused/);
-    expect((await repo.getWorkItem(item.id))!.status).toBe("paused");
     // …and the retained lease is intact and still the holder's — the point of the change.
     const paused = (await repo.getWorkItem(item.id))!;
     expect(paused.lease, "pause RETAINS the lease").not.toBeNull();
