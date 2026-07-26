@@ -1,10 +1,25 @@
 /**
  * constitution-sync.ts — mission-103 P3-S1: the A1 poll loop (design v1.0 §3).
  *
+ * WHICH COMMIT GOVERNS: `main`'s HEAD at poll time. mission-kit is OWNED upstream and is a LIVING
+ * pointer by Director ruling (2026-07-25) — the fleet tracks `main` so improvements reach every
+ * seat without a manual bump, and the skills-sync path is governed identically. There is NO
+ * review gate on adoption: any commit that reaches `main`, parses, and drops no live-bound axiom
+ * becomes the governing constitution within one cadence interval. THAT IS THE INTENDED POLICY,
+ * not an oversight. What IS gated is correctness, below: parse and referential, both fail-closed.
+ *
+ * Do not read the word "pinned" on the fetch line as a statement about that choice. The pin is
+ * INTRA-TICK ONLY: once a HEAD sha is selected, the tree and every blob are fetched AT that exact
+ * sha, so a single snapshot can never straddle two commits while `main` moves underneath. It
+ * constrains HOW a candidate is assembled, never WHICH candidate is adopted. (The previous
+ * wording — "at the PINNED sha — never a moving ref" — was exactly true of the fetch and silent
+ * about the selection one line above it, which made it read as a claim that the constitution was
+ * pinned. A comment that is accurate about the wrong step misleads BECAUSE it is accurate.)
+ *
  * The pipeline per tick, in order, with the commit point LAST:
- *   HEAD-sha check (1 API call — steady-state cost)
+ *   HEAD-sha check (1 API call — steady-state cost) — SELECTS the candidate: `main`'s HEAD
  *   → unchanged? CAS-refresh verification health only : rate-budget check (skip fetch-all under headroom floor)
- *   → fetch-all (tree + blobs at the PINNED sha — never a moving ref)
+ *   → fetch-all (tree + blobs at the selected sha — intra-tick pin, so the axiom set cannot straddle two commits)
  *   → PARSE GATE      (fail-closed WHOLE snapshot: malformed axiom file)
  *   → REFERENTIAL GATE (fail-closed: live charter bindings must resolve in-candidate)
  *   → build candidate (contentHash per file, manifestHash over the manifest)
