@@ -18,7 +18,7 @@ import type { IPolicyContext, PolicyResult } from "./types.js";
 import type { PolicyRouter } from "./router.js";
 import { resolveCreatedBy } from "./caller-identity.js";
 import { parsePrEvidenceLocator } from "./pr-evidence-admission-contract.js";
-import { resolvePrEvidenceBinding } from "./pr-evidence-admission-binding.js";
+import { resolvePrEvidenceBinding, prBindingPayloadWriteRefusal } from "./pr-evidence-admission-binding.js";
 import { prEvidenceAdmittedProjection, prEvidenceDeniedProjection, prManualCheckRequiredProjection, prReviewRequiredProjection, type PrEvidenceActionabilityProjection } from "./pr-evidence-actionability.js";
 import { findExistingPrReviewProjection, buildPrEvidenceReviewProjectionKey, projectPrEvidenceReviewWorkItem, reconcilePrReviewProjection } from "./pr-review-workitem-projection.js";
 import {
@@ -852,6 +852,13 @@ async function updateWork(args: Record<string, unknown>, ctx: IPolicyContext): P
   if (set.priority !== undefined && !PRIORITIES.includes(set.priority as string)) {
     return err("invalid_arguments", `update rejected: priority "${String(set.priority)}" is not in the domain ${PRIORITIES.join("/")}`);
   }
+  // idea-641: a payload that CLAIMS to be a PR binding must be well-formed AT WRITE TIME. Applied
+  // on BOTH write verbs deliberately — the defect this arc fixed was a check that existed on one
+  // verb and not the other, and nobody noticed because nothing exercised them separately.
+  if (set.payload !== undefined) {
+    const refusal = prBindingPayloadWriteRefusal(set.payload);
+    if (refusal) return err("invalid_arguments", `update rejected: ${refusal}`);
+  }
   const appendDependsOn = (args.appendDependsOn as string[] | undefined) ?? [];
   const appendCompletionDependsOn = (args.appendCompletionDependsOn as string[] | undefined) ?? [];
   const appendReferences = (args.appendReferences as WorkItemReference[] | undefined) ?? [];
@@ -961,6 +968,15 @@ async function createWork(args: Record<string, unknown>, ctx: IPolicyContext): P
   for (const depId of completionDependsOn) {
     const dep = await store.getWorkItem(depId);
     if (!dep) return err("unresolvable_ref", `completionDependsOn references a non-existent WorkItem: ${depId}`);
+  }
+  // idea-641: same write-time binding-payload gate as update_work. THE POINT OF APPLYING IT HERE
+  // TOO: three malformed binding rows were authored in one evening — one via a JSON-string
+  // payload, one missing changedPaths, one missing obligationKind — and every one of them was
+  // accepted here, then surfaced later as a DIFFERENT refusal at a DIFFERENT gate that named
+  // neither the row nor the field.
+  {
+    const refusal = prBindingPayloadWriteRefusal(args.payload);
+    if (refusal) return err("invalid_arguments", `create rejected: ${refusal}`);
   }
 
   try {

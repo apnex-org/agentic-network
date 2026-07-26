@@ -257,6 +257,29 @@ describe("PR review WorkItem projection", () => {
     expect(attested.item.status).toBe("done");
   });
 
+  it("🔴 bug-383: the reconciler SERVER-STAMPS systemProjection at mint", async () => {
+    // WITHOUT THIS CASE, deleting the stamp at the mint site REDS NOTHING: every predicate test
+    // builds its row by hand, so they would all still pass while NEW projected rows silently lost
+    // the carve-out and re-wedged bug-377. This asserts the write actually reaches the store.
+    const projection = projectPrReviewWorkItem({ ruleResult: allowedRuleResult() });
+    if (projection.action !== "create_review_workitem") throw new Error("expected create");
+    let captured: Record<string, unknown> | null = null;
+    await reconcilePrReviewProjection({
+      projection,
+      binding: { id: "prbind-625", repo: "apnex-org/agentic-network", prNumber: 625, targetWorkId: "work-123", provenance: "hub" },
+      sourceMessageId: "01SOURCE",
+      store: {
+        createBlueprintNode: async (input: Record<string, unknown>) => { captured = input; return { item: { id: "work-created" }, created: true }; },
+        updateWorkItem: async () => ({ before: { id: "work-123" }, after: { id: "work-123" } }),
+      } as never,
+    });
+    expect(captured, "the reconciler must have reached createBlueprintNode").not.toBeNull();
+    expect((captured as unknown as { systemProjection?: { ruleId: string } }).systemProjection)
+      .toEqual({ ruleId: "pr_evidence_admission_review_gate_v0" });
+    // And it must NOT be smuggled through payload — payload is caller-writable, which is bug-383.
+    expect((captured as unknown as { payload: Record<string, unknown> }).payload.systemProjection).toBeUndefined();
+  });
+
   it("keeps denied rule decisions fallback-only", () => {
     const denied = evaluatePrReviewRequestRule({
       event: normalizePrReviewRequestEvent({
