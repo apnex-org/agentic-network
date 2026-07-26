@@ -52,7 +52,12 @@ describe("paused-state — FSM + authority", () => {
       await drive(id);
       const w = await pause(repo, id);
       expect(w!.status).toBe("paused");
-      expect(w!.lease).toBeNull();
+      // idea-640 (A): was `expect(w!.lease).toBeNull()`. Pause RETAINS lease + holder + token so the
+      // ratified middle tier (paused WITH the lease = minor edits) can exist at all; `reset` is what
+      // revokes it. The row is still inert — every holder verb gates on STATUS, and `paused` is in no
+      // phase set — so "clears live state" is now true of AUTHORITY-TO-ACT, not of the lease field.
+      expect(w!.lease, "pause retains the lease").not.toBeNull();
+      expect(w!.lease!.holder).toBe("agent-eng");
       expect(w!.blockedOn).toBeNull();
       expect(w!.pendingRecallIntents).toHaveLength(1);
     }

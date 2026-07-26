@@ -2609,7 +2609,26 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         return {
           ...w,
           status: "paused" as const,
-          lease: null,
+          // idea-640 (A): PAUSE RETAINS THE LEASE, HOLDER AND TOKEN. It used to set `lease: null`.
+          //
+          // MECHANICS: the row keeps `lease` untouched while paused. It is NOT exposed to the expiry
+          // sweeper by doing so — `expireLease` (:3506) and BOTH scan paths (:3481 memory, :3484
+          // postgres) gate on `LEASE_HELD_PHASES`, which does not contain `paused`. That skip is keyed
+          // on STATUS, not on the lease being null, so retention changes nothing about reapability.
+          //
+          // RATIONALE: the Director's ratified edit model has THREE tiers — live (no edits), paused
+          // WITH the lease intact (minor edits), paused with the lease revoked by `reset` (anything).
+          // NULLING THE LEASE HERE COLLAPSES THE MIDDLE TIER OUT OF EXISTENCE: every paused row would be
+          // lease-less, and `reset` would have nothing left to revoke. Lease retention is what makes the
+          // ratified model expressible; it is not, by itself, a bug fix.
+          //
+          // CONSEQUENCE: a paused row now carries a lease whose `expiresAt` is frozen in the past for the
+          // duration of the pause. That is safe WHILE paused (see MECHANICS) and is refreshed on unpause
+          // (see unpauseWork) — an unpause that restored a stale `expiresAt` into a lease-held phase would
+          // hand back a row the sweeper reaps immediately.
+          //
+          // NOT CLAIMED: bug-384's evidence-stranding was ALREADY closed in production before this change,
+          // by the same-holder `claimedAt` preservation in claimWorkItem (:2251). This does not fix that.
           blockedOn: null,
           recallHistory: [...(w.recallHistory ?? []), history],
           pendingRecallIntents: notice ? [...(w.pendingRecallIntents ?? []), notice] : (w.pendingRecallIntents ?? []),
@@ -2713,7 +2732,109 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         throw new WorkGraphCurrentnessRejected(code, "unpause requires the original creator who paused this unchanged row, architect, or Director; holder/reviser status grants no authority");
       }
       const nowISO = this.clock.now().toISOString();
-      return { ...w, status: "ready" as const, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
+      // idea-640 (A): UNPAUSE RESTORES THE PRE-PAUSE PHASE. It used to hard-code `ready`.
+      //
+      // MECHANICS: the phase is read from the LATEST recallHistory entry — the pause that is being
+      // undone. (Contrast `priorLeaseFloorFor`, which takes the EARLIEST entry because it wants the
+      // original claim. Two histories, opposite ends; do not copy one into the other.) A row with no
+      // recall history, or a legacy entry with no recorded phase, falls back to `ready` — the pre-change
+      // behaviour, so nothing already paused is stranded by this.
+      //
+      // RATIONALE: pause now RETAINS the lease. Returning such a row to `ready` produces `ready` + a live
+      // lease — a combination `pauseWork` ITSELF names corrupt and refuses ("pause rejected corrupt ready
+      // row: unexpected live lease"). Worse than an inconsistency: a `ready` row sits in the CLAIMABLE
+      // POOL, so a second agent could claim a row another agent still holds.
+      //
+      // CONSEQUENCE: `unpause` is no longer a synonym for "return to the queue". A row paused from
+      // `in_progress` resumes at `in_progress` with its holder intact and does not need re-claiming,
+      // which is the whole point of the middle tier.
+      // The recorded pre-pause phase is TYPED `ready|claimed|in_progress|blocked` — tsc rejects a
+      // `!== "paused"` guard here as unreachable, which is a compile-time proof that a pause can never
+      // record `paused` and therefore that this cannot restore a row into the state it is leaving.
+      //
+      // 🔴 THE RESTORE TARGET IS GATED ON THE LEASE, NOT ON WHO CLEARED IT. A row whose lease is gone
+      // CANNOT coherently re-enter a lease-held phase: `in_progress` + `lease: null` is a PERMANENT
+      // ZOMBIE — unclaimable (claim requires `ready`) and unreapable (expireLease requires `!!w.lease`),
+      // so nothing in the system can ever move it again. That is the exact mirror of the `ready` + live
+      // lease corruption this change already had to avoid, and it only becomes reachable once BOTH
+      // lease-retention and phase-restoration land: pause from in_progress → `reset` (clears the lease,
+      // stays paused) → unpause would restore `in_progress` with nothing to hold it.
+      //
+      // Deriving this from `w.lease` rather than from a reset-specific marker means it holds for EVERY
+      // path that clears a lease while paused, including ones not yet written. A flag would only cover
+      // the one caller we thought of.
+      const restoredPhase: WorkItemPhase = w.lease ? (lastRecall?.before?.phase ?? "ready") : "ready";
+      // idea-640 (A): REFRESH `expiresAt` FROM NOW WHEN RESTORING INTO A LEASE-HELD PHASE.
+      //
+      // MECHANICS: a retained lease's `expiresAt` is frozen at its pre-pause value, which is in the past
+      // for any pause longer than the TTL. Restoring that verbatim into a LEASE_HELD phase re-enters the
+      // sweeper's scan with an ALREADY-EXPIRED lease, so the row is reaped on the next tick.
+      //
+      // RATIONALE: this is bug-384's M4 trap on a different verb — there, deriving `expiresAt` from a
+      // PRESERVED `claimedAt` minted a lease expired at the moment of claim. `claimedAt` is deliberately
+      // NOT refreshed: preserving it is what keeps evidence produced before the pause admissible, and it
+      // is the same invariant claimWorkItem protects for a same-holder re-claim.
+      //
+      // CONSEQUENCE: the holder gets a full fresh window on resume; the pause costs no lease time.
+      const restoringHeldLease = w.lease !== null && LEASE_HELD_PHASES.includes(restoredPhase);
+      const lease = restoringHeldLease
+        ? {
+            ...w.lease!,
+            expiresAt: new Date(this.clock.now().getTime() + leaseTtlMsFor(w)).toISOString(),
+            heartbeatAt: nowISO,
+          }
+        : w.lease;
+      return { ...w, status: restoredPhase, lease, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
+    });
+  }
+
+  /**
+   * idea-640 (B) — `reset`: the DELIBERATE version of what pause used to do accidentally.
+   *
+   * Legal ONLY on a paused row. Revokes the lease and nullifies submitted evidence, and LEAVES THE ROW
+   * PAUSED so the caller decides when it re-enters the queue.
+   *
+   * WHAT IT DELIBERATELY DOES **NOT** TOUCH, and why each one is a decision rather than an oversight:
+   *  - `failedGateSeal` + `attestations` + `attestationHistory` — A FAILED GATE IS NEVER ERASED. Standing
+   *    position across mission-140/141 and trapfix0; the seal is load-bearing history, and a verb that
+   *    could erase a verifier's FAIL would be a self-clearing gate.
+   *  - `recallHistory` / `executorHistory` / `stateDurations` — append-only provenance. Reset changes what
+   *    the row is ASKING FOR, never the record of what happened to it.
+   *  - `blockedOn` — pauseWork nulls this, DESTROYING a blocked row's blocker record (observed, filed, NOT
+   *    fixed here). Reset must not replicate a data loss just because a sibling verb has it.
+   */
+  async resetWork(workId: string, actor: { agentId: string; role: string }): Promise<WorkItem | null> {
+    if (!this.currentness.currentPin()) return this.withWriterFence(() => this.resetWork(workId, actor));
+    return this.tryCasUpdate(workId, (w) => {
+      this.assertNotFailedSealed(w);
+      if (w.status !== "paused") {
+        throw new TransitionRejected(
+          `reset requires paused, was ${w.status}.\n` +
+          `MECHANICS: reset revokes the lease and nullifies submitted evidence. It is legal ONLY from ` +
+          `\`paused\`, and it leaves the row paused — it is a scope change, not a lifecycle transition.\n` +
+          `RATIONALE: on a LIVE row this would yank the lease and delete evidence out from under an agent ` +
+          `mid-turn, with no notice and no record on the row of what they had produced. Pausing first is ` +
+          `what makes the revocation visible to the holder and reversible by the controller. The ratified ` +
+          `three-tier model depends on this ordering: live = no edits, paused + lease = minor edits, ` +
+          `paused + reset = anything.\n` +
+          `CONSEQUENCE: pause the row first, then reset it. Nothing has been changed by this call.`,
+        );
+      }
+      const isSteward = actor.role === "architect" || actor.role === "director";
+      if (!isSteward) {
+        throw new TransitionRejected(
+          `reset requires architect or Director, not ${actor.role}.\n` +
+          `MECHANICS: reset destroys submitted evidence and revokes a lease the holder may still believe ` +
+          `they own.\n` +
+          `RATIONALE: it is the gateway to the full edit tier, including \`evidenceRequirements\` — the ` +
+          `contract a node is judged against. An executor who could reset their own row could weaken the ` +
+          `bar they are about to be measured against, which is the self-attestation shape bug-383 closed ` +
+          `on a different surface.\n` +
+          `CONSEQUENCE: ask the architect or the Director to reset this row.`,
+        );
+      }
+      const nowISO = this.clock.now().toISOString();
+      return { ...w, lease: null, evidence: [], updatedAt: nowISO };
     });
   }
 

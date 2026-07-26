@@ -43,14 +43,16 @@ const request = (workId: string, operationId = "pause-op-1", reason = "revise cl
   ({ workId, operationId, reason });
 
 describe("pause/recall-v4 authority and exact state", () => {
-  it("atomically captures the full blocked before-state, clears live authority, and never persists the bearer token", async () => {
+  it("atomically captures the full blocked before-state, and never persists the bearer token IN RECALLHISTORY", async () => {
     const { repo, item } = await fixture();
     const token = await driveBlocked(repo, item.id);
     const exactBefore = (await repo.getWorkItem(item.id))!;
     const paused = (await repo.pauseWork(request(item.id), ARCH))!;
 
     expect(paused.status).toBe("paused");
-    expect(paused.lease).toBeNull();
+    // idea-640 (A): pause RETAINS the lease. Was `expect(paused.lease).toBeNull()`.
+    expect(paused.lease, "pause retains the lease so the minor-edit tier can exist").not.toBeNull();
+    expect(paused.lease!.holder).toBe(HOLDER);
     expect(paused.blockedOn).toBeNull();
     expect(paused.recallHistory).toHaveLength(1);
     const recall = paused.recallHistory![0];
@@ -62,7 +64,19 @@ describe("pause/recall-v4 authority and exact state", () => {
     expect(recall.before.stateHash).toBe(recallStateHash(exactBefore));
     expect(recall.beforeStateHash).toBe(recall.before.stateHash);
     expect(recall.before.lease!.tokenFingerprint).toMatch(/^[0-9a-f]{64}$/);
-    expect(JSON.stringify(paused)).not.toContain(token);
+    // idea-640 (A): scoped from the WHOLE ROW to RECALLHISTORY. Was `JSON.stringify(paused)`.
+    //
+    // THE HISTORY DISCIPLINE IS A REAL, DELIBERATELY-DESIGNED CONTROL AND IT STAYS: the recall record
+    // keeps a SHA-256 `tokenFingerprint`, never the bearer token, so an append-only audit trail cannot
+    // become a credential store.
+    //
+    // THE ROW-LEVEL SCRUB WAS NOT A CONTROL. It held only because pause nulled the lease, and it
+    // protected nothing: `get_work` returns `lease.token` IN PLAINTEXT to any caller who can read the
+    // row, so every claimed/in_progress row already exposes it — measured first-party by the architect,
+    // who read a live holder's token off held rows in the ordinary course of driving an arc. Scrubbing
+    // one paused row while every live row stays plaintext would be a control that looks like protection
+    // and delivers none. Filed as a separate bug, OUT of this arc's bound; NOT fixed or claimed here.
+    expect(JSON.stringify(paused.recallHistory)).not.toContain(token);
     expect(paused.pendingRecallIntents).toHaveLength(1);
     expect(paused.pendingRecallIntents![0]).toMatchObject({ exactHolderAgentId: HOLDER, operationId: "pause-op-1", projectedMessageId: null });
     expect(paused.recallNoticePending).toBe(true);
@@ -121,8 +135,27 @@ describe("pause/recall-v4 authority and exact state", () => {
       () => repo.completeWork(item.id, HOLDER, token, [], { observed: false, summary: "none" }),
       () => repo.abandonWork(item.id, HOLDER, { leaseToken: token }),
     ];
-    for (const call of calls) await expect(call()).rejects.toThrow(/no active lease|lease holder mismatch|lease-holder \(none\)|abandon requires the lease-holder/);
+    // idea-640 (A): pause now RETAINS the lease and token, so these can no longer be refused for
+    // "no active lease". THE PROPERTY IS UNCHANGED AND WAS NEVER THE LEASE'S DOING: every holder verb
+    // gates on STATUS, and `paused` is absent from every phase set — WIP_PHASES, LEASE_HELD_PHASES,
+    // RELEASABLE_PHASES, COMPLETABLE_PHASES — as well as from claim/start/block's individual checks.
+    // The old assertion matched the refusal MESSAGE and so credited the null lease for a guarantee the
+    // phase was always providing; retaining the token restores no capability whatsoever.
+    // Asserting on `paused` rather than on a lease phrase pins the refusal to its ACTUAL mechanism, so
+    // this reds if a verb ever starts admitting a paused row.
+    const messages: string[] = [];
+    for (const call of calls) {
+      await expect(call()).rejects.toThrow();
+      await call().catch((e: Error) => messages.push(e.message));
+    }
+    expect(messages).toHaveLength(calls.length);
+    for (const m of messages) expect(m, `refusal must be PHASE-based: ${m}`).toMatch(/paused/);
     expect((await repo.getWorkItem(item.id))!.status).toBe("paused");
+    // …and the retained lease is intact and still the holder's — the point of the change.
+    const paused = (await repo.getWorkItem(item.id))!;
+    expect(paused.lease, "pause RETAINS the lease").not.toBeNull();
+    expect(paused.lease!.holder).toBe(HOLDER);
+    expect(paused.lease!.token).toBe(token);
   });
 
   it("linearizes pause against every holder verb and the expiry sweeper without zombie authority", async () => {
@@ -166,7 +199,14 @@ describe("pause/recall-v4 authority and exact state", () => {
         expect(final.status).toBe("paused");
         expect(final.recallHistory).toHaveLength(1);
       }
-      expect(final.lease).toBeNull();
+      // idea-640 (A): was `expect(final.lease).toBeNull()`. THE PROPERTY THIS TEST NAMES IS "WITHOUT
+      // ZOMBIE AUTHORITY", and that is asserted on the NEXT line by the renew rejection — which holds
+      // because every holder verb gates on STATUS, not on the lease being absent. A paused row now
+      // RETAINS its lease and holder by design; the terminal paths (complete/abandon) clear it as before.
+      if (final.status === "paused") {
+        expect(final.lease, "a paused row retains its lease").not.toBeNull();
+        expect(final.lease!.holder).toBe(HOLDER);
+      }
       await expect(repo.renewLease(item.id, HOLDER, token)).rejects.toThrow();
     }
     expect(trace.map((entry) => entry.verb)).toEqual(cases);
