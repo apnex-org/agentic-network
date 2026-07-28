@@ -276,6 +276,38 @@ env_lines() {
 # own marketplace-add + cache-wipe target $HOME/.claude (operator dir), NOT the sovereign
 # seats; the per-seat converge in claude_seed is what makes each SEAT live. Result path is
 # process-constant → cached in _CLAUDE_PLUGIN_MP (latch avoids re-running under `seed --all`).
+# 🔴 bug-368 FORWARD-PORT (gauntlet0, 2026-07-28). THIS WAS NEVER IN main.
+# Committed on 91314423, on a branch that NEVER MERGED — yet the LIVE estate has been
+# running it. `git merge-base --is-ancestor 91314423 origin/main` -> NO. So somebody
+# deployed ois from an unmerged branch and production diverged from main invisibly,
+# because the estate carries no provenance stamp (bug-431).
+#
+# THIS IS A FORWARD-PORT, NOT A RESTORE. Nothing was removed; nobody decided to drop it,
+# so there is no decision being overridden. The function body below is taken VERBATIM
+# from the live copy — the only version that has actually run.
+#
+# ⚠️ AND IT IS THE GUARD bug-428 NEEDED. Had it been in main and live, the never-published
+# 0.1.16 pin would have FAILED LOUDLY AT SEED TIME instead of silently breaking fresh
+# seeds for nine days. Deploying canonical without it would have deleted, in the very
+# deploy that fixes bug-428, the check that would have prevented it.
+#
+# Pairs with #706: that guard checks the pin AT MERGE TIME (CI, against the registry);
+# this one checks it AT SEED TIME. Different moments, different failure modes — a pin can
+# be valid at merge and unpublished by the time a seat seeds.
+# bug-368 preflight: can the pinned plugin version actually be OBTAINED from the registry?
+# Returns 0 = resolves · 1 = DEFINITIVELY absent (E404) · 2 = INDETERMINATE (network/registry
+# trouble). The three-way split is deliberate: a definitive 404 is a permanent, actionable fact
+# worth failing on, whereas a transient registry outage must NOT brick seeding — treating "I
+# could not ask" as "the answer is no" would convert a network blip into a fleet-wide seed
+# failure, i.e. the very outage this guard exists to prevent.
+claude_plugin_version_resolves() { # <version> -> 0 resolves | 1 absent | 2 indeterminate
+  local ver="$1" out rc
+  out="$(npm view "@apnex/claude-plugin@$ver" version 2>&1)"; rc=$?
+  [[ $rc -eq 0 && -n "$out" ]] && return 0
+  grep -qiE 'E404|is not in this registry|no matching version' <<<"$out" && return 1
+  return 2
+}
+
 claude_npm_ensure() {
   [[ -n "$_CLAUDE_PLUGIN_MP" ]] && return 0
   command -v npm >/dev/null 2>&1 || fatal "'npm' not found on PATH (needed for @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION)"
@@ -290,7 +322,38 @@ claude_npm_ensure() {
   # re-installing the older registry tarball over the repaired package.
   if [[ "$installed_ver" == "$CLAUDE_PLUGIN_VERSION" ]]; then
     echo "  seeding : using installed @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION at $mp"
+    # bug-368: this path works ONLY because a local copy happens to match the pin. If the pin is
+    # not obtainable from the registry, that local copy is the fleet's ONLY one and nothing can
+    # replace it — a box rebuild, `npm prune`, an nvm/node version change or a stray
+    # `npm uninstall -g` drops straight through to the install branch below and fatals every
+    # claude seat's next seed. WARN, never fatal: seeding demonstrably works right now, and
+    # turning a live working path into a hard failure would BE the outage this guard prevents.
+    if ! claude_plugin_version_resolves "$CLAUDE_PLUGIN_VERSION"; then
+      echo "  ⚠ bug-368: pinned @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION is NOT OBTAINABLE from the registry."
+      echo "  ⚠   Seeding survives only because $mp already holds it. That copy is IRREPLACEABLE:"
+      echo "  ⚠   if it is lost, NO claude seat can seed. Do NOT uninstall/prune it."
+      echo "  ⚠   Remedy is Director-gated (idea-584): publish the pinned version, or re-pin to a published one."
+    fi
   else
+    # bug-368: PREFLIGHT BEFORE INSTALLING. Previously an unobtainable pin surfaced as a generic
+    # `npm install failed` at seed time, which names neither the version nor the remedy. Fail
+    # early and say exactly what is wrong. This is the check that would have caught the 0.1.16
+    # rider before it reached a seat.
+    claude_plugin_version_resolves "$CLAUDE_PLUGIN_VERSION"; local _pf=$?
+    if [[ $_pf -eq 1 ]]; then
+      echo "  ✖ bug-368: @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION does NOT EXIST on the registry (E404)." >&2
+      echo "  ✖   No local copy is present either (installed: ${installed_ver:-none}), so there is nothing to fall back to." >&2
+      echo "  ✖   NOT falling back to another version on purpose: a silent substitution would change which" >&2
+      echo "  ✖   artifact this seat runs without recording it, and you would not know what is deployed." >&2
+      echo "  ✖   Fix CLAUDE_PLUGIN_VERSION (ois:49) to a PUBLISHED version, or publish this one (idea-584)." >&2
+      echo "  ✖   Published versions: $(npm view @apnex/claude-plugin versions --json 2>/dev/null | tr -d ' \n' || echo '<registry unreachable>')" >&2
+      fatal "unobtainable pinned plugin version @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION (bug-368)"
+    elif [[ $_pf -eq 2 ]]; then
+      # Indeterminate: could not reach the registry to ask. Do NOT convert "I could not ask" into
+      # "the answer is no" — that would brick seeding on a transient blip. Warn and let the real
+      # install attempt below produce the authoritative error.
+      echo "  ⚠ bug-368 preflight: could not determine whether @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION exists (registry unreachable); attempting install anyway." >&2
+    fi
     echo "  seeding : npm install -g @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION"
     npm install -g "@apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION" >/dev/null || fatal "npm install -g @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION failed"
   fi
