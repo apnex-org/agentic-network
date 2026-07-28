@@ -83,7 +83,7 @@ network_router_dep="$(node -p "require('$REPO/packages/network-adapter/package.j
 # literals of idea-693: those fail LOUDLY with "wrong package version", this one fails
 # SILENTLY-GREEN. scripts/test/ois-plugin-pin-resolves.test.sh is the durable half —
 # it asks the REGISTRY, which is the only thing that can answer.
-eq "OIS keeps the prior published Claude pin until a separate publication slice" "0.1.20" "$claude_pin"
+eq "OIS keeps the prior published Claude pin until a separate publication slice" "0.1.21" "$claude_pin"
 # 🔴 bug-428 — THE `neq` THAT STOOD HERE TESTED A PROXY, AND THE PROXY WENT FALSE.
 #
 # It asserted `claude_pin != claude_pkg_version`. The PROPERTY it wanted was "the pin must
