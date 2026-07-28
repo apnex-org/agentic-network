@@ -22,13 +22,34 @@
 # ad-hoc use, not fleet-synced). K1/K2 flat rule-cards + O1-convene-council remain
 # Director-owned mission-kit promotions; add them here once promoted.
 #
-# Source is PINNED for reproducible activation — the deployed sync pulls this
-# REVIEWED mission-kit SHA, not whatever `main` happens to be at activation time.
-# To adopt newer mission-kit skills: review the target commit, then bump
-# `source_ref` to its SHA and re-stage (this is the reviewable diff). Env vars
-# SKILL_SYNC_REPO / SKILL_SYNC_REF override at runtime (testing only).
+# SOURCE IS A LIVING UPSTREAM — NOT SHA-PINNED. Director ruling 2026-07-25.
+#
+# mission-kit is OWNED upstream, so this is a living pointer: the fleet tracks
+# `main` and improvements reach every seat without a manual bump. This mirrors
+# the constitution-sync path, which has always tracked main.
+#
+# WHY THE PREVIOUS PIN WAS REMOVED (do not reinstate without reading this):
+# `source_ref` was pinned to bd4117d for REVIEW-BEFORE-ADOPT. The gate was real
+# and the sync was FAITHFUL — all 14 seats measured byte-identical to the pin.
+# But the bump was a manual step with NO OWNER AND NO TRIGGER, so the fleet sat
+# SIX DAYS behind: every seat missing the blueprint/evidence-contract guidance,
+# including the rule that owned upstream must not be SHA-pinned. The pin
+# suppressed the rule that would have removed the pin.
+#
+# CORRECT-BUT-UNSCHEDULED IS NOT THE SAME FAILURE AS BROKEN, and it is harder to
+# see: every instrument reports health, because a staleness check that compares
+# against the pin can never notice the pin is old. Detecting it required
+# comparing against something OUTSIDE the pin, and nothing did.
+#
+# The review obligation does not disappear — it moves upstream, to the PR into
+# apnex/mission-kit, where it is a reviewable diff with an owner, rather than a
+# config bump nobody is scheduled to perform. Reserve immutable content-addressed
+# pins for IRREVERSIBLE EXTERNAL artifacts (npm publishes, releases, deploy
+# images), never for owned fleet guidance.
+#
+# Env vars SKILL_SYNC_REPO / SKILL_SYNC_REF override at runtime (testing only).
 source_repo: https://github.com/apnex/mission-kit.git
-source_ref: bd4117d7512d386b1bb7124b0ebe86f6bfe6f1c0
+source_ref: main
 
 bundles:
   - workgraph-arc
