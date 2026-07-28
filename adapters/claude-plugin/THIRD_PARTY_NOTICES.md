@@ -42,6 +42,11 @@ License: MIT
 Integrity: sha512-wQ0b/W4Fr01qtpHlqSqspcj3EhBvimsdh0KlHhH8HRZnMsEa0ea2fTULOXOS9ccQr3om+GcGRk4e+isrZWV8qQ==
 Full text: dist/licenses/pkce-challenge@5.0.1.txt
 
+## undici@7.28.0
+License: MIT
+Integrity: sha512-cRZYrTDwWznlnRiPjggAGxZXanty6M8RV1ff8Wm4LWXBp7/IG8v5DnOm74DtUBp9OONpK75YlPnIjQqX0dBDtA==
+Full text: dist/licenses/undici@7.28.0.txt
+
 ## zod@4.4.3
 License: MIT
 Integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==
