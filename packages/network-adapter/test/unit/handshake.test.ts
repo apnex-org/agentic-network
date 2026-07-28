@@ -446,4 +446,83 @@ describe("performHandshake", () => {
     expect(result.fatal).toBeFalsy();
     expect(result.epoch).toBe(7);
   });
+
+  // ══ work-598 (B4b) — THE LOG MUST TRACK THE BRANCH IT IS DESCRIBING ═════════════
+  //
+  // 🔴 THE REGRESSION THIS PINS, WHICH WAS MINE. B4 rewrote the message to assert FATAL;
+  // fatality then became CONDITIONAL and the log did not follow. A shape-mismatch seat logged
+  // "FATAL: identity was NOT bound" and kept running perfectly well — so an operator grepping
+  // for FATAL got a hit on a healthy seat, and the ONE signal distinguishing the two outcomes
+  // read identically for both. A record asserting something that is not so.
+  //
+  // ─── BOTH DIRECTIONS, PLUS A CONTROL ─────────────────────────────────────────
+  //   1 the NON-FATAL branch must NOT say FATAL   (goes red against the pre-fix code)
+  //   2 the FATAL branch must STILL say it        (goes red if the word is simply deleted)
+  //   3 ⚠️ CONTROL: the log must FIRE AT ALL on the non-fatal path. Without it, test 1 passes
+  //     against a build where nothing logs — an absence of evidence read as evidence.
+  //
+  // Tests 1 and 2 alone are BOTH satisfied by deleting the word "FATAL" everywhere, and 1
+  // alone is satisfied by deleting the log. Only the three together pin the branch.
+  describe("work-598: the parse_failed log tracks the ACTUAL branch", () => {
+    // The `log` sink receives ONE PRE-FORMATTED STRING — the `log.log(event, fields, msg)`
+    // call inside handshake.ts is a wrapper that flattens all three into it. So both the
+    // prose AND the structured `fatal=` field are asserted against that single line.
+    const entryFor = (log: ReturnType<typeof vi.fn>): string | undefined =>
+      log.mock.calls.map((c) => String(c[0])).find((line) => line.includes("agent.handshake.parse_failed"));
+
+    /** A body that is valid JSON but the LEGACY FLAT shape — parses, does not match. NON-FATAL. */
+    const flatShape = () => vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: JSON.stringify({ agentId: "agent-legacy", sessionEpoch: 3 }) }],
+    });
+    /** bug-398's actual specimen: PLAINTEXT where an envelope was contracted. FATAL. */
+    const nonJson = () => vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "storage list admission queue full (8 active, 128 queued)" }],
+    });
+
+    it("🔴 1 — a SHAPE mismatch is NOT logged as FATAL, and the seat is not halted", async () => {
+      const log = vi.fn();
+      const result = await performHandshake({ executeTool: flatShape(), config: baseConfig, previousEpoch: 0, log });
+
+      expect(result.fatal).toBeFalsy();                       // behaviour: seat continues
+      const entry = entryFor(log)!;
+      // 🔴 THIS ASSERTION IS LITERALLY THE OPERATOR'S GREP, WHICH IS WHY IT IS SPELLED THIS
+      // WAY. The stated harm is `grep FATAL` hitting a healthy seat — so "NON-FATAL" does NOT
+      // fix it: the substring is still there. The word must be ABSENT, not negated. This
+      // caught exactly that on the first attempt at the fix.
+      expect(entry).not.toMatch(/FATAL/);      // prose agrees with behaviour
+      expect(entry).toMatch(/fatal=false/);    // and so does the structured field
+      expect(entry).toMatch(/parse failed/);   // the greppable event phrase is preserved
+    });
+
+    it("🔴 2 — a NON-JSON body IS still logged as FATAL (the word was not simply deleted)", async () => {
+      const log = vi.fn();
+      const result = await performHandshake({ executeTool: nonJson(), config: baseConfig, previousEpoch: 0, log });
+
+      expect(result.fatal).toBe(true);
+      const entry = entryFor(log)!;
+      expect(entry).toMatch(/FATAL/);
+      expect(entry).toMatch(/fatal=true/);
+    });
+
+    it("🔴 3 CONTROL — the non-fatal path DOES emit the event (test 1 can fail)", async () => {
+      // Without this, test 1 is satisfied by a build that logs nothing at all: "no FATAL in
+      // the message" is trivially true of a message that does not exist.
+      const log = vi.fn();
+      await performHandshake({ executeTool: flatShape(), config: baseConfig, previousEpoch: 0, log });
+      expect(entryFor(log)).toBeDefined();
+    });
+
+    it("the structured `fatal` field AGREES with the returned flag on both branches", async () => {
+      // The whole defect was two independent descriptions of one decision drifting apart.
+      // This asserts they cannot: an operator filtering on the field and a caller branching
+      // on the flag must never disagree, whichever branch was taken.
+      for (const [executeTool, expected] of [[flatShape(), false], [nonJson(), true]] as const) {
+        const log = vi.fn();
+        const result = await performHandshake({ executeTool, config: baseConfig, previousEpoch: 0, log });
+        expect(entryFor(log)!).toMatch(expected ? /fatal=true/ : /fatal=false/);
+        expect(Boolean(result.fatal)).toBe(expected);
+      }
+    });
+  });
+
 });

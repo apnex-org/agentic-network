@@ -407,10 +407,40 @@ export async function performHandshake(
     } catch (err) {
       envelope = `parse-error:${(err as Error)?.message ?? String(err)}`;
     }
+    // 🔴 work-598 (B4b) — ONE EXPRESSION DRIVES THE MESSAGE, THE STRUCTURED FIELD AND THE
+    // RETURNED FLAG. It is declared HERE, above the log, for exactly that reason.
+    //
+    // WHAT WENT WRONG IN B4: the message was rewritten to assert FATAL, then fatality became
+    // CONDITIONAL a few lines below, and the log did not follow. A shape-mismatch seat logged
+    // "FATAL: identity was NOT bound" and kept running perfectly well — so AN OPERATOR
+    // GREPPING FOR `FATAL` GOT A HIT ON A HEALTHY SEAT, and the one signal distinguishing the
+    // two outcomes read identically for both.
+    //
+    // ⚠️ THE SHAPE OF THE DEFECT MATTERS MORE THAN THE LINE: two independent conditionals
+    // describing one decision WILL drift, because nothing forces them to be edited together.
+    // Deriving both from this single binding makes the drift unrepresentable rather than
+    // merely fixed. (My own B3 principle, applied to my own regression: report the ACTUAL
+    // effect, never the intended one — idea-681.)
+    const bodyWasUnparseable = envelope.startsWith("parse-error:");
     log.log(
       "agent.handshake.parse_failed",
-      { envelope, bodyKeys, nestedAgentKeys, nestedSessionKeys, legacyAgentIdType, legacySessionEpochType },
-      "[Handshake] response parse failed — FATAL: identity was NOT bound"
+      // `fatal` is emitted STRUCTURALLY so an operator can filter on the field instead of
+      // grepping prose — the prose is what drifted.
+      { envelope, bodyKeys, nestedAgentKeys, nestedSessionKeys, legacyAgentIdType, legacySessionEpochType, fatal: bodyWasUnparseable },
+      // ⚠️ BOTH branches keep the phrase "parse failed". The finding was about the FATALITY
+      // CLAIM, not about the event's name — and operators (and a test) already grep that
+      // phrase. Rewording it too would have been a second, unasked-for interface change
+      // riding along with the fix.
+      //
+      // 🔴 AND THE NON-FATAL BRANCH SAYS "RECOVERABLE", NOT "NON-FATAL" — DELIBERATELY.
+      // The stated harm is that AN OPERATOR GREPPING FOR `FATAL` GETS A HIT ON A HEALTHY
+      // SEAT. "NON-FATAL" CONTAINS "FATAL", so `grep FATAL` would still match and the harm
+      // would survive a fix that reads correct to a human. The word must be absent, not
+      // negated. (My first attempt used "NON-FATAL"; the test below — which is literally the
+      // operator's grep — caught it. Reasoning about the message did not.)
+      bodyWasUnparseable
+        ? "[Handshake] response parse failed (body was not JSON) — FATAL: identity was NOT bound, seat halts"
+        : "[Handshake] response parse failed (shape not recognised) — RECOVERABLE: identity not bound this cycle, seat continues"
     );
     // 🔴 work-592 / bug-398 — AN UNPARSEABLE RESPONSE IS FATAL. THIS CLOSES THE HOLE IN THE
     // FAIL-LOUD GUARD THAT ALREADY EXISTS.
@@ -440,17 +470,37 @@ export async function performHandshake(
     //
     // Marking EVERY parse failure fatal was too broad and would have halted seats on a
     // response that is valid JSON but simply not the NESTED shape this parser wants
-    // (`body.agent.id` + `body.session.epoch`). The legacy FLAT shape
-    // (`{agentId, sessionEpoch, ...}`) is a real historical wire shape — this very function
-    // records `legacyAgentIdType` for it, and the loopback hub still emits it. Three
-    // integration tests went red and they were RIGHT: a hub speaking the older shape would
-    // have been converted from "degraded but running" into "refuses to start".
+    // (`body.agent.id` + `body.session.epoch`).
+    //
+    // 🔴 work-598 (B4b) — THE WARRANT, CORRECTED. THE NARROWING STANDS; ITS ORIGINAL
+    // JUSTIFICATION DID NOT.
+    //
+    // B4 cited `LoopbackHub` as evidence that the legacy FLAT shape (`{agentId, sessionEpoch}`)
+    // is emitted in production. IT IS NOT: at `50b01e96` the verifier enumerated all 21
+    // references and found ZERO outside test and bench (`packages/cognitive-layer/bench/**`).
+    // ⚠️ A TEST DOUBLE HAD BEEN RECORDED AS THE WITNESS FOR A PRODUCTION COMPATIBILITY CLAIM.
+    // The three red integration tests proved the FIXTURE would break — not that a deployment
+    // would. `LoopbackHub` is hereby dropped as the witness.
+    //
+    // THE ACTUAL JUSTIFICATION, which does not depend on any in-tree emitter: THIS ADAPTER
+    // SHIPS TO CONSUMERS WE CANNOT OBSERVE, and an older Hub deployment may exist. That is a
+    // compatibility argument about unobservable deployments, and it is the honest one —
+    // precisely because it cannot be settled by grepping this tree. `legacyAgentIdType`
+    // recording the flat shape shows the parser was BUILT expecting it; it does not prove
+    // anyone still sends it.
+    //
+    // ⚠️ AND THE PROMISE WAS OVERSTATED. B4's record claimed such a hub stays "degraded but
+    // running". The honest statement is DEGRADED BUT RUNNING FOR 60 SECONDS, THEN REFUSED —
+    // the hub-side identity-window guard added in the SAME commit refuses that seat once
+    // IDENTITY_HANDSHAKE_WINDOW_MS elapses. NO TEST EXERCISES ADAPTER AND HUB TOGETHER ON THIS
+    // PATH: the adapter suite proves the seat stays up in the one package where the refusal
+    // does not exist, and the hub suite never sees the adapter. That cross-package gap is
+    // STATED, not closed here (idea-449's territory).
     //
     // THE DISCRIMINATOR IS WHETHER THE BODY IS JSON AT ALL. bug-398's specimen was
     // `Unexpected token 's', "storage li"... is not valid JSON` — a PLAINTEXT error where an
     // envelope was contracted, which is unambiguously wrong and unambiguously not an identity.
     // A shape mismatch is a compatibility gap; a non-JSON body is a broken contract.
-    const bodyWasUnparseable = envelope.startsWith("parse-error:");
     return { response: null, epoch: ctx.previousEpoch, ...(bodyWasUnparseable ? { fatal: true } : {}) };
   }
 
