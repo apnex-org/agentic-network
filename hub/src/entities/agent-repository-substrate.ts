@@ -247,6 +247,8 @@ function deriveAdvisoryTags(
 
 export class AgentRepositorySubstrate implements IEngineerRegistry {
   private readonly sessionRoles = new Map<string, SessionRole>();
+  /** work-592 / bug-398 — when each session's role-only window opened (epoch ms). */
+  private readonly sessionRoleBoundAtMs = new Map<string, number>();
   // In-memory bookkeeping (wipes on Hub restart, identical to legacy).
   private readonly displacementHistory = new Map<string, number[]>();
   private readonly sessionToEngineerId = new Map<string, string>();
@@ -447,6 +449,25 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
 
   setSessionRole(sessionId: string, role: SessionRole): void {
     this.sessionRoles.set(sessionId, role);
+    // work-592 / bug-398 — STAMP WHEN THE ROLE-ONLY WINDOW OPENED.
+    // The two-phase handshake binds ROLE first (plain register_role) and IDENTITY second
+    // (the enriched call). Between them a session legitimately has a role and no agentId.
+    // That window is CORRECT and self-clearing; what was missing is any record of when it
+    // opened, so nothing could ever ask whether it had CLOSED. First stamp wins — a repeat
+    // register_role on the same session must not restart the clock and reopen the window.
+    if (!this.sessionRoleBoundAtMs.has(sessionId)) {
+      this.sessionRoleBoundAtMs.set(sessionId, this.clock.now().getTime());
+    }
+  }
+
+  /** work-592 / bug-398 — how long this session has been role-bound-but-identity-unbound, in ms;
+   *  `null` when the session has no recorded role binding. Read by `caller-identity.ts` to tell a
+   *  handshake IN FLIGHT (transient, placeholder correct) from one that FAILED FOREVER
+   *  (permanent, must refuse). Returns elapsed rather than a verdict so the policy layer owns the
+   *  threshold and the substrate stays a fact source. */
+  identityWindowElapsedMs(sessionId: string): number | null {
+    const at = this.sessionRoleBoundAtMs.get(sessionId);
+    return at === undefined ? null : Math.max(0, this.clock.now().getTime() - at);
   }
 
   getRole(sessionId: string): SessionRole {
@@ -471,6 +492,9 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
   forgetSession(sessionId: string): void {
     this.sessionRoles.delete(sessionId);
     this.sessionToEngineerId.delete(sessionId);
+    // work-592: drop the window stamp with the rest of the session's bookkeeping, so a
+    // re-registration opens a FRESH window rather than inheriting a closed one.
+    this.sessionRoleBoundAtMs.delete(sessionId);
   }
 
   // ── M18 Agent methods ──────────────────────────────────────────────
