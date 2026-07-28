@@ -113,9 +113,15 @@ out.** A verifier cannot independently confirm it either — the same projection
 
 **Why prevention-only is nonetheless sufficient here, and it is not a hand-wave:** after this
 change the field has **no reader in the codebase**. A stale `true` therefore cannot affect any
-decision — it is inert data, not latent state. **Migration cost: zero, because there is nothing
-to migrate to.** This would be an entirely different answer if any reader survived; the claim
-rests on the reader count being zero, which §4.4 measures directly.
+decision — it is **inert data, not latent state**. **Migration cost: zero, because there is
+nothing to migrate to.**
+
+> ### 🔴 THE RE-CHECK TRIGGER, STATED SO THIS STAYS A JUSTIFICATION RATHER THAN AN ASSUMPTION WITH A GOOD DAY
+> **This entire argument rests on the reader count being ZERO. IF ANYONE ADDS A READER OF
+> `Agent.quarantined`, THAT ARGUMENT DIES** — the stale rows stop being inert data and become
+> latent state, with an unknown population that no surface can enumerate (§4.2) and no
+> migration ever written. **The re-check is not "is the field still there"; it is "does
+> anything read it".** §4.4 measures exactly that, and it is the measurement to repeat.
 
 ### 4.3 Test-estate population — two instruments, two different answers
 
@@ -247,6 +253,22 @@ its siblings.** This change edits the sweeper B6 stands on.
 
 ## 8. RESIDUALS
 
-- Three design/trace docs still describe `clear_work_quarantine` as live (§4.1).
+- ~~Three design/trace docs still describe `clear_work_quarantine` as live~~ — **CLOSED in this
+  PR.** All three preserve text that was **true when written**, so none was rewritten; each got
+  a dated superseding note instead. **"Prose-only" is exactly how bug-413's docstring and
+  bug-412's comment acquired their standing** — a record asserting a feature exists is believed.
+  - `docs/traces/c1-r2-workitem-work-trace.md` — pure historical record (sha-stamped `958df36`).
+    **Marked superseded; the entry itself is untouched.**
+  - `docs/designs/c1-r2-workitem-construction-design.md` — dated build blueprint (2026-06-22)
+    that correctly records the contract *as designed*. **Marked superseded** (verb count back to 9).
+  - `docs/designs/m-stint-lifecycle-design.md` — 🔴 **materially different, and the one that
+    actually needed care.** It is a `v0.1` design still awaiting ratification, i.e. **ACTIVE
+    GUIDANCE FOR UNBUILT WORK** — anyone implementing `get_next` from it would ship a reason
+    code and a verb that no longer exist. The Director-dialogue text is kept verbatim (rewriting
+    it would falsify a record of what was agreed) with a **correction** attached. **The
+    principle it teaches survives untouched — an empty digest must explain itself and must never
+    be a dark zero. Only the third arm of its example is stale.**
 - `Agent.quarantined` is a stored field with no writer and no reader (§3) — intentional, and
   commented as such at both definition sites so a later reader knows it is a fossil.
+  **See the re-check trigger in §4.2: the moment anything reads it, the prevention-only
+  justification stops holding.**
