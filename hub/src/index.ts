@@ -220,6 +220,13 @@ pendingActionStore = new PendingActionRepositorySubstrate(substrate!, substrateC
 messageStore = new MessageRepositorySubstrate(substrate!);
 // AgentRepositorySubstrate has no counter (fingerprint-derived ids).
 engineerRegistry = new AgentRepositorySubstrate(substrate!);
+// 🔴 work-590 / bug-398 — backfill session→agent pointer rows BEFORE serving traffic.
+// getAgentForSession resolves ONLY via those rows now, so every session registered before this
+// code shipped would otherwise resolve to null and the whole fleet would degrade to
+// `anonymous-<role>` at once — bug-398 reproduced deliberately, fleet-wide, by its own fix.
+// Fire-and-log: never throws, and a partial backfill must not block boot (a session missing a row
+// recovers on its next handshake, which rewrites it).
+void (engineerRegistry as AgentRepositorySubstrate).backfillSessionBindings();
 // work-162 (A1): Task/Turn stores retired. MissionRepositorySubstrate takes
 // counter + ideaStore for hydration (Mission's only virtual view is `ideas`).
 missionStore = new MissionRepositorySubstrate(substrate!, substrateCounter, ideaStore);

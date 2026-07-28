@@ -83,6 +83,9 @@ import {
 } from "../state.js";
 
 const KIND = "Agent";
+/** work-590 / bug-398 — session→agent pointer rows, keyed by sessionId, read via UNGATED
+ *  `substrate.get`. Derived from `registeredSessions` (which remains the source of truth). */
+const SESSION_BINDING_KIND = "AgentSessionBinding";
 const MAX_CAS_RETRIES = 50;
 
 // ─── Defensive normalization (ported from agent-repository.ts) ──────────────
@@ -266,6 +269,48 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     while (next.length > 8) next.shift();
     return next;
   }
+
+  /** work-590 / bug-398 — mirror `registeredSessions` into ungated point-read pointer rows.
+   *
+   *  MECHANICS: `registeredSessions` is the SOURCE OF TRUTH and is unchanged; these rows are a
+   *  derived index that exists solely so `getAgentForSession` can resolve without touching the
+   *  admission-gated `list()`. Called with the BEFORE and AFTER arrays so the set difference names
+   *  both the additions and the cap-8 EVICTIONS — `appendRegisteredSession` shifts silently off the
+   *  front, and an evicted session whose pointer row survived would resolve to an agent that no
+   *  longer lists it, which is worse than not resolving at all.
+   *
+   *  RATIONALE: a derived index that can disagree with its source is a defect generator. Reconciling
+   *  by difference (rather than appending on write and hoping) keeps the two exactly in step through
+   *  append, replace, displacement and eviction alike.
+   *
+   *  CONSEQUENCE: never throws. A pointer-row write failure must not fail the identity write that
+   *  owns the real state — a missing row degrades to "session not resolvable until next handshake",
+   *  never to a wrong binding. Failures are logged loudly. */
+  private async reconcileSessionBindings(
+    agentId: string,
+    before: string[] | null | undefined,
+    after: string[] | null | undefined,
+  ): Promise<void> {
+    const prev = new Set(before ?? []);
+    const next = new Set(after ?? []);
+    const added = [...next].filter((s) => !prev.has(s));
+    const removed = [...prev].filter((s) => !next.has(s));
+    for (const sid of added) {
+      try {
+        await this.substrate.put(SESSION_BINDING_KIND, { id: sid, agentId });
+      } catch (err) {
+        console.error(`[AgentRepositorySubstrate] session-binding WRITE failed (${sid} → ${agentId}); resolution falls back to unresolvable until the next handshake: ${(err as Error)?.message ?? err}`);
+      }
+    }
+    for (const sid of removed) {
+      try {
+        await this.substrate.delete(SESSION_BINDING_KIND, sid);
+      } catch (err) {
+        console.error(`[AgentRepositorySubstrate] session-binding DELETE failed (${sid}); a stale pointer row may outlive its registration: ${(err as Error)?.message ?? err}`);
+      }
+    }
+  }
+
   private readonly lastTouchAt = new Map<string, number>();
 
   constructor(
@@ -307,6 +352,60 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       ...(opts.offset !== undefined ? { offset: opts.offset } : {}),
     });
     return items.map(envelopeToAgent);
+  }
+
+  /** 🔴 work-590 / bug-398 — ONE-TIME BACKFILL. THIS IS THE ROLLOUT-SAFETY PIECE; WITHOUT IT THIS
+   *  CHANGE CAUSES THE EXACT OUTAGE IT EXISTS TO FIX.
+   *
+   *  MECHANICS: pages the whole Agent kind once and writes an AgentSessionBinding pointer row for
+   *  every entry in each agent's `registeredSessions`. Runs at boot, OFF the resolution path.
+   *
+   *  RATIONALE: `getAgentForSession` now resolves ONLY via pointer rows. Every session registered
+   *  before this code shipped has no pointer row, so without a backfill the first deploy would
+   *  resolve EVERY live seat to null simultaneously — i.e. the whole fleet degrades to
+   *  `anonymous-<role>` at once, which is bug-398 reproduced deliberately and fleet-wide.
+   *
+   *  Paged rather than a single capped `list`, because correctness here keys off COMPLETENESS: a
+   *  silently truncated scan leaves a subset of seats unresolvable, which is indistinguishable from
+   *  the bug. The page cap is a runaway guard, and hitting it is reported LOUDLY rather than
+   *  returning a quietly partial result.
+   *
+   *  CONSEQUENCE: idempotent (`put` by primary key), safe to re-run, and cheap — one paged scan at
+   *  process start. Never throws: a failed backfill must not prevent the Hub booting, and the
+   *  degraded outcome (some sessions unresolvable until their next handshake rewrites the row) is
+   *  strictly better than refusing to start. */
+  async backfillSessionBindings(pageSize = 200, maxPages = 100): Promise<{ agents: number; bindings: number; truncated: boolean }> {
+    let agents = 0;
+    let bindings = 0;
+    let truncated = false;
+    try {
+      for (let page = 0; ; page++) {
+        if (page >= maxPages) {
+          truncated = true;
+          console.error(`[AgentRepositorySubstrate] session-binding backfill hit the ${maxPages}-page guard after ${agents} agents — RESULT IS PARTIAL; some sessions may be unresolvable until their next handshake.`);
+          break;
+        }
+        const batch = await this.listAgentsRaw({ limit: pageSize, offset: page * pageSize });
+        if (batch.length === 0) break;
+        for (const a of batch) {
+          agents++;
+          if (a.archived) continue;
+          for (const sid of a.registeredSessions ?? []) {
+            try {
+              await this.substrate.put(SESSION_BINDING_KIND, { id: sid, agentId: a.id });
+              bindings++;
+            } catch (err) {
+              console.error(`[AgentRepositorySubstrate] session-binding backfill write failed (${sid} → ${a.id}): ${(err as Error)?.message ?? err}`);
+            }
+          }
+        }
+        if (batch.length < pageSize) break;
+      }
+      console.log(`[AgentRepositorySubstrate] session-binding backfill complete: ${bindings} pointer rows across ${agents} agents (truncated=${truncated}) [work-590]`);
+    } catch (err) {
+      console.error(`[AgentRepositorySubstrate] session-binding backfill ABORTED: ${(err as Error)?.message ?? err}`);
+    }
+    return { agents, bindings, truncated };
   }
 
   private async createOnlyAgent(agent: Agent): Promise<{ ok: boolean }> {
@@ -505,6 +604,8 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
               `investigate substrate state or hashToInt32 collision telemetry.`,
           );
         }
+        // work-590: mirror the birth registration set AFTER createOnly commits.
+        await this.reconcileSessionBindings(agentId, [], agent.registeredSessions);
         if (sessionId) {
           this.sessionToEngineerId.set(sessionId, agentId);
         }
@@ -584,6 +685,10 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       };
       const updated: Agent = { ...stamped, ...computeComponentStates(stamped, Date.parse(now)) };
 
+      // work-590: the CAS has two legs (first attempt + one in-lock retry). Track which one
+      // actually committed so the pointer rows mirror the WINNING write, not the attempted one.
+      let committedBefore: string[] | null | undefined = agent.registeredSessions;
+      let committedAfter: string[] | null | undefined = updated.registeredSessions;
       let result = await this.putIfMatchAgent(updated, existing.resourceVersion);
       if (!result.ok) {
         // mission-89 Phase 5 (Observation 4): single in-lock retry. The
@@ -620,6 +725,8 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
         };
         const reupdated: Agent = { ...restamped, ...computeComponentStates(restamped, Date.parse(now)) };
         result = await this.putIfMatchAgent(reupdated, refreshed.resourceVersion);
+        committedBefore = refreshedAgent.registeredSessions;
+        committedAfter = reupdated.registeredSessions;
         if (!result.ok) {
           throw new Error(
             `[AgentRepositorySubstrate] assertIdentity in-lock retry exhausted: putIfMatch conflict ` +
@@ -629,6 +736,8 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
           );
         }
       }
+      // work-590: one reconcile for whichever CAS leg won; both legs target the same agent id.
+      await this.reconcileSessionBindings(updated.id, committedBefore, committedAfter);
       if (sessionId) {
         this.sessionToEngineerId.set(sessionId, updated.id);
       }
@@ -712,6 +821,9 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
       if (!result.ok) {
         continue;
       }
+      // work-590: mirror the new registration set AFTER the CAS commits — never before, or a
+      // losing CAS attempt would leave pointer rows for a binding that was never written.
+      await this.reconcileSessionBindings(updated.id, agent.registeredSessions, updated.registeredSessions);
       this.sessionToEngineerId.set(sessionId, updated.id);
       this.lastTouchAt.set(updated.id, this.clock.now().getTime());
       if (displaced) {
@@ -786,23 +898,52 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     // Pinpoint currentSessionId first (the normal case), then the bounded
     // registeredSessions GIN fallback. Both paths are substrate-filtered and
     // index-backed by Agent SchemaDef v3; no entity/history row is rewritten.
-    const current = await this.listAgentsRaw({
-      filter: { currentSessionId: sessionId },
-      limit: 2,
-    });
-    let match = current.find((a) => !a.archived && a.currentSessionId === sessionId);
-    if (!match) {
-      const registered = await this.listAgentsRaw({
-        filter: { registeredSessions: { $contains: sessionId } },
-        limit: 8,
-      });
-      match = registered.find((a) =>
-        !a.archived && (a.registeredSessions ?? []).includes(sessionId)
-      );
-    }
-    if (!match) return null;
+    // 🔴 work-590 / bug-398 — THIS PATH ISSUES ZERO `list()` CALLS, BY CONSTRUCTION.
+    //
+    // MECHANICS: the persisted fallback is an UNGATED point-read of an
+    // AgentSessionBinding row keyed by the sessionId, followed by an UNGATED
+    // `getAgent` by primary key. `substrate.get` / `getWithRevision` are not
+    // admission-gated; only `substrate.list` is.
+    //
+    // RATIONALE: the list-admission gate is GLOBAL across every list operation of
+    // every kind, and STRICT FIFO with no priority lane (work-587). The two
+    // `listAgentsRaw` calls this replaces could therefore be refused because they
+    // queued behind an unrelated 500-row scan — 8 concurrent, 128 queued, 30s
+    // timeout — and a refused identity read is how a live seat silently becomes
+    // `anonymous-<role>` with its registry row fully intact (work-579, bug-398).
+    //
+    // NOT AN OPTIMISATION, AND THIS IS THE POINT: bug-343 already made this exact
+    // lookup cheaper (whole-kind scan → pinpointed filter) and the failure
+    // SURVIVED that fix, because a cheaper query still queues. The dependency was
+    // the defect, not the cost.
+    //
+    // CONSEQUENCE: identity resolution is now immune to list-gate saturation
+    // whatever causes it — including causes never diagnosed (bug-398 D1).
+    //
+    // ⚠️ SUPERSEDED SESSIONS STILL RESOLVE, DELIBERATELY. A binding row is written
+    // for every registered session, not only the current one, so a non-current
+    // session continues to resolve exactly as the `registeredSessions` fallback
+    // allowed. `router.ts`'s back-compat implicit auto-claim DEPENDS on that
+    // (bug-409) — it fires precisely when a resolved agent's `currentSessionId`
+    // differs from the caller's session. Narrowing this to current-only would
+    // silently disable that path.
+    // ⚠️ `substrate.get` returns the STORED ENVELOPE, not a decoded entity — the Agent reads on this
+    // class go through `envelopeToAgent` for exactly this reason. The write-encoder relocates
+    // `agentId` to `status.agentId` per this kind's renameMap (MEASURED: a written row reads back as
+    // `{id, name, kind, apiVersion, metadata:{}, spec:{}, status:{agentId, phase}}`). Read the
+    // envelope path first and tolerate a flat shape, so a row written before the module was
+    // registered — or by a future encoder change — still resolves rather than silently returning
+    // null and minting a phantom.
+    const binding = await this.substrate.get<{ agentId?: string; status?: { agentId?: string } }>(
+      SESSION_BINDING_KIND,
+      sessionId,
+    );
+    const boundAgentId = binding?.status?.agentId ?? binding?.agentId;
+    if (!boundAgentId) return null;
+    const match = await this.getAgent(boundAgentId);
+    if (!match || match.archived) return null;
     this.sessionToEngineerId.set(sessionId, match.id);
-    console.log(`[AgentRepositorySubstrate] session→agent binding rehydrated from the persisted row: ${sessionId} → ${match.id} (bug-230)`);
+    console.log(`[AgentRepositorySubstrate] session→agent binding rehydrated from the persisted pointer row: ${sessionId} → ${match.id} (bug-230 / work-590)`);
     return match;
   }
 
