@@ -137,9 +137,12 @@ export interface CurrentWorkProjectionV4 {
 }
 
 /** work-94 (cold-start spine, non-dark digest): WHY a caller-scoped claimable digest is
- *  empty — never a DARK (silent) zero. `wip_capped` + `no_claimable_ready` are repo-set
- *  (listReadyForRole knows which); `quarantined` is policy-set (its own claim gate). */
-export type ReadyEmptyReason = "wip_capped" | "no_claimable_ready" | "quarantined";
+ *  empty — never a DARK (silent) zero. BOTH reasons are repo-set (listReadyForRole knows
+ *  which).
+ *  work-593: `quarantined` removed with the [A] claim-thrash gate. It was the only member
+ *  set by the POLICY layer rather than the store, which is why removing it also removed a
+ *  second source of truth for "why is this empty". */
+export type ReadyEmptyReason = "wip_capped" | "no_claimable_ready";
 
 /** work-94 (cold-start spine, get_current_stint): the "where are we" projection over any
  *  arc-node's DIRECT completionDependsOn subtree (the stint arc-node is the first consumer).
@@ -202,7 +205,7 @@ export interface StintProjection {
 
 /** W2 (idea-451 / work-182): the graph-projected NEXT ACTION for an arc-node — the
  *  HIGHEST-PRIORITY READY completionDependsOn child, per the FULL claim gate (deps +
- *  roleEligibility [+ WIP/quarantine when agentId given]). Corrects the last stint's
+ *  roleEligibility [+ WIP-cap when agentId given]). Corrects the last stint's
  *  scope-inversion: "what next" is READ FROM THE GRAPH, not chosen from memory. A
  *  lower-priority pick over a ready higher-priority one is UNREPRESENTABLE (the projection
  *  orders by priority + returns the head). Feeds W3's reconciler + cold-start "what next". */
@@ -219,10 +222,13 @@ export interface NextActionProjection {
   /** false when the arc has no completionDependsOn children (a leaf, not an arc-node). */
   hasChildren: boolean;
   /** NON-DARK caller-gate reason when nextAction is null despite raw scope: the caller is
-   *  WIP-capped (substrate) or claim-thrash quarantined (policy). Absent on the role-only
-   *  projection (no caller) and when nextAction is non-null. `readyCandidates` still reports
-   *  the RAW scope, so the reconciler can tell "you are gated" from "scope is exhausted". */
-  emptyReason?: "wip_capped" | "quarantined";
+   *  WIP-capped (substrate). Absent on the role-only projection (no caller) and when
+   *  nextAction is non-null. `readyCandidates` still reports the RAW scope, so the
+   *  reconciler can tell "you are gated" from "scope is exhausted".
+   *  work-593: `quarantined` removed. ⚠️ The WIP-cap case REMAINS and must keep working —
+   *  the driver watchdog still SUPPRESSES its liveness warning on it, so collapsing this to
+   *  a single never-set field would silently un-suppress a legitimate gate. */
+  emptyReason?: "wip_capped";
 }
 
 /** work-94 (cold-start spine, sub-slice 3): the legal FSM transition verbs for an item given

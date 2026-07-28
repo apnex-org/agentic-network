@@ -28,27 +28,28 @@ import { projectPendingRecallNotices } from "./recall-notice-projector.js";
 /** Default per-ITEM poison cap (architect-confirmed N=3; configurable). After this many
  *  lease-expiry re-queue cycles the item is terminally abandoned. */
 export const DEFAULT_POISON_CAP = 3;
-/** Default per-AGENT thrash cap (architect-confirmed N=3; configurable). After this many
- *  consecutive claim→lease-expire-WITHOUT-evidence cycles the agent is quarantined. */
-export const DEFAULT_THRASH_CAP = 3;
+/** work-593: the per-AGENT thrash CAP is retired with the [A] quarantine it triggered.
+ *  The COUNTER survives (Director ruling: useful as a metric) — what is gone is the
+ *  threshold that turned a count into a lockout. Nothing consumes a cap any more, so
+ *  keeping one would imply an enforcement that does not exist. */
 const DEFAULT_SCAN_LIMIT = 500;
 
 /** The narrow Agent-store dependency the sweeper needs (AgentRepositorySubstrate
  *  satisfies it structurally). Keeps the sweeper off the full IEngineerRegistry. */
 export interface AgentThrashStore {
-  recordWorkItemThrash(agentId: string, quarantineCap: number): Promise<{ thrashCount: number; quarantined: boolean } | null>;
+  /** work-593: no cap argument, no `quarantined` in the result — this now COUNTS and
+   *  nothing else. Returns null if the agent is absent. */
+  recordWorkItemThrash(agentId: string): Promise<{ thrashCount: number } | null>;
 }
 
 export interface WorkItemLeaseSweeperOptions {
   metrics?: IPolicyContext["metrics"];
-  /** Durable queryable sink for poison-abandon + agent-quarantine + bare-envelope audits. */
+  /** Durable queryable sink for poison-abandon + bare-envelope audits. */
   audit?: IAuditStore;
   /** Per-ITEM poison cap (default DEFAULT_POISON_CAP). */
   poisonCap?: number;
-  /** Per-AGENT thrash cap (default DEFAULT_THRASH_CAP). */
-  thrashCap?: number;
-  /** Agent store for the per-AGENT thrash-quarantine (4b-ii). When absent, the sweeper
-   *  still re-queues/poisons items but does NOT track agent thrash (e.g. test rigs). */
+  /** Agent store for the per-AGENT thrash COUNTER (4b-ii, work-593). When absent, the
+   *  sweeper still re-queues/poisons items but does NOT track agent thrash (e.g. test rigs). */
   agentStore?: AgentThrashStore;
   scanLimit?: number;
   logger?: {
@@ -69,8 +70,9 @@ export interface WorkItemLeaseSweepResult {
   errors: number;
   /** Items terminal-quarantined on a structural bare-envelope defect (cal-84). */
   quarantined: number;
-  /** Agents newly quarantined this sweep on claim-thrash (4b-ii). */
-  agentsQuarantined: number;
+  /** Agents whose claim-thrash COUNTER moved this sweep (work-593: was `agentsQuarantined`;
+   *  the counter is retained as a metric, the lockout it used to trigger is not). */
+  agentsThrashed: number;
 }
 
 /** Provides a per-sweep IPolicyContext (for the metrics sink the escalation reads). */
@@ -82,7 +84,6 @@ export class WorkItemLeaseSweeper {
   private readonly metrics: IPolicyContext["metrics"] | undefined;
   private readonly audit: IAuditStore | undefined;
   private readonly poisonCap: number;
-  private readonly thrashCap: number;
   private readonly agentStore: AgentThrashStore | undefined;
   private readonly scanLimit: number;
   private readonly logger: {
@@ -99,7 +100,6 @@ export class WorkItemLeaseSweeper {
     this.metrics = options.metrics;
     this.audit = options.audit;
     this.poisonCap = options.poisonCap ?? DEFAULT_POISON_CAP;
-    this.thrashCap = options.thrashCap ?? DEFAULT_THRASH_CAP;
     this.agentStore = options.agentStore;
     this.scanLimit = options.scanLimit ?? DEFAULT_SCAN_LIMIT;
     this.logger = {
@@ -150,7 +150,7 @@ export class WorkItemLeaseSweeper {
   }
 
   private async fullSweepPinned(nowISO: string): Promise<WorkItemLeaseSweepResult> {
-    const result: WorkItemLeaseSweepResult = { scanned: 0, requeued: 0, abandoned: 0, failedSealed: 0, skipped: 0, errors: 0, quarantined: 0, agentsQuarantined: 0 };
+    const result: WorkItemLeaseSweepResult = { scanned: 0, requeued: 0, abandoned: 0, failedSealed: 0, skipped: 0, errors: 0, quarantined: 0, agentsThrashed: 0 };
     const ctx = this.contextProvider.forSweeper();
 
     // Restart paths for persist-first exact-holder intents. Projection failure never
@@ -231,24 +231,27 @@ export class WorkItemLeaseSweeper {
         } else {
           result.skipped += 1; // renewed/released/completed between list + CAS (race-safe)
         }
-        // 4b-ii per-AGENT thrash-quarantine: a claim that lapsed WITHOUT evidence is a
-        // thrash signal for the holder. The listed `w` carries the holder + evidence at
-        // expiry (expireLease only acts on that same expired lease, so it's race-safe).
-        // Evidence attached (a parked review item) = progress → NOT a thrash.
+        // 4b-ii per-AGENT thrash COUNTER: a claim that lapsed WITHOUT evidence is a thrash
+        // signal for the holder. The listed `w` carries the holder + evidence at expiry
+        // (expireLease only acts on that same expired lease, so it's race-safe). Evidence
+        // attached (a parked review item) = progress → NOT a thrash.
+        //
+        // 🔴 work-593 — THE COUNT SURVIVES, THE CONSEQUENCE DOES NOT. The write is kept by
+        // Director ruling: the successor mechanism (idea-675) needs the data series, and a
+        // counter deleted today is a counter with no history when that design starts.
+        //
+        // ⚠️ AND THE COUNTER IS NOW EMITTED, WHICH IT WAS NOT BEFORE. Previously the only
+        // metric fired at the CAP — i.e. the org could observe thrash exclusively at the
+        // moment it had already become a lockout, which is the least useful moment and the
+        // reason nobody saw bug-382 coming. A counter nothing can read is not a metric, so
+        // "keep it as a metric" is only honoured if something actually observes it.
         if ((outcome === "requeued" || outcome === "abandoned") && this.agentStore && w.lease?.holder && w.evidence.length === 0) {
           const holder = w.lease.holder;
-          const thrash = await this.agentStore.recordWorkItemThrash(holder, this.thrashCap);
-          if (thrash && thrash.thrashCount === this.thrashCap && thrash.quarantined) {
-            // newly quarantined this cycle — LOUD + queryable (the C2 supervisor signal).
-            result.agentsQuarantined += 1;
-            this.metrics?.increment("workitem_thrash.agent_quarantined", { agentId: holder });
-            this.logger.warn(`agent ${holder} QUARANTINED after ${this.thrashCap} consecutive claim-thrash cycles (A4; C2 supervisor signal)`);
-            try {
-              await this.audit?.logEntry("hub", "agent_workitem_quarantined",
-                `Agent ${holder} quarantined by the lease-sweeper after ${this.thrashCap} consecutive claim→lease-expire-without-evidence cycles`, holder);
-            } catch (auditErr) {
-              this.logger.warn(`agent-quarantine audit write failed for ${holder}:`, auditErr);
-            }
+          const thrash = await this.agentStore.recordWorkItemThrash(holder);
+          if (thrash) {
+            result.agentsThrashed += 1;
+            this.metrics?.increment("workitem_thrash.recorded", { agentId: holder });
+            this.logger.log(`agent ${holder} claim-thrash counter -> ${thrash.thrashCount} (metric only; work-593 removed the lockout)`);
           }
         }
       } catch (err) {
@@ -263,7 +266,7 @@ export class WorkItemLeaseSweeper {
       }
     }
 
-    this.logger.log(`lease sweep: scanned=${result.scanned} requeued=${result.requeued} abandoned=${result.abandoned} failedSealed=${result.failedSealed} skipped=${result.skipped} errors=${result.errors} quarantined=${result.quarantined} agentsQuarantined=${result.agentsQuarantined}`);
+    this.logger.log(`lease sweep: scanned=${result.scanned} requeued=${result.requeued} abandoned=${result.abandoned} failedSealed=${result.failedSealed} skipped=${result.skipped} errors=${result.errors} quarantined=${result.quarantined} agentsThrashed=${result.agentsThrashed}`);
     return result;
   }
 }

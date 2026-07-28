@@ -162,6 +162,11 @@ LOW; no runtime change):
 - **Verb count: 10, not 9** (§5/§6). `clear_work_quarantine` ([Architect|Director], the R2
   manual quarantine-escape) was added alongside the 9, per audit-4082's per-AGENT
   thrash-quarantine. C2 supervisor auto-recovery stays deferred.
+  - ⚠️ **SUPERSEDED 2026-07-28 by `work-593` (idea-675).** Text kept verbatim — this document
+    is a dated build blueprint (2026-06-22), and it correctly records the contract as designed.
+    **The verb count is back to 9: `clear_work_quarantine` is RETIRED and the `[A]` per-AGENT
+    thrash-quarantine it escaped is REMOVED.** The C2 supervisor auto-recovery this deferred to
+    was never built; idea-675 supersedes that direction. `thrashCount` survives as a metric.
 - **WIP_PHASES = [claimed, in_progress, blocked, review]**, not the §3.2 two-phase
   `{claimed,in_progress}`. Steve's threat-model audit-4082 widened the WIP in-flight count
   to ALL non-terminal lease-held phases (blocked/review keep the lease → excluding them

@@ -73,7 +73,6 @@ function stubRegistry(over: Record<string, unknown>) {
     claimSession: async () => ({ ok: false }),
     recordWorkItemThrash: async () => null,
     resetWorkItemThrash: async () => 0,
-    clearWorkItemQuarantine: async () => {},
     ...over,
   };
 }
@@ -102,7 +101,7 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     const work = router.getToolRegistration("list_work")!.description;
     expect(ready).toMatch(/AGENT ARRIVAL \/ NEXT-ACTION QUEUE/);
     expect(ready).toMatch(/runbook/);
-    expect(ready).toMatch(/WIP-cap \+ quarantine/);
+    expect(ready).toMatch(/WIP-cap/); // work-593: the quarantine term left this contract with the [A] gate
     expect(ready).toMatch(/NOT an org-state\/audit surface/);
     expect(work).toMatch(/ORG-STATE \/ CONTROL-PLANE SNAPSHOT/);
     expect(work).toMatch(/inspection\/audit\/debug/);
@@ -759,25 +758,29 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     expect(stub.calls[0].args[2]).toBe("anonymous-engineer"); // caller agentId threaded → WIP-cap parity
   });
 
-  it("list_ready_work scopeToCaller: a QUARANTINED caller gets count 0 + the projection is NOT called (parity with claim_work)", async () => {
+  it("work-593: an agent carrying a stale `quarantined:true` is NO LONGER short-circuited — the projection RUNS", async () => {
+    // The exact inverse of the retired behaviour. This used to assert count 0 with the
+    // projection never called; the stored flag is now INERT, so the digest must report the
+    // real claimable scope. Asserting `calls.length > 0` is the load-bearing half — a
+    // handler that still short-circuited would return count 0 and never touch the store.
     const stub = makeStub({ listReadyForRole: () => ({ items: [sampleItem({ status: "ready" })], truncated: false }) });
     const reg = stubRegistry({ getAgent: async () => ({ quarantined: true }) });
-    const r = await router.handle("list_ready_work", { scopeToCaller: true }, ctxFor(stub, "engineer", reg));
-    const b = body(r);
-    expect(b.count).toBe(0);
-    expect(b.items).toEqual([]);
+    const b = body(await router.handle("list_ready_work", { scopeToCaller: true }, ctxFor(stub, "engineer", reg)));
+    expect(b.count).toBe(1);
     expect(b.scopedToCaller).toBe(true);
-    expect(stub.calls.length).toBe(0); // short-circuited BEFORE the projection, like the claim gate
+    expect(stub.calls.length).toBeGreaterThan(0);
   });
 
   // ── work-94 (cold-start spine): the NON-DARK empty digest ──
-  it("list_ready_work NON-DARK: a QUARANTINED caller's empty digest carries emptyReason=quarantined + a message", async () => {
-    const stub = makeStub({ listReadyForRole: () => ({ items: [], truncated: false }) });
+  it("work-593: NO digest can report emptyReason=quarantined, and none names the retired verb", async () => {
+    // Two failures this closes at once: a reason code nothing can act on, and a message
+    // routing the reader to `clear_work_quarantine`, which no longer exists. An error that
+    // names a verb the caller cannot call is bug-399's failure mode.
+    const stub = makeStub({ listReadyForRole: () => ({ items: [], truncated: false, emptyReason: "no_claimable_ready" }) });
     const reg = stubRegistry({ getAgent: async () => ({ quarantined: true }) });
     const b = body(await router.handle("list_ready_work", { scopeToCaller: true }, ctxFor(stub, "engineer", reg)));
-    expect(b.count).toBe(0);
-    expect(b.emptyReason).toBe("quarantined");
-    expect(String(b.emptyReasonMessage)).toMatch(/clear_work_quarantine/);
+    expect(b.emptyReason).not.toBe("quarantined");
+    expect(String(b.emptyReasonMessage ?? "")).not.toMatch(/clear_work_quarantine/);
   });
 
   it("list_ready_work NON-DARK: a WIP-capped empty digest carries emptyReason=wip_capped (passed through from the projection)", async () => {
@@ -819,18 +822,25 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     expect(stub.calls[0].args[2]).toBeUndefined(); // role-view only, no agent scoping
   });
 
-  // ── get_next_action quarantine gate (steve #546 blocker-2) ──
-  it("get_next_action: a QUARANTINED self-query returns nextAction:null + emptyReason:quarantined, still surfacing raw scope", async () => {
+  // ── work-593: get_next_action no longer applies a POLICY-layer caller gate ──
+  it("🔴 work-593 REACHABILITY SEAM: a stale-quarantined self-query now RETURNS THE ACTION and threads its agentId", async () => {
+    // 🔴 THIS IS THE ONE THAT MAKES THE WATCHDOG ALARM REACHABLE AGAIN.
+    // The old behaviour returned nextAction:null + emptyReason:"quarantined". The driver
+    // liveness watchdog reads exactly that shape and SUPPRESSES its warning on it — so the
+    // mechanism that locked a seat out also silenced the only alarm that would have reported
+    // it. With a non-null nextAction the watchdog takes its `action` path instead, which is
+    // what `driver-liveness-watchdog.test.ts` asserts end-to-end.
     const rawChild = sampleItem({ id: "work-child", status: "ready" });
     const stub = makeStub({ getNextAction: () => ({ arcId: "work-arc", nextAction: rawChild, readyCandidates: 1, hasChildren: true }) });
     const reg = stubRegistry({ getAgent: async () => ({ quarantined: true }) });
     const b = body(await router.handle("get_next_action", { workId: "work-arc" }, ctxFor(stub, "engineer", reg)));
-    expect(b.nextAction).toBeNull();           // claim_work would reject → no action offered
-    expect(b.emptyReason).toBe("quarantined"); // non-dark caller-gate reason
-    expect(b.readyCandidates).toBe(1);         // raw scope still honest ("work exists; YOU are gated")
-    // a quarantined caller's WIP-scope is moot → the store is queried ROLE-ONLY (agentId undefined).
+    expect((b.nextAction as { id: string } | null)?.id).toBe("work-child");
+    expect(b.emptyReason).toBeUndefined();
+    // And the store is now queried AGENT-SCOPED, not role-only — the WIP-cap still applies.
+    // A handler that merely deleted the gate and left the role-only read would pass the
+    // assertion above and fail this one.
     const call = stub.calls.find((c) => c.method === "getNextAction")!;
-    expect(call.args).toEqual(["work-arc", "engineer", undefined]);
+    expect(call.args).toEqual(["work-arc", "engineer", "anonymous-engineer"]);
   });
 
   it("get_next_action: a NON-quarantined self-query threads the caller agentId (agent-scoped WIP gate)", async () => {
@@ -931,13 +941,18 @@ describe("work-item-policy 4b-ii thrash-quarantine wiring", () => {
   let router: PolicyRouter;
   beforeEach(() => { router = new PolicyRouter(() => {}); registerWorkItemPolicy(router); });
 
-  it("claim_work REJECTS a quarantined agent (errorKind quarantined; the repo is NOT called)", async () => {
+  it("🔴 work-593: claim_work ADMITS an agent carrying a stale `quarantined:true` — the repo IS called", async () => {
+    // The precise inverse of the retired gate, and the reason B5 exists. bug-382 measured a
+    // seat quarantined by a lease expiry it did NOT cause, with `[architect|director]` RBAC
+    // between it and any escape — an engineer could not self-clear. The lockout is gone.
     const store = makeStub({ claimWorkItem: () => sampleItem() });
     const reg = stubRegistry({ getAgentForSession: async () => ({ id: "agent-q" }), getAgent: async () => ({ quarantined: true }) });
     const r = await router.handle("claim_work", { workId: "w" }, ctxFor(store, "engineer", reg));
-    expect(r.isError).toBe(true);
-    expect(body(r).errorKind).toBe("quarantined");
-    expect(store.calls.length).toBe(0); // guarded BEFORE the repo
+    expect(r.isError).toBeFalsy();
+    expect(body(r).errorKind).toBeUndefined();
+    // Load-bearing: the call must REACH the repo. An implementation that still refused would
+    // satisfy "no errorKind" if it returned an empty ok, and fail here.
+    expect(store.calls.length).toBeGreaterThan(0);
   });
 
   it("complete_work resets the agent's thrash + audits a NON-NOOP reset (audit-4133)", async () => {
@@ -965,29 +980,20 @@ describe("work-item-policy 4b-ii thrash-quarantine wiring", () => {
     expect(auditActions).not.toContain("agent_workitem_thrash_reset");
   });
 
-  it("clear_work_quarantine (admin) clears via the registry + emits a forensic audit (audit-4103)", async () => {
-    const clearCalls: string[] = [];
-    const reg = stubRegistry({
-      getRole: () => "architect", // RBAC [Architect|Director]
-      clearWorkItemQuarantine: async (id: string) => { clearCalls.push(id); },
-      getAgent: async () => ({ quarantined: false, thrashCount: 0 }),
-    });
-    const ctx = ctxFor(undefined, "architect", reg);
-    const auditCalls: Array<{ action: string; related?: string }> = [];
-    ctx.stores.audit = { logEntry: async (_a: string, action: string, _d: string, related?: string) => { auditCalls.push({ action, related }); return {} as never; } } as unknown as typeof ctx.stores.audit;
-    const r = await router.handle("clear_work_quarantine", { agentId: "agent-z" }, ctx);
-    expect(r.isError).toBeFalsy();
-    expect(clearCalls).toEqual(["agent-z"]);
-    expect(body(r).quarantined).toBe(false);
-    // forensic symmetry with the sweeper's quarantine-SET audit
-    expect(auditCalls).toContainEqual({ action: "agent_workitem_quarantine_cleared", related: "agent-z" });
+  it("🔴 work-593: `clear_work_quarantine` is NOT REGISTERED — the escape hatch went with the trap", async () => {
+    // A verb that clears a flag nothing sets is worse than absent: it advertises a remedy
+    // for a condition that can no longer occur. Asserting on the REGISTRY (not on a call
+    // result) is deliberate — an unregistered verb and a registered-but-broken one both
+    // return isError, so a result-shaped assertion cannot tell them apart.
+    expect(router.getRegisteredTools()).not.toContain("clear_work_quarantine");
   });
 
-  it("clear_work_quarantine is RBAC-gated — an engineer is rejected", async () => {
-    const reg = stubRegistry({ getRole: () => "engineer" });
-    const r = await router.handle("clear_work_quarantine", { agentId: "agent-z" }, ctxFor(undefined, "engineer", reg));
-    expect(r.isError).toBe(true);
-    expect(body(r).error).toMatch(/Authorization denied/);
+  it("work-593 CONTROL: the surrounding verbs ARE still registered (the assertion above can fail)", async () => {
+    // Without this, the test above passes against a router that registered NOTHING — a
+    // saturated instrument reading red-always and mistaken for a catch.
+    expect(router.getRegisteredTools()).toContain("claim_work");
+    expect(router.getRegisteredTools()).toContain("complete_work");
+    expect(router.getRegisteredTools()).toContain("reset_work");
   });
 });
 

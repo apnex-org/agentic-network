@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import type { NextActionProjection, WorkItem } from "../../src/entities/work-item.js";
+import { PolicyRouter } from "../../src/policy/router.js";
+import { registerWorkItemPolicy } from "../../src/policy/work-item-policy.js";
+import { createTestContext } from "../../src/policy/test-utils.js";
 import {
   evaluateDriverLivenessWatchdog,
   fingerprintWorkItemForDriverProgress,
@@ -44,6 +47,11 @@ function workItem(overrides: Partial<WorkItem> & { id: string }): WorkItem {
   };
 }
 
+/** work-593: the narrow IWorkItemStore surface `get_next_action` touches. */
+function makeNextActionStore(projection: NextActionProjection) {
+  return { getNextAction: async () => projection };
+}
+
 function lease(holder = "driver-1", expiresAt = "2026-07-17T01:00:00.000Z") {
   return {
     holder,
@@ -65,7 +73,7 @@ function driver(overrides: Partial<WorkItem> = {}): WorkItem {
   });
 }
 
-function projection(arcId: string, nextAction: WorkItem | null, readyCandidates = nextAction ? 1 : 0, emptyReason?: "wip_capped" | "quarantined"): NextActionProjection {
+function projection(arcId: string, nextAction: WorkItem | null, readyCandidates = nextAction ? 1 : 0, emptyReason?: "wip_capped"): NextActionProjection {
   return {
     arcId,
     nextAction,
@@ -364,5 +372,117 @@ describe("DriverLivenessWatchdogSweeper persistence/readout wiring", () => {
     expect(result.truncatedCandidateScan).toBe(true);
     expect(created[0].payload.truncatedCandidateScan).toBe(true);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining("candidate scan hit"));
+  });
+});
+
+// ── work-593 (B5) — THE QUARANTINE REMOVAL MUST MAKE THIS ALARM REACHABLE ───────
+//
+// 🔴 THE DEFECT THIS BLOCK PINS. `hasCallerGate` turns a `no_progress_with_ready_action`
+// WARNING into a `caller_gated` SUPPRESSION. That is right for a WIP-capped driver — it is
+// busy by construction. It was catastrophic for a claim-thrash-quarantined one: the seat
+// could not work at all, only an architect could release it, and this branch is exactly what
+// stopped anyone being told. THE MECHANISM THAT LOCKED A SEAT OUT ALSO SILENCED ITS ALARM.
+//
+// ─── TWO FALSIFIERS DOING DIFFERENT WORK (idea-677) ───────────────────────────
+//   1 NEGATIVE  what must go RED without the diff?  -> the reachability case below: before
+//               the removal, `get_next_action` returned {nextAction:null, emptyReason:
+//               "quarantined"} for such a seat, which lands in `caller_gated`.
+//   2 POSITIVE  what must be observed to CHANGE?    -> `warning` / `no_progress_with_ready_action`
+//               is actually PRODUCED, with the action identified. "Did not suppress" is NOT
+//               enough: a watchdog that returned `ok/no_graph_action` would also not suppress,
+//               and would be just as silent.
+//
+// ⚠️ AND THE DISCRIMINATOR THAT STOPS THE LAZY FIX. Deleting `hasCallerGate` outright would
+// ALSO make the warning reachable — and would be wrong, because every WIP-capped driver would
+// start warning about work it is already doing. So the WIP-CAP SUPPRESSION IS ASSERTED TO
+// SURVIVE. Either assertion alone passes a wrong implementation; only the pair pins the
+// removal to the quarantine term.
+describe("work-593: removing the [A] claim-thrash quarantine restores driver liveness reporting", () => {
+  const gatedDriver = () => driver();
+
+  it("🔴 REACHABLE, END-TO-END THROUGH THE POLICY SEAM: a stale-quarantined seat now WARNS", async () => {
+    // ⚠️ THIS TEST WAS REWRITTEN AFTER ITS FIRST VERSION WAS MEASURED VACUOUS.
+    // v1 built the projection by hand with a non-null nextAction and asserted `warning`. It
+    // passed — and it passed IDENTICALLY with the quarantine term restored in hasCallerGate,
+    // because a non-null nextAction never reaches that branch at all. It was testing
+    // pre-existing behaviour and would have shipped as proof of a change it never exercised.
+    // The mutation run is what caught it; reasoning about it did not.
+    //
+    // The diff only changes the outcome if the projection is PRODUCED BY THE POLICY LAYER,
+    // because what the removal changed is the SHAPE get_next_action returns for such a seat:
+    //   BEFORE  {nextAction: null, emptyReason: "quarantined"}  -> suppressed/caller_gated
+    //   AFTER   {nextAction: child}                              -> warning/no_progress...
+    const router = new PolicyRouter(() => {});
+    registerWorkItemPolicy(router);
+
+    const child = workItem({ id: "child", status: "ready" });
+    const d = driver();
+    const store = makeNextActionStore({ arcId: d.id, nextAction: child, readyCandidates: 1, hasChildren: true });
+    const ctx = createTestContext({ role: "engineer" });
+    ctx.stores.workItem = store as unknown as typeof ctx.stores.workItem;
+    // The seat carries the stale flag the retired mechanism used to set.
+    ctx.stores.engineerRegistry = {
+      getRole: () => "engineer",
+      getAgentForSession: async () => null,
+      getAgent: async () => ({ quarantined: true }),
+      claimSession: async () => ({ ok: false }),
+      recordWorkItemThrash: async () => null,
+      resetWorkItemThrash: async () => 0,
+    } as unknown as typeof ctx.stores.engineerRegistry;
+
+    const res = await router.handle("get_next_action", { workId: d.id }, ctx);
+    const projected = JSON.parse(res.content[0].text) as NextActionProjection;
+
+    // The seam itself: the policy layer no longer nulls the action for this seat.
+    expect(projected.nextAction).not.toBeNull();
+
+    const verdict = evaluateDriverLivenessWatchdog({
+      driver: d,
+      children: [child],
+      driverNextAction: projected,
+      baseline: baselineFor([child], d),
+      now: NOW,
+      thresholdMs: THRESHOLD_MS,
+      progressEvents: [],
+    });
+
+    expect(verdict.status).toBe("warning");
+    expect(verdict.reason).toBe("no_progress_with_ready_action");
+    // Clause 2: the alarm must NAME the work, not merely fire. A warning with no action is
+    // unactionable — an operator still could not find the stuck seat.
+    expect(verdict.action).toMatchObject({ kind: "driver_next_action", childId: "child" });
+  });
+
+  it("🔴 DISCRIMINATOR: the WIP-CAP suppression SURVIVES — the removal was surgical, not a deletion", () => {
+    // If `hasCallerGate` had simply been deleted, this goes red. That is the whole point of
+    // asserting it: it is the only thing distinguishing "removed the quarantine term" from
+    // "removed the function".
+    const child = workItem({ id: "child", status: "ready" });
+    const d = gatedDriver();
+    const verdict = evaluateDriverLivenessWatchdog({
+      driver: d,
+      children: [child],
+      driverNextAction: projection(d.id, null, 1, "wip_capped"),
+      baseline: baselineFor([child], d),
+      now: NOW,
+      thresholdMs: THRESHOLD_MS,
+      progressEvents: [],
+    });
+
+    expect(verdict.status).toBe("suppressed");
+    expect(verdict.reason).toBe("caller_gated");
+  });
+
+  it("🔴 the `quarantined` reason code is UNREPRESENTABLE — the union no longer admits it", () => {
+    // A TYPE-LEVEL assertion, because the runtime one is unreachable by construction: nothing
+    // can produce the value any more. This is the guard against a later re-widening of
+    // ReadyEmptyReason quietly re-arming the suppression — the string would flow straight
+    // back into hasCallerGate if the term were restored there too.
+    const p: NextActionProjection = projection(gatedDriver().id, null, 1, "wip_capped");
+    // @ts-expect-error work-593: "quarantined" was removed from the emptyReason union.
+    p.emptyReason = "quarantined";
+    // The `@ts-expect-error` above IS the assertion: it fails to compile if the union ever
+    // re-admits the value, which is precisely the regression worth catching.
+    expect(p.readyCandidates).toBe(1);
   });
 });

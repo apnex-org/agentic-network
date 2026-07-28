@@ -16,9 +16,21 @@ import { createTestContext } from "../src/policy/test-utils.js";
 function makeRouter(): PolicyRouter {
   const router = new PolicyRouter(() => {});
   // work-162 (A1): registerTaskPolicy retired; matrix covered by
-  // clear_work_quarantine ([Architect|Director]) + register_role ([Any]).
+  // reset_work ([Architect|Director]) + register_role ([Any]).
+  //
+  // 🔴 work-593 — THIS FILE'S ADMIN EXEMPLAR WAS SUBSTITUTED, NOT DELETED.
+  // The matrix previously exercised `clear_work_quarantine`, which was retired with the [A]
+  // claim-thrash mechanism. That verb was this file's ONLY [Architect|Director] case, so
+  // deleting its four tests would have left a "RBAC fail-open closure matrix" containing a
+  // single [Any] test — full green, zero coverage of the fail-open it exists to prevent.
+  // `reset_work` carries the IDENTICAL composite tag, so all four rows (unknown-denied,
+  // non-member-denied, member-allowed, composite-member-allowed) are preserved.
+  //
+  // ⚠️ A test file named after an invariant does not protect that invariant; the SPECIFIC
+  // verb it drives does. Retiring a feature silently retires whatever unrelated coverage
+  // happened to be riding on it.
   registerSessionPolicy(router);   // register_role [Any]
-  registerWorkItemPolicy(router);  // clear_work_quarantine [Architect|Director]
+  registerWorkItemPolicy(router);  // reset_work [Architect|Director]
   return router;
 }
 const unknownCtx = () => createTestContext(undefined, { skipRoleRegister: true }); // getRole→"unknown"
@@ -27,22 +39,25 @@ const denied = (r: { isError?: boolean; content: Array<{ text: string }> }) =>
   r.isError === true && /Authorization denied/.test(JSON.parse(r.content[0].text).error ?? "");
 
 describe("bug-175 RBAC membership-gate matrix (audit-4116)", () => {
-  it("unknown × clear_work_quarantine ([Architect|Director]) → DENIED", async () => {
-    expect(denied(await makeRouter().handle("clear_work_quarantine", { agentId: "a" }, unknownCtx()))).toBe(true);
+  it("unknown × reset_work ([Architect|Director]) → DENIED", async () => {
+    expect(denied(await makeRouter().handle("reset_work", { workId: "w" }, unknownCtx()))).toBe(true);
   });
 
-  it("engineer × clear_work_quarantine ([Architect|Director]) → DENIED (engineer not a member)", async () => {
-    expect(denied(await makeRouter().handle("clear_work_quarantine", { agentId: "a" }, asRole("engineer")))).toBe(true);
+  it("engineer × reset_work ([Architect|Director]) → DENIED (engineer not a member)", async () => {
+    expect(denied(await makeRouter().handle("reset_work", { workId: "w" }, asRole("engineer")))).toBe(true);
   });
 
-  it("architect × clear_work_quarantine → ALLOWED (member; not RBAC-denied)", async () => {
-    const r = await makeRouter().handle("clear_work_quarantine", { agentId: "a" }, asRole("architect"));
+  it("architect × reset_work → ALLOWED (member; reaches the handler, not RBAC-denied)", async () => {
+    // The discriminator is DENIED-vs-REACHED, not success. A missing workId makes the
+    // HANDLER fail on its own terms, which is precisely the proof that the membership gate
+    // let the caller through — a stronger signal than the old no-op success, because a
+    // blanket denial could never produce it.
+    const r = await makeRouter().handle("reset_work", { workId: "no-such-work" }, asRole("architect"));
     expect(denied(r)).toBe(false);
-    expect(r.isError).toBeFalsy(); // clears a non-existent agent's quarantine → no-op ok
   });
 
-  it("director × clear_work_quarantine → ALLOWED (composite-tag member)", async () => {
-    expect(denied(await makeRouter().handle("clear_work_quarantine", { agentId: "a" }, asRole("director")))).toBe(false);
+  it("director × reset_work → ALLOWED (composite-tag member)", async () => {
+    expect(denied(await makeRouter().handle("reset_work", { workId: "w" }, asRole("director")))).toBe(false);
   });
 
   it("unknown × [Any] register_role → ALLOWED + establishes the role (bootstrap path)", async () => {

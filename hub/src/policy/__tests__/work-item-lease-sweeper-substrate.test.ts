@@ -128,24 +128,28 @@ describe("WorkItemLeaseSweeper (real-pg)", () => {
     expect(await repo.expireLease("work-ghost", FUTURE, 3)).toBe("skipped");
   }, OP_TIMEOUT);
 
-  // ── 4b-ii: per-AGENT thrash-quarantine wiring (stub AgentThrashStore) ────────
-  function agentStub(ret: { thrashCount: number; quarantined: boolean } = { thrashCount: 1, quarantined: false }) {
-    const calls: Array<{ agentId: string; cap: number }> = [];
-    return { calls, recordWorkItemThrash: async (agentId: string, cap: number) => { calls.push({ agentId, cap }); return ret; } };
+  // ── 4b-ii / work-593: per-AGENT thrash COUNTER wiring (stub AgentThrashStore) ─
+  function agentStub(ret: { thrashCount: number } = { thrashCount: 1 }) {
+    const calls: Array<{ agentId: string }> = [];
+    return { calls, recordWorkItemThrash: async (agentId: string) => { calls.push({ agentId }); return ret; } };
   }
 
   it("a claim→expire-WITHOUT-evidence increments the holder's thrash counter", async () => {
     const stub = agentStub();
-    const sw = new WorkItemLeaseSweeper(repo, ctxProvider, { agentStore: stub, thrashCap: 3 });
+    const sw = new WorkItemLeaseSweeper(repo, ctxProvider, { agentStore: stub });
     const w = await ready();
     await repo.claimWorkItem(w.id, "agent-thrash-x");
-    await sw.fullSweep(FUTURE);
-    expect(stub.calls).toContainEqual({ agentId: "agent-thrash-x", cap: 3 });
+    const res = await sw.fullSweep(FUTURE);
+    // 🔴 work-593: THE COUNTER MUST STILL WRITE. The Director kept it as a metric, so its
+    // removal alongside the lockout would be a silent scope overrun — and idea-675's
+    // successor design would inherit an empty series.
+    expect(stub.calls).toContainEqual({ agentId: "agent-thrash-x" });
+    expect(res.agentsThrashed).toBeGreaterThanOrEqual(1);
   }, OP_TIMEOUT);
 
   it("a lapse WITH evidence (review-phase item) does NOT thrash the holder", async () => {
     const stub = agentStub();
-    const sw = new WorkItemLeaseSweeper(repo, ctxProvider, { agentStore: stub, thrashCap: 3 });
+    const sw = new WorkItemLeaseSweeper(repo, ctxProvider, { agentStore: stub });
     // a review-phase item that HAS evidence + an already-expired lease (verb-reached state → direct put).
     await substrate.put("WorkItem", {
       id: "work-rev-ev", type: "task", priority: "normal", roleEligibility: [], dependsOn: [],
@@ -158,13 +162,20 @@ describe("WorkItemLeaseSweeper (real-pg)", () => {
     expect(stub.calls.find((c) => c.agentId === "agent-rev-ev")).toBeUndefined();
   }, OP_TIMEOUT);
 
-  it("an agent newly hitting the thrash cap → result.agentsQuarantined + LOUD audit", async () => {
-    const stub = agentStub({ thrashCount: 3, quarantined: true }); // every record returns at-cap+quarantined
-    const sw = new WorkItemLeaseSweeper(repo, ctxProvider, { agentStore: stub, thrashCap: 3, audit });
+  it("🔴 work-593: a HIGH thrash count NO LONGER quarantines — it only counts, and emits no lockout audit", async () => {
+    // Was: "an agent newly hitting the thrash cap → result.agentsQuarantined + LOUD audit".
+    // The count is now unbounded and consequence-free. Asserting the ABSENCE of the audit
+    // action is the load-bearing half: a sweeper that still quarantined would satisfy the
+    // counter assertion and fail here.
+    const stub = agentStub({ thrashCount: 99 }); // far past the old cap of 3
+    const sw = new WorkItemLeaseSweeper(repo, ctxProvider, { agentStore: stub, audit });
     const w = await ready();
     await repo.claimWorkItem(w.id, "agent-quar-y");
     const res = await sw.fullSweep(FUTURE);
-    expect(res.agentsQuarantined).toBeGreaterThanOrEqual(1);
+    expect(res.agentsThrashed).toBeGreaterThanOrEqual(1);
+    expect(res).not.toHaveProperty("agentsQuarantined");
+    const actions = (await audit.listEntries()).map((e) => e.action);
+    expect(actions).not.toContain("agent_workitem_quarantined");
   }, OP_TIMEOUT);
 
   // ── audit-4103 #3: review/blocked lapse re-queues WITHOUT poison ─────────────

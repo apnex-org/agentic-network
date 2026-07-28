@@ -318,32 +318,41 @@ describe("AgentRepositorySubstrate — C1-R2 claim-thrash quarantine (mission-94
     expect(a!.quarantined).toBe(false);
   }, 60_000);
 
-  it("recordWorkItemThrash increments + quarantines at the cap; reset clears the count (not quarantine)", async () => {
+  it("🔴 work-593: recordWorkItemThrash COUNTS without bound and NEVER quarantines", async () => {
+    // Was: "increments + quarantines at the cap". The cap argument is gone from the
+    // signature, so the old 3-strike lockout is not merely unused — it is unexpressible.
     const { repo, agentId } = await makeAgent("thrash-count");
-    expect(await repo.recordWorkItemThrash(agentId, 3)).toEqual({ thrashCount: 1, quarantined: false });
-    expect(await repo.recordWorkItemThrash(agentId, 3)).toEqual({ thrashCount: 2, quarantined: false });
-    expect(await repo.recordWorkItemThrash(agentId, 3)).toEqual({ thrashCount: 3, quarantined: true }); // cap → quarantine
-    expect((await repo.getAgent(agentId))!.quarantined).toBe(true);
+    expect(await repo.recordWorkItemThrash(agentId)).toEqual({ thrashCount: 1 });
+    expect(await repo.recordWorkItemThrash(agentId)).toEqual({ thrashCount: 2 });
+    // Past the retired cap of 3 — the old code quarantined here.
+    expect(await repo.recordWorkItemThrash(agentId)).toEqual({ thrashCount: 3 });
+    expect(await repo.recordWorkItemThrash(agentId)).toEqual({ thrashCount: 4 });
+    expect((await repo.getAgent(agentId))!.quarantined).toBe(false);
 
-    // reset (on a successful complete) zeroes the count but LEAVES quarantine (manual-clear only)
+    // The reset on demonstrated progress SURVIVES — without it the counter measures tenure.
     await repo.resetWorkItemThrash(agentId);
     const afterReset = await repo.getAgent(agentId);
     expect(afterReset!.thrashCount).toBe(0);
-    expect(afterReset!.quarantined).toBe(true); // sticky until the manual clear
   }, 60_000);
 
-  it("clearWorkItemQuarantine (manual escape) clears BOTH the flag + the count", async () => {
-    const { repo, agentId } = await makeAgent("thrash-clear");
-    await repo.recordWorkItemThrash(agentId, 1); // → quarantined immediately (cap 1)
+  it("🔴 work-593: a PRE-EXISTING `quarantined:true` row is left untouched, not silently cleared", async () => {
+    // The field is retained as the historical record of whom the retired mechanism caught.
+    // Clearing it on the next thrash write would erase exactly that record — so the removal
+    // must neither read the flag nor write it. This pins the "leave it alone" half, which no
+    // other test covers and which a tidy-minded refactor would break first.
+    const { repo, agentId } = await makeAgent("thrash-legacy");
+    const row = await substrate.get<Record<string, unknown>>("Agent", agentId) as Record<string, unknown>;
+    const status = (row.status ?? {}) as Record<string, unknown>;
+    await substrate.put("Agent", { ...row, status: { ...status, quarantined: true } });
     expect((await repo.getAgent(agentId))!.quarantined).toBe(true);
-    await repo.clearWorkItemQuarantine(agentId);
-    const cleared = await repo.getAgent(agentId);
-    expect(cleared!.quarantined).toBe(false);
-    expect(cleared!.thrashCount).toBe(0);
+
+    await repo.recordWorkItemThrash(agentId);
+    await repo.resetWorkItemThrash(agentId);
+    expect((await repo.getAgent(agentId))!.quarantined).toBe(true); // still there, still inert
   }, 60_000);
 
   it("recordWorkItemThrash on an absent agent → null (no throw)", async () => {
     const repo = new AgentRepositorySubstrate(substrate);
-    expect(await repo.recordWorkItemThrash("agent-nonexistent", 3)).toBeNull();
+    expect(await repo.recordWorkItemThrash("agent-nonexistent")).toBeNull();
   }, 60_000);
 });

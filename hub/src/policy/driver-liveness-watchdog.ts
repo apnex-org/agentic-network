@@ -325,10 +325,27 @@ function findGraphAction(input: DriverLivenessWatchdogInput): DriverLivenessActi
   return undefined;
 }
 
+/**
+ * work-593 — 🔴 THIS FUNCTION IS WHY THE ARC WENT QUIET.
+ *
+ * A `suppressed/caller_gated` verdict means "there is ready work, the seat cannot take it,
+ * and that is FINE". That is true for a WIP-capped seat, which is busy by construction. It
+ * was catastrophically FALSE for a claim-thrash-quarantined one: the seat could not work at
+ * ALL, only an architect could release it, and this branch is what stopped anyone being told.
+ * The mechanism that locked a seat out ALSO SILENCED THE ALARM FOR IT — the arc's liveness
+ * signal disappeared exactly when it mattered most.
+ *
+ * ⚠️ THE WIP-CAP TERM STAYS, AND THAT IS LOAD-BEARING. Deleting this function outright would
+ * also make `no_progress_with_ready_action` "reachable", and would be WRONG: every WIP-capped
+ * driver would start emitting a warning about work it is already busy doing. The removal has
+ * to be the quarantine term ONLY, which is why the falsifier below asserts BOTH directions —
+ * quarantine no longer suppresses AND wip_capped still does. One assertion alone passes for
+ * the wrong implementation.
+ */
 function hasCallerGate(projection: NextActionProjection): boolean {
   return projection.nextAction === null
     && projection.readyCandidates > 0
-    && (projection.emptyReason === "wip_capped" || projection.emptyReason === "quarantined");
+    && projection.emptyReason === "wip_capped";
 }
 
 function isLiveInFlight(child: WorkItem, now: string): boolean {

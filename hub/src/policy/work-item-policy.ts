@@ -67,13 +67,13 @@ import type {
 
 // ── work-94 (cold-start spine): the NON-DARK empty-digest reasons ────────────────────
 // An empty caller-scoped claimable digest must explain ITSELF — never a silent/dark zero (a
-// cold agent must know whether it's blocked (quarantine), maxed (WIP cap), or simply has no
-// work, so it knows the next move). Codes are set by listReadyForRole (wip_capped /
-// no_claimable_ready) + the policy quarantine gate (quarantined).
+// cold agent must know whether it's maxed (WIP cap) or simply has no work, so it knows the
+// next move). Both codes are set by listReadyForRole.
+// work-593: the third reason (`quarantined`) went out with the [A] gate that produced it.
+// It was the only reason sourced from the POLICY layer rather than the store.
 const EMPTY_REASON_MESSAGE: Record<ReadyEmptyReason, string> = {
   wip_capped: "you hold the maximum in-flight items (WIP cap) — complete_work or release_work on one to free a claim slot",
   no_claimable_ready: "no WorkItem is claimable by your role right now (none that is ready AND role-eligible AND dependency-met)",
-  quarantined: "you are claim-thrash quarantined — an admin clear_work_quarantine is required before you can claim again",
 };
 /** Spread the non-dark empty-reason fields when the digest is empty (no-op when claimable). */
 function emptyDigestFields(reason: ReadyEmptyReason | undefined): Record<string, unknown> {
@@ -197,12 +197,25 @@ async function claimWork(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
   const caller = await resolveCreatedBy(ctx);
-  // 4b-ii: a claim-thrash-quarantined agent is locked OUT of claiming (the wedged-agent
-  // guard; the C2 supervisor actuates on the same flag). Cleared via clear_work_quarantine.
-  const agent = await ctx.stores.engineerRegistry.getAgent(caller.agentId);
-  if (agent?.quarantined) {
-    return err("quarantined", `agent ${caller.agentId} is claim-thrash quarantined; an admin clear_work_quarantine is required (R2 interim — C2 auto-recovery deferred)`);
-  }
+  // work-593 / idea-675 — [A] AGENT CLAIM-THRASH QUARANTINE REMOVED.
+  //
+  // MECHANICS: this gate locked an agent out of claim_work once thrashCount hit the cap.
+  // RATIONALE FOR REMOVAL (Director-ruled): a ROW-level event produced an AGENT-level,
+  // org-wide, ONE-WAY ban with no automatic reset, and work-580 measured that the trigger
+  // can be entirely NOT THE AGENT'S FAULT — a seat REFUSED while trying to renew scored
+  // identically to one that walked away. Rows already self-heal by requeueing; poisonCap
+  // still bounds per-row damage. Quarantine bounded REACH, not depth, and it did so with a
+  // one-way switch only an architect could clear.
+  //
+  // 🔴 AND THE DEFECT THAT MADE IT URGENT: a quarantined seat STOPPED PRODUCING THE
+  // LIVENESS SIGNAL that would have told anyone it was stuck — the driver watchdog
+  // suppressed `no_progress_with_ready_action` for exactly these seats. The arc went quiet
+  // precisely when a seat was locked out. Removing this makes that alarm reachable again,
+  // and it will get LOUDER. That is the point, not a regression.
+  //
+  // ⚠️ `thrashCount` STILL WRITES (see work-item-lease-sweeper). Remove the CONSEQUENCE,
+  // keep the MEASUREMENT — the successor mechanism (idea-675) needs the data series, and
+  // deleting the counter too would leave it designing with an empty page.
   try {
     const w = await store.claimWorkItem(args.workId as string, caller.agentId, caller.role);
     if (!w) return notFound(args.workId as string);
@@ -224,17 +237,15 @@ async function listReadyWork(args: Record<string, unknown>, ctx: IPolicyContext)
 
   // idea-353 WI-2.1 (AC5 strict parity / audit-4265): opt-in agent-scoped projection.
   // The claimable DIGEST must count only what THIS caller can actually claim, so it
-  // applies the FULL claim_work predicate — deps + role (substrate) + WIP-cap
-  // (substrate, via the agent-scoped listReadyForRole) + quarantine (HERE, the same
-  // gate + store claimWork uses). A WIP-capped or quarantined caller gets count 0,
-  // so the digest cannot over-report. Default (flag absent) preserves the
+  // applies the FULL claim_work predicate — deps + role + WIP-cap, all in the substrate
+  // via the agent-scoped listReadyForRole. A WIP-capped caller gets count 0, so the digest
+  // cannot over-report. (work-593: the quarantine term is gone from BOTH sides at once —
+  // the digest mirrored the claim gate, so removing one without the other would have made
+  // the digest over- or under-report. They are removed together for that reason.) Default (flag absent) preserves the
   // non-agent-scoped role view + the D-1 R1 no-touch seam — unchanged.
   if (args.scopeToCaller === true) {
-    const agent = await ctx.stores.engineerRegistry.getAgent(caller.agentId);
-    if (agent?.quarantined) {
-      // work-94 (non-dark digest): a quarantined caller's empty digest says WHY, not a dark zero.
-      return ok({ items: [], count: 0, role: role ?? null, truncated: false, scopedToCaller: true, ...emptyDigestFields("quarantined") });
-    }
+    // work-593: the quarantine short-circuit is gone with the gate it mirrored. The digest
+    // still reports wip_capped / no_claimable_ready non-darkly via listReadyForRole.
     const { items, truncated, emptyReason } = await store.listReadyForRole(role, limit, caller.agentId);
     // work-94: an empty scoped digest carries the non-dark reason (wip_capped / no_claimable_ready).
     return ok({ items, count: items.length, role: role ?? null, truncated, scopedToCaller: true, ...truncationNote(truncated), ...emptyDigestFields(emptyReason) });
@@ -586,11 +597,14 @@ async function completeWork(args: Record<string, unknown>, ctx: IPolicyContext):
     // wake the eligible agents push-natively (the idea-353 digest stays as fallback).
     if (!result.completionBlocked && w.status === "done") await emitDependencyUnblocks(ctx, w);
     // 4b-ii: a successful complete (evidence attached → review|done, or evidence-persisted
-    // friction-block) is demonstrated progress → reset the agent's claim-thrash counter
-    // (leaves quarantine to manual clear).
+    // friction-block) is demonstrated progress → reset the agent's claim-thrash counter.
+    // work-593: THIS RESET IS KEPT. The counter still writes (Director ruling: useful as a
+    // metric), so it must still zero on demonstrated progress — a counter that only ever
+    // climbs measures TENURE, not thrash, and would poison the successor mechanism's data.
     const priorThrash = await ctx.stores.engineerRegistry.resetWorkItemThrash(caller.agentId);
-    // audit-4133: audit a NON-NOOP reset (forensic symmetry with the quarantine SET + clear
-    // paths; low-volume since most completes have thrashCount=0).
+    // audit-4133: audit a NON-NOOP reset (low-volume since most completes have thrashCount=0).
+    // work-593: its former symmetry partners (the quarantine SET + clear audits) are gone; this
+    // one stays because it records a COUNTER movement, which still happens.
     if (priorThrash > 0) {
       try {
         await ctx.stores.audit.logEntry("hub", "agent_workitem_thrash_reset",
@@ -621,23 +635,18 @@ async function completeWork(args: Record<string, unknown>, ctx: IPolicyContext):
   } catch (e) { return mapVerbError(e); }
 }
 
-async function clearWorkQuarantine(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
-  // 4b-ii R2 interim manual quarantine escape (admin-gated at the tool level). Clears the
-  // agent's claim-thrash quarantine + counter. C2 supervisor-restart auto-recovery deferred.
-  const agentId = args.agentId as string;
-  await ctx.stores.engineerRegistry.clearWorkItemQuarantine(agentId);
-  // audit-4103 (LOW): forensic symmetry with the sweeper's quarantine-SET audit — record
-  // WHO cleared the quarantine (the SET path is audited; the clear path was not).
-  const caller = await resolveCreatedBy(ctx);
-  try {
-    await ctx.stores.audit.logEntry("hub", "agent_workitem_quarantine_cleared",
-      `Agent ${agentId} claim-thrash quarantine cleared by ${caller.role}/${caller.agentId} (manual R2 escape)`, agentId);
-  } catch (auditErr) {
-    console.warn(`[work-item-policy] quarantine-clear audit write failed for ${agentId}:`, auditErr);
-  }
-  const agent = await ctx.stores.engineerRegistry.getAgent(agentId);
-  return ok({ agentId, quarantined: agent?.quarantined ?? false, thrashCount: agent?.thrashCount ?? 0 });
-}
+// work-593: `clearWorkQuarantine` RETIRED with the [A] gate it existed to escape.
+// ⚠️ THE VERB WAS THE TELL. A mechanism whose only exit is an ARCHITECT-ONLY verb cannot be
+// escaped by the seat it traps — bug-382 measured a seat quarantined for a lease expiry it did
+// NOT cause, with `[architect|director]` RBAC standing between it and work. Removing the trap
+// removes the need for the escape hatch; keeping the hatch without the trap would leave a verb
+// that clears a flag nothing sets.
+//
+// ⚠️ RESIDUAL, RECORDED NOT SILENCED: three docs still describe this verb as live —
+// docs/designs/c1-r2-workitem-construction-design.md:162, docs/designs/m-stint-lifecycle-design.md:138,
+// docs/traces/c1-r2-workitem-work-trace.md:59. Measured as PROSE-ONLY (zero code callers outside
+// hub/**, git grep on origin/main@50b01e96), so they do not block the cut — but they are now stale
+// and a reader will believe them.
 
 // ── On-ramp: create_work + get_work (C1 NARROW adoption) ────────────────────────
 //
@@ -1518,22 +1527,12 @@ async function getNextAction(args: Record<string, unknown>, ctx: IPolicyContext)
   const caller = await resolveCreatedBy(ctx);
   const roleOverride = args.role as string | undefined;
   const role = roleOverride ?? caller.role;
-  // Self-query → agent-scoped (respects the caller's WIP-cap [substrate] + quarantine [here]);
-  // cross-role query → role-only (a different role's WIP/quarantine is not the caller's).
+  // Self-query → agent-scoped (respects the caller's WIP-cap, enforced in the substrate);
+  // cross-role query → role-only (a different role's WIP is not the caller's).
+  // work-593: the POLICY-layer quarantine gate that used to sit here is gone. It was the last
+  // caller gate this verb applied outside the substrate, so `nextAction` is now a pure
+  // projection of the same predicate claim_work enforces — one source, not two.
   const agentId = roleOverride ? undefined : caller.agentId;
-  // Quarantine is the POLICY-layer caller gate (the substrate has no agent-registry). A
-  // claim-thrash-quarantined caller is locked OUT of claiming (claim_work :98-103 +
-  // list_ready_work(scopeToCaller) :130-138), so its self-query "what next" must be a non-dark
-  // no-action-with-reason, never a nextAction claim_work would immediately reject. The raw role
-  // scope (readyCandidates/hasChildren) is still surfaced — honest "there IS work, but YOU are
-  // quarantined", distinct from "scope exhausted".
-  if (agentId !== undefined) {
-    const agent = await ctx.stores.engineerRegistry.getAgent(agentId);
-    if (agent?.quarantined) {
-      const raw = await store.getNextAction(args.workId as string, role, undefined); // role-only raw scope
-      return raw ? ok({ ...raw, nextAction: null, emptyReason: "quarantined" as const }) : notFound(args.workId as string);
-    }
-  }
   const proj = await store.getNextAction(args.workId as string, role, agentId);
   return proj ? ok(proj) : notFound(args.workId as string);
 }
@@ -1552,7 +1551,7 @@ async function listWork(args: Record<string, unknown>, ctx: IPolicyContext): Pro
   const store = ctx.stores.workItem;
   if (!store) return err("not_wired", "WorkItem store is not available");
   // bug-269 verb-semantics split (load-bearing): list_ready_work is the agent arrival /
-  // next-action queue (claimability + runbook/reference/WIP/quarantine semantics). list_work is
+  // next-action queue (claimability + runbook/reference/WIP semantics). list_work is
   // the org-state/control-plane inspection surface. Therefore a casual zero-arg list_work call
   // must not dump all history; it gets a safe, role-scoped ready snapshot. Broad all-status /
   // all-role org-state remains available only by explicit filters or scope:"all". Lease +
@@ -1797,17 +1796,17 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "get_next_action",
-    "[Any] W2 (idea-451): the graph-projected NEXT ACTION for an arc-node — the HIGHEST-PRIORITY READY completionDependsOn child claimable by the caller. CHILD-LOCAL: candidates are the arc's OWN children evaluated directly against the claim predicate (ready + roleEligibility + start-gates), so `readyCandidates` is the RAW claimable scope — NEVER silently capped by a global ready-scan window. Corrects scope-inversion: 'what next' is READ FROM THE GRAPH, never chosen from memory; selecting a lower-priority ready child over a higher-priority ready one is UNREPRESENTABLE (priority-ordered, head returned). Blocked/paused/done children excluded by construction. Caller-scoped self-query applies the WIP-cap (substrate) + quarantine (policy) gates NON-DARK: when the caller is gated, nextAction is null with `emptyReason` (wip_capped | quarantined) while `readyCandidates` still reports raw scope. A `role` override projects that role's queue (role-only, no caller gate). Feeds W3's reconciler + the cold-start 'what next'. Returns { arcId, nextAction, readyCandidates, hasChildren, emptyReason? }.",
+    "[Any] W2 (idea-451): the graph-projected NEXT ACTION for an arc-node — the HIGHEST-PRIORITY READY completionDependsOn child claimable by the caller. CHILD-LOCAL: candidates are the arc's OWN children evaluated directly against the claim predicate (ready + roleEligibility + start-gates), so `readyCandidates` is the RAW claimable scope — NEVER silently capped by a global ready-scan window. Corrects scope-inversion: 'what next' is READ FROM THE GRAPH, never chosen from memory; selecting a lower-priority ready child over a higher-priority ready one is UNREPRESENTABLE (priority-ordered, head returned). Blocked/paused/done children excluded by construction. Caller-scoped self-query applies the WIP-cap gate NON-DARK: when the caller is gated, nextAction is null with `emptyReason` (wip_capped) while `readyCandidates` still reports raw scope. A `role` override projects that role's queue (role-only, no caller gate). Feeds W3's reconciler + the cold-start 'what next'. Returns { arcId, nextAction, readyCandidates, hasChildren, emptyReason? }.",
     {
       workId: z.string().describe("The arc-node WorkItem id whose completionDependsOn children to project"),
-      role: z.string().optional().describe("Project another role's queue (default: the caller's role, agent-scoped to their WIP-cap/quarantine)"),
+      role: z.string().optional().describe("Project another role's queue (default: the caller's role, agent-scoped to their WIP-cap)"),
     },
     getNextAction,
   );
 
   router.register(
     "legal_moves",
-    "[Any] THE COLD-START 'what can I do from here' SURFACE (work-94 spine): the legal FSM transition verbs for an item given its state/lease/gates, FROM YOUR seat (the spoof-proof session caller). Each verb carries `legal` + (when illegal) a non-dark `reason` — so a process-naive agent knows its affordances AND why the rest are unavailable. Caller-aware (the lease-bound verbs — start/block/resume/complete/release/abandon/renew — require you to be the lease-holder; abandon also allows the creator) + gate-aware (an arc with an unmet completion-gate → complete is NOT legal; a leaf → complete IS). claim is legal from `ready` when role-eligible + dependency-met (WIP-cap + quarantine are re-checked at claim-time).",
+    "[Any] THE COLD-START 'what can I do from here' SURFACE (work-94 spine): the legal FSM transition verbs for an item given its state/lease/gates, FROM YOUR seat (the spoof-proof session caller). Each verb carries `legal` + (when illegal) a non-dark `reason` — so a process-naive agent knows its affordances AND why the rest are unavailable. Caller-aware (the lease-bound verbs — start/block/resume/complete/release/abandon/renew — require you to be the lease-holder; abandon also allows the creator) + gate-aware (an arc with an unmet completion-gate → complete is NOT legal; a leaf → complete IS). claim is legal from `ready` when role-eligible + dependency-met (the WIP-cap is re-checked at claim-time).",
     {
       workId: z.string().describe("The WorkItem id to compute the caller's legal moves for"),
     },
@@ -1823,11 +1822,11 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
 
   router.register(
     "list_ready_work",
-    "[Any] THE COLD-START 'what do I do next' SURFACE (work-94 spine): the AGENT ARRIVAL / NEXT-ACTION QUEUE — the next WorkItem(s) you can claim, each already carrying its node-contract — runbook (the just-in-time how-to) + references (the inputs to read) — so a process-naive agent is self-sufficient with NO prior context. Lists ready WorkItems claimable by a role (empty roleEligibility = any-role, OR'd in); defaults to the caller's role, pass `role` to view another queue. Pass `scopeToCaller:true` for the CALLER-CLAIMABLE projection — applies claim_work's FULL eligibility predicate (deps + role + WIP-cap + quarantine), so the count never over-reports what you can actually claim (the idea-353 re-engagement digest). NON-DARK: an empty result carries `emptyReason` + `emptyReasonMessage` (wip_capped | no_claimable_ready | quarantined) — never a silent zero, so you always know the next move. truncation-HONEST: a capped scan sets `truncated` + a note (never a silent cap). NOT an org-state/audit surface; use list_work with explicit filters or scope:'all' for control-plane inspection.",
+    "[Any] THE COLD-START 'what do I do next' SURFACE (work-94 spine): the AGENT ARRIVAL / NEXT-ACTION QUEUE — the next WorkItem(s) you can claim, each already carrying its node-contract — runbook (the just-in-time how-to) + references (the inputs to read) — so a process-naive agent is self-sufficient with NO prior context. Lists ready WorkItems claimable by a role (empty roleEligibility = any-role, OR'd in); defaults to the caller's role, pass `role` to view another queue. Pass `scopeToCaller:true` for the CALLER-CLAIMABLE projection — applies claim_work's FULL eligibility predicate (deps + role + WIP-cap), so the count never over-reports what you can actually claim (the idea-353 re-engagement digest). NON-DARK: an empty result carries `emptyReason` + `emptyReasonMessage` (wip_capped | no_claimable_ready) — never a silent zero, so you always know the next move. truncation-HONEST: a capped scan sets `truncated` + a note (never a silent cap). NOT an org-state/audit surface; use list_work with explicit filters or scope:'all' for control-plane inspection.",
     {
       role: z.string().optional().describe("Role to project for (default: the caller's role)"),
       limit: z.number().int().positive().max(MAX_LIST_LIMIT).optional().describe(`Max items (default ${DEFAULT_LIST_LIMIT}, cap ${MAX_LIST_LIMIT})`),
-      scopeToCaller: z.boolean().optional().describe("When true, project only items the CALLER can actually claim (full claim_work predicate incl. WIP-cap + quarantine); a maxed/quarantined caller gets count 0. Default false = the non-agent-scoped role view."),
+      scopeToCaller: z.boolean().optional().describe("When true, project only items the CALLER can actually claim (full claim_work predicate incl. WIP-cap); a maxed caller gets count 0. Default false = the non-agent-scoped role view."),
     },
     listReadyWork,
   );
@@ -1943,10 +1942,4 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
     completeWork,
   );
 
-  router.register(
-    "clear_work_quarantine",
-    "[Architect|Director] Clear an agent's claim-thrash quarantine (R2 interim manual escape; C2 supervisor auto-recovery is deferred). Resets the thrash counter + un-quarantines so the agent can claim again.",
-    { agentId: z.string().describe("The quarantined agent's id") },
-    clearWorkQuarantine,
-  );
 }
