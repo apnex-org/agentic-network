@@ -198,6 +198,7 @@ jobs:
         run: bash -n ois/bin/ois
       - name: Run ois shell regressions
         run: |
+          bash scripts/test/ois-plugin-pin-resolves.test.sh
           bash scripts/test/ois-seat-configdir.test.sh
           bash scripts/test/ois-fleet-seat-config.test.sh
           bash scripts/test/exact-internal-lineage.test.sh
