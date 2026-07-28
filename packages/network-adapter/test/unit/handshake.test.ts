@@ -397,10 +397,37 @@ describe("performHandshake", () => {
     // impossible rather than merely described.
     // ⚠️ NON-FATAL, DELIBERATELY. `{notAHandshake:true}` is valid JSON of an
     // unrecognised SHAPE — a compatibility gap, not a broken contract. The legacy
-    // FLAT handshake shape (`{agentId, sessionEpoch}`) lands here too, and the
-    // loopback hub still emits it. Marking this fatal converted three integration
-    // tests from green to red and would have turned a hub speaking the older shape
-    // from "degraded but running" into "refuses to start".
+    // FLAT handshake shape (`{agentId, sessionEpoch}`) lands here too.
+    //
+    // 🔴 work-602 (R1) — THE WARRANT AND THE PROMISE, CORRECTED. This comment
+    // previously carried two claims that `work-598` withdrew from the source, and
+    // it kept carrying them AFTER the source was fixed. Both are replaced here
+    // rather than deleted: removing a false witness without stating the true one
+    // leaves the claim unsupported instead of correctly supported.
+    //
+    // WAS: "the loopback hub still emits it" — cited as evidence that the flat
+    // shape is emitted in production. IT IS NOT. `LoopbackHub` is test/bench-only;
+    // measured source-only with tests excluded it appears in exactly ONE file,
+    // `handshake.ts` itself. (An earlier "21 files / zero non-test" count was
+    // coarser than the claim it carried: a substring grep that also matched the
+    // DIFFERENT symbol `PolicyLoopbackHub` and swept docs.) A TEST DOUBLE WAS
+    // RECORDED AS THE WITNESS FOR A PRODUCTION COMPATIBILITY CLAIM.
+    //
+    // THE ACTUAL WARRANT: this adapter ships to consumers we cannot observe, and
+    // an older Hub deployment may exist. That is a compatibility argument about
+    // UNOBSERVABLE deployments — honest precisely because it cannot be settled by
+    // grepping this tree. `legacyAgentIdType` shows the parser was BUILT expecting
+    // the flat shape; it does not prove anyone still sends it.
+    //
+    // WAS: "degraded but running". THE HONEST PROMISE IS **DEGRADED BUT RUNNING
+    // FOR 60 SECONDS, THEN REFUSED** — the hub-side identity-window guard added in
+    // the same commit refuses such a seat once IDENTITY_HANDSHAKE_WINDOW_MS
+    // elapses. ⚠️ AND NO TEST EXERCISES ADAPTER AND HUB TOGETHER ON THIS PATH:
+    // this suite proves the seat stays up in the one package where the refusal does
+    // not exist, and the hub suite never sees the adapter. Known gap, stated not
+    // closed (idea-449's territory).
+    //
+    // Marking this fatal converted three integration tests from green to red.
     expect(result.fatal).toBeFalsy();
   });
 
