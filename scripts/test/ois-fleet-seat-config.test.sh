@@ -68,7 +68,22 @@ network_pkg_version="$(node -p "require('$REPO/packages/network-adapter/package.
 network_lock_version="$(node -p "require('$REPO/package-lock.json').packages['packages/network-adapter'].version")"
 network_cognitive_dep="$(node -p "require('$REPO/packages/network-adapter/package.json').dependencies['@apnex/cognitive-layer']")"
 network_router_dep="$(node -p "require('$REPO/packages/network-adapter/package.json').dependencies['@apnex/message-router']")"
-eq "OIS keeps the prior published Claude pin until a separate publication slice" "0.1.16" "$claude_pin"
+# bug-428: was "0.1.16" — A VERSION THAT WAS NEVER PUBLISHED. The registry goes
+# 0.1.14 -> 0.1.19 -> 0.1.20, so a FRESH SEAT COULD NOT BE SEEDED AT ALL for nine
+# days; existing seats survived only via ois:291's "already installed, skip" branch.
+#
+# 🔴 AND THIS ASSERTION IS WHY NOBODY NOTICED. The `neq` guard below was INTACT and
+# working the whole time. This line hardcoded the EXPECTED value of the very thing
+# that guard protects — so when the pin broke, the suite stayed green. A TEST THAT
+# HARDCODES THE EXPECTED VALUE OF WHAT IT GUARDS WILL HAPPILY ASSERT A BROKEN VALUE,
+# AND ITS GREENNESS BECOMES EVIDENCE THAT NOTHING IS WRONG.
+#
+# The literal is kept (it is an EXTERNAL assertion — deriving it from the pin would be
+# self-certifying) but it is a 23rd version site, distinct in kind from the 21 build
+# literals of idea-693: those fail LOUDLY with "wrong package version", this one fails
+# SILENTLY-GREEN. scripts/test/ois-plugin-pin-resolves.test.sh is the durable half —
+# it asks the REGISTRY, which is the only thing that can answer.
+eq "OIS keeps the prior published Claude pin until a separate publication slice" "0.1.14" "$claude_pin"
 neq "fresh Claude source candidate is not silently active in OIS" "$claude_pkg_version" "$claude_pin"
 eq "Claude package lock version matches source candidate" "$claude_pkg_version" "$claude_lock_version"
 eq "Claude source candidate has zero consumer runtime dependencies" "0" "$claude_runtime_dep_count"
