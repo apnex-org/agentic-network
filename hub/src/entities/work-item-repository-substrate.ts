@@ -254,6 +254,57 @@ const RELEASABLE_PHASES: readonly WorkItemPhase[] = ["claimed", "in_progress", "
  *  — it must never terminal-abandon + lose real work. */
 const POISON_ELIGIBLE_PHASES: readonly WorkItemPhase[] = ["claimed", "in_progress"];
 
+/** work-594 / bug-406 — the `operationId` prefix `expireLease` stamps on every lease-expiry
+ *  recallHistory entry (see the append below). It is the discriminator that lets the poison
+ *  window count LEASE LAPSES specifically, rather than every recall the row has ever seen —
+ *  a recall from `reset_work` or an architect action is not a lapse and must not be charged. */
+const LEASE_EXPIRY_OPERATION_PREFIX = "lease-expiry:";
+
+/**
+ * work-594 / bug-406 — HOW MANY LAPSES COUNT AGAINST THE POISON CAP *RIGHT NOW*.
+ *
+ * 🔴 THE DEFECT THIS REPLACES. `leaseExpiryCount` is CUMULATIVE OVER THE ROW'S ENTIRE
+ * LIFETIME AND SHARED ACROSS EVERY HOLDER IT HAS EVER HAD, and has no reset path anywhere in
+ * `hub/src` (`releaseWork` deliberately preserves it — see its JSDoc). So a row that lapsed
+ * twice weeks ago sat permanently one lapse from irreversible abandon, and whoever drew it
+ * next inherited that invisibly. `work-bp-seatrec0-arc_driver` — the previous planning arc's
+ * controller node — was terminally consumed exactly that way, by a holder that had RENEWED ON
+ * SCHEDULE and then lost the ability to prove who it was (bug-398, closed by this same arc).
+ *
+ * ⚠️ NO SCHEMA CHANGE. This reads the per-lapse record **bug-384 already persists** for a
+ * different purpose (evidence admissibility): every expiry appends a recallHistory entry
+ * carrying `recalledAt`. Check what is already stored before adding a field.
+ *
+ * 🔴 WHY THE WINDOW IS `poisonCap × leaseWindow` AND NOT A ROUND NUMBER — it is DERIVED from
+ * what it must discriminate. A genuinely poisonous row burns its budget on CONSECUTIVE lapses,
+ * whose first→last span is `(poisonCap − 1) × leaseWindow` (2h at the defaults). A window of
+ * `poisonCap × leaseWindow` (3h) therefore contains a true consecutive burn WITH A FULL LEASE
+ * WINDOW OF SLACK for re-claim delay, while the live instance's spread lapses (3h09m) fall
+ * outside it. It is also self-scaling: a 10-minute-lease node type gets a 30-minute window.
+ *
+ * ⚠️ RETROACTIVE AMNESTY, STATED NOT DISCOVERED: rows whose lapses predate bug-384 have no
+ * lease-expiry entries at all, so they count 0 and receive a clean budget. This errs toward
+ * NOT terminating rows, and the complete census of non-terminal rows found ZERO at lec>=2.
+ */
+export function recentLeaseExpiryCount(
+  w: { recallHistory?: { operationId?: string; recalledAt?: string }[]; leaseWindowMs?: number },
+  nowISO: string,
+  poisonCap: number,
+): number {
+  const windowMs = Math.max(1, poisonCap) * leaseTtlMsFor(w);
+  const cutoffMs = Date.parse(nowISO) - windowMs;
+  if (!Number.isFinite(cutoffMs)) return 0;
+  let count = 0;
+  for (const entry of w.recallHistory ?? []) {
+    if (!entry?.operationId?.startsWith(LEASE_EXPIRY_OPERATION_PREFIX)) continue;
+    const at = Date.parse(entry.recalledAt ?? "");
+    // An unparseable timestamp is NOT counted: a lapse we cannot date cannot be shown to be
+    // recent, and the cap is a terminal, irreversible action. Fail toward preserving the row.
+    if (Number.isFinite(at) && at >= cutoffMs) count += 1;
+  }
+  return count;
+}
+
 /** Default per-agent WIP cap. Per-role override map is construction-design open-Q #3
  *  (pending architect); until then every role gets the default. */
 const DEFAULT_WIP_CAP = 3;
@@ -4072,8 +4123,20 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       // re-queue WITHOUT incrementing → never terminal-abandon (evidence preserved on
       // re-queue, so a parked review item that loses its holder is recoverable, not lost).
       const poisonEligible = POISON_ELIGIBLE_PHASES.includes(w.status);
+      // work-594 / bug-406 — THE CAP IS EVALUATED AGAINST A WINDOW, THE COUNTER IS A METRIC.
+      //
+      // `leaseExpiryCount` still increments and is still the LIFETIME total — nothing branches
+      // on it any more. This is the same shape B5 (work-593) gave `thrashCount` hours ago:
+      // KEEP THE MEASUREMENT, REMOVE THE CONSEQUENCE.
+      //
+      // ⚠️ `+ 1` COUNTS THE LAPSE BEING PROCESSED RIGHT NOW. `recentLeaseExpiryCount` reads
+      // recallHistory as it stands BEFORE this expiry's entry is appended a few lines below,
+      // so the current lapse is not yet in it. Dropping the `+ 1` would silently grant every
+      // row one extra life — an off-by-one that no green suite would surface, because the row
+      // still eventually dies, just later.
       const nextCount = poisonEligible ? w.leaseExpiryCount + 1 : w.leaseExpiryCount;
-      const poisoned = poisonEligible && nextCount >= poisonCap;
+      const recentCount = poisonEligible ? recentLeaseExpiryCount(w, nowISO, poisonCap) + 1 : 0;
+      const poisoned = poisonEligible && recentCount >= poisonCap;
       // work-561: accrual now comes from `releaseHold` below, with the SAME (w, nowISO) inputs — the
       // local binding is gone rather than left shadowing an identical computation.
       // bug-384 — RECORD THE LEASE THE TIMER IS ABOUT TO DESTROY.
@@ -4097,7 +4160,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
             operationId: `lease-expiry:${workId}:${expiringLease.token}`,
             requestHash: hashCanonicalDomain("workitem-lease-expiry-v4", { workId, token: expiringLease.token, expiresAt: expiringLease.expiresAt }),
             actor: { role: "system", agentId: "lease-expiry-sweeper" },
-            reason: `Lease lapsed at ${expiringLease.expiresAt} (holder ${expiringLease.holder}); row ${poisoned ? "poison-abandoned" : "re-queued to ready"}. Recorded so the holder's already-produced evidence stays admissible on re-claim (bug-384). No holder notice is projected for a timer lapse.`,
+            reason: `Lease lapsed at ${expiringLease.expiresAt} (holder ${expiringLease.holder}); row ${poisoned ? "poison-abandoned" : "re-queued to ready"} (${recentCount}/${poisonCap} lapses inside the poison window; lifetime ${nextCount}). Recorded so the holder's already-produced evidence stays admissible on re-claim (bug-384), and so the poison window can date this lapse (work-594). No holder notice is projected for a timer lapse.`,
             recalledAt: nowISO,
             beforeStateHash: recallStateHash(w),
             before: {
