@@ -380,5 +380,70 @@ describe("performHandshake", () => {
 
     expect(result.response).toBeNull();
     expect(log).toHaveBeenCalledWith(expect.stringContaining("parse failed"));
+
+    // 🔴 work-592 / bug-398 — AN UNPARSEABLE RESPONSE MUST BE CLASSIFIED FATAL.
+    //
+    // This is the assertion whose ABSENCE was the root cause. `mcp-agent-client`
+    // throws on `result.fatal` (mission-93's FAIL LOUD guard), but `fatal` was
+    // only ever set by `parseHandshakeError`, which requires the error to PARSE.
+    // So an unparseable response took the NON-FATAL path BY DEFAULT and the
+    // client's `if (result.response)` skipped identity binding with no else, no
+    // log and no throw — MALFORMED ERRORS BYPASSED THE GUARD BUILT TO CATCH BAD
+    // ERRORS, and the seat ran on with a role and no agentId.
+    //
+    // `handshake.ts:99-104` has documented this exact fall-through degrading a
+    // third seat since mission-93, filed as a parsing nuance. IV-6: the lesson
+    // becomes an ENFORCED TEST rather than a comment, so the next recurrence is
+    // impossible rather than merely described.
+    // ⚠️ NON-FATAL, DELIBERATELY. `{notAHandshake:true}` is valid JSON of an
+    // unrecognised SHAPE — a compatibility gap, not a broken contract. The legacy
+    // FLAT handshake shape (`{agentId, sessionEpoch}`) lands here too, and the
+    // loopback hub still emits it. Marking this fatal converted three integration
+    // tests from green to red and would have turned a hub speaking the older shape
+    // from "degraded but running" into "refuses to start".
+    expect(result.fatal).toBeFalsy();
+  });
+
+  it("🔴 work-592: a NON-JSON body IS fatal — the bug-398 specimen", async () => {
+    // THE DISCRIMINATOR. bug-398's actual bytes were
+    //   `Unexpected token 's', "storage li"... is not valid JSON`
+    // — a StorageAdmissionError reaching the client as PLAINTEXT where an envelope
+    // was contracted. That is unambiguously not an identity, and continuing past it
+    // is what left a live seat running as `anonymous-<role>`.
+    const executeTool = vi.fn().mockResolvedValue({
+      content: [{ type: "text", text: "storage list admission queue full (8 active, 128 queued)" }],
+    });
+    const log = vi.fn();
+
+    const result = await performHandshake({
+      executeTool,
+      config: baseConfig,
+      previousEpoch: 0,
+      log,
+    });
+
+    expect(result.response).toBeNull();
+    expect(result.fatal).toBe(true);
+  });
+
+  it("🔴 work-592: a TRANSPORT failure stays NON-fatal — only the parse failure is fatal", async () => {
+    // The discriminator. Conflating the two would halt seats on an ordinary
+    // reconnect: a call that never completed is a retry case, whereas a response
+    // that arrived and could not be parsed means identity was NOT bound and
+    // continuing would run the seat unbound. A guard that marked BOTH fatal
+    // passes the assertion above and fails this one.
+    const executeTool = vi.fn().mockRejectedValue(new Error("socket hang up"));
+    const log = vi.fn();
+
+    const result = await performHandshake({
+      executeTool,
+      config: baseConfig,
+      previousEpoch: 7,
+      log,
+    });
+
+    expect(result.response).toBeNull();
+    expect(result.fatal).toBeFalsy();
+    expect(result.epoch).toBe(7);
   });
 });

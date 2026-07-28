@@ -410,9 +410,48 @@ export async function performHandshake(
     log.log(
       "agent.handshake.parse_failed",
       { envelope, bodyKeys, nestedAgentKeys, nestedSessionKeys, legacyAgentIdType, legacySessionEpochType },
-      "[Handshake] response parse failed (non-fatal)"
+      "[Handshake] response parse failed — FATAL: identity was NOT bound"
     );
-    return { response: null, epoch: ctx.previousEpoch };
+    // 🔴 work-592 / bug-398 — AN UNPARSEABLE RESPONSE IS FATAL. THIS CLOSES THE HOLE IN THE
+    // FAIL-LOUD GUARD THAT ALREADY EXISTS.
+    //
+    // MECHANICS: `mcp-agent-client.ts` throws on `result.fatal` (mission-93). But `fatal` was
+    // only ever set by `parseHandshakeError`, which requires the error to PARSE. A response that
+    // could not be parsed therefore took the NON-FATAL path BY DEFAULT, and the caller's
+    // `if (result.response)` skipped the identity binding with no else, no log and no throw.
+    // AN ERROR THAT CANNOT BE PARSED COULD NOT BE CLASSIFIED AS FATAL, SO MALFORMED ERRORS
+    // BYPASSED THE GUARD BUILT TO CATCH BAD ERRORS.
+    //
+    // RATIONALE: this is bug-398's root cause. A StorageAdmissionError arrived as plaintext,
+    // the parse failed, this returned success-shaped, and the session kept its ROLE while never
+    // binding its AGENT ID — a live seat silently became `anonymous-<role>` with full role
+    // authority and an intact registry row. `handshake.ts:99-104` has documented this exact
+    // fall-through degrading a THIRD seat since mission-93, filed as a parsing nuance. It is an
+    // identity-loss class, and this is the line that made it silent.
+    //
+    // CONSEQUENCE: the seat halts loudly at handshake instead of running unbound. That is the
+    // correct trade — B3 (work-591) made hub errors parseable JSON, so reaching this line now
+    // means something genuinely unexpected, not routine backpressure.
+    //
+    // ⚠️ SCOPE: only the PARSE failure becomes fatal. The transport-failure return above stays
+    // non-fatal — a call that never completed is a retry case, and conflating the two would halt
+    // seats on an ordinary reconnect.
+    // ⚠️ NARROWED AFTER A FULL-SUITE FINDING — SEE THE DISCRIMINATOR BELOW.
+    //
+    // Marking EVERY parse failure fatal was too broad and would have halted seats on a
+    // response that is valid JSON but simply not the NESTED shape this parser wants
+    // (`body.agent.id` + `body.session.epoch`). The legacy FLAT shape
+    // (`{agentId, sessionEpoch, ...}`) is a real historical wire shape — this very function
+    // records `legacyAgentIdType` for it, and the loopback hub still emits it. Three
+    // integration tests went red and they were RIGHT: a hub speaking the older shape would
+    // have been converted from "degraded but running" into "refuses to start".
+    //
+    // THE DISCRIMINATOR IS WHETHER THE BODY IS JSON AT ALL. bug-398's specimen was
+    // `Unexpected token 's', "storage li"... is not valid JSON` — a PLAINTEXT error where an
+    // envelope was contracted, which is unambiguously wrong and unambiguously not an identity.
+    // A shape mismatch is a compatibility gap; a non-JSON body is a broken contract.
+    const bodyWasUnparseable = envelope.startsWith("parse-error:");
+    return { response: null, epoch: ctx.previousEpoch, ...(bodyWasUnparseable ? { fatal: true } : {}) };
   }
 
   // M-Session-Claim-Separation (mission-40) T3 HC #1: post-T2 register_role
