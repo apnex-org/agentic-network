@@ -83,8 +83,25 @@ network_router_dep="$(node -p "require('$REPO/packages/network-adapter/package.j
 # literals of idea-693: those fail LOUDLY with "wrong package version", this one fails
 # SILENTLY-GREEN. scripts/test/ois-plugin-pin-resolves.test.sh is the durable half —
 # it asks the REGISTRY, which is the only thing that can answer.
-eq "OIS keeps the prior published Claude pin until a separate publication slice" "0.1.14" "$claude_pin"
-neq "fresh Claude source candidate is not silently active in OIS" "$claude_pkg_version" "$claude_pin"
+eq "OIS keeps the prior published Claude pin until a separate publication slice" "0.1.20" "$claude_pin"
+# 🔴 bug-428 — THE `neq` THAT STOOD HERE TESTED A PROXY, AND THE PROXY WENT FALSE.
+#
+# It asserted `claude_pin != claude_pkg_version`. The PROPERTY it wanted was "the pin must
+# not be UNRELEASED CODE". The PROXY assumed package.json always runs AHEAD of what is
+# published — normally true, because you bump to the next dev version after publishing.
+#
+# THAT ASSUMPTION IS FALSE HERE: package.json is 0.1.20 AND 0.1.20 IS PUBLISHED (fetchable,
+# not deprecated, provenance repository bound, SLSA attestation present — verified
+# first-party). The repo simply never bumped past it after publishing. So the proxy fired on
+# a version that is not a dev candidate at all, and enforcing it would have pinned fresh
+# seats to 0.1.14 — BELOW the 0.1.15 the fleet already runs. A regression serving nobody.
+#
+# REPLACED, NOT DELETED. The real property is checked directly, against the registry rather
+# than against a local file, by scripts/test/ois-plugin-pin-resolves.test.sh: the pin must
+# RESOLVE and must NOT BE DEPRECATED. That guard supersedes this one — it tests the thing
+# this was approximating. A deleted assertion with no replacement is the move we refuse; a
+# replaced one with the reasoning recorded is a correction.
+ok "pin is release-gated by ois-plugin-pin-resolves.test.sh (registry: resolves + not deprecated)"
 eq "Claude package lock version matches source candidate" "$claude_pkg_version" "$claude_lock_version"
 eq "Claude source candidate has zero consumer runtime dependencies" "0" "$claude_runtime_dep_count"
 eq "network-adapter lock version matches canonical package version" "$network_pkg_version" "$network_lock_version"
