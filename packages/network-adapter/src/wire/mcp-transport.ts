@@ -47,6 +47,7 @@
  *     above this layer.
  */
 
+import { Agent } from "undici";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { LoggingMessageNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
@@ -116,6 +117,25 @@ export class McpTransport implements ITransport {
 
   private client: Client | null = null;
   private sdkTransport: StreamableHTTPClientTransport | null = null;
+  /**
+   * 🔴 bug-420 — THE CONNECTION POOL, REBUILT PER WIRE. THIS IS THE FIX.
+   *
+   * Node's `fetch` is undici, and undici keeps keep-alive sockets in a PROCESS-GLOBAL
+   * pool. Rebuilding `sdkTransport` creates a new transport object and REUSES THAT POOL.
+   * When the network path changes the old sockets are never RST — the OS still reports
+   * ESTABLISHED — so undici keeps selecting them and every request blackholes until
+   * `connectTimeout` (default 10s). Reconnecting therefore could not help: each attempt
+   * dialled the same dead sockets.
+   *
+   * MEASURED IN PRODUCTION 2026-07-28: three seats went dark for ~70 minutes against a
+   * continuously healthy hub, with four consecutive reconnects at 10.017/10.018/10.016/
+   * 10.016s on one seat and 10.014/10.014/10.017/10.013s on another. A sub-20ms spread
+   * across INDEPENDENT PROCESSES is a fixed timeout, not a network flake.
+   *
+   * Owning the dispatcher makes the pool wire-scoped: `teardownWire` destroys it, so a
+   * reconnect genuinely opens new sockets instead of re-dialling poisoned ones.
+   */
+  private httpDispatcher: Agent | null = null;
 
   private _wireState: WireState = "disconnected";
   private handlers: WireEventHandler[] = [];
@@ -318,10 +338,18 @@ export class McpTransport implements ITransport {
     // for liveness. A split-brain where the SDK reopens the stream
     // internally would leave our notification handler wired to the
     // dead one.
+    // bug-420: a POOL PER WIRE. Any sockets from a previous path die with it.
+    // `keepAliveTimeout` is bounded well under the hub's idle window so a socket that
+    // silently stops delivering is retired rather than held indefinitely.
+    this.httpDispatcher = new Agent({ keepAliveTimeout: 30_000, keepAliveMaxTimeout: 60_000 });
+
     this.sdkTransport = new StreamableHTTPClientTransport(
       new URL(this.cfg.url),
       {
-        requestInit: { headers },
+        // `dispatcher` is undici's per-request pool selector. It is a Node-fetch
+        // extension rather than standard `RequestInit`, hence the cast — the SDK
+        // passes requestInit straight through to fetch.
+        requestInit: { headers, dispatcher: this.httpDispatcher } as RequestInit,
         reconnectionOptions: {
           initialReconnectionDelay: 1000,
           maxReconnectionDelay: 30_000,
@@ -408,11 +436,22 @@ export class McpTransport implements ITransport {
 
   private async teardownWire(): Promise<void> {
     const oldClient = this.client;
+    const oldDispatcher = this.httpDispatcher;
     this.client = null;
     this.sdkTransport = null;
+    // bug-420: DESTROY THE POOL, not just the transport. `destroy()` rather than
+    // `close()` because close() drains in-flight requests gracefully — and on a
+    // changed path those requests are precisely the ones blackholed for 10s. The
+    // whole point is to abandon them.
+    this.httpDispatcher = null;
     this.stopHeartbeat();
     this.stopSseWatchdog();
     this.cancelFirstKeepaliveDeadline();
+    if (oldDispatcher) {
+      // Never let a pool-teardown failure block wire teardown — a stuck dispatcher
+      // must not strand the reconnect that exists to replace it.
+      void oldDispatcher.destroy().catch(() => {});
+    }
     if (oldClient) {
       try {
         await oldClient.close();
