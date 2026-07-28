@@ -1086,27 +1086,39 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     await this.putIfMatchAgent(updated, existing.resourceVersion);
   }
 
-  // ── C1-R2 (mission-94) — WorkItem claim-thrash quarantine ──────────────────
+  // ── C1-R2 (mission-94) — WorkItem claim-thrash COUNTER (work-593) ──────────
   // CAS-retry loops (NOT silent-skip-on-conflict like touchAgent) so a concurrent
   // heartbeat write never drops a thrash increment / reset.
+  //
+  // 🔴 work-593 — THE COUNTER IS NO LONGER A TRIGGER. It records how often a lease lapsed
+  // without evidence, and NOTHING branches on the value. The [A] lockout it used to fire is
+  // gone (idea-675 will design the successor); the series is kept so that design has data.
+  //
+  // ⚠️ `Agent.quarantined` IS STILL A STORED FIELD AND IS NOW INERT — no writer, no reader.
+  // It is deliberately NOT dropped: removing a stored field is a schema change with a
+  // renameMap governor inventory cost, and the historical values are the only record of who
+  // the retired mechanism actually caught. Any code added later that READS it will be
+  // reading a fossil — the field's last write may predate this commit by weeks.
 
-  async recordWorkItemThrash(agentId: string, quarantineCap: number): Promise<{ thrashCount: number; quarantined: boolean } | null> {
+  async recordWorkItemThrash(agentId: string): Promise<{ thrashCount: number } | null> {
     for (let attempt = 0; attempt < WORKITEM_THRASH_CAS_RETRIES; attempt++) {
       const existing = await this.loadAgentWithRevision(agentId);
       if (!existing) return null;
       const agent = normalizeAgentShape(existing.entity);
       const thrashCount = agent.thrashCount + 1;
-      const quarantined = agent.quarantined || thrashCount >= quarantineCap;
-      const updated: Agent = { ...agent, thrashCount, quarantined };
+      // `quarantined` is intentionally NOT touched — neither set nor cleared. Clearing it
+      // here would quietly erase the historical record this field now exists only to hold.
+      const updated: Agent = { ...agent, thrashCount };
       const result = await this.putIfMatchAgent(updated, existing.resourceVersion);
-      if (result.ok) return { thrashCount, quarantined };
+      if (result.ok) return { thrashCount };
       // revision-mismatch → re-read + retry (don't lose the increment)
     }
     return null; // best-effort: exhausted retries — never crash the sweep
   }
 
   /** Returns the PRIOR thrashCount (0 if no-op) so the caller can audit a NON-NOOP reset
-   *  (audit-4133). Quarantined is cleared only by the manual clear path. */
+   *  (audit-4133). work-593: still load-bearing — a counter that only climbs measures
+   *  TENURE, not thrash, so the reset on demonstrated progress is what keeps it meaningful. */
   async resetWorkItemThrash(agentId: string): Promise<number> {
     for (let attempt = 0; attempt < WORKITEM_THRASH_CAS_RETRIES; attempt++) {
       const existing = await this.loadAgentWithRevision(agentId);
@@ -1122,17 +1134,7 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
     return 0; // exhausted retries (best-effort)
   }
 
-  async clearWorkItemQuarantine(agentId: string): Promise<void> {
-    for (let attempt = 0; attempt < WORKITEM_THRASH_CAS_RETRIES; attempt++) {
-      const existing = await this.loadAgentWithRevision(agentId);
-      if (!existing) return;
-      const agent = normalizeAgentShape(existing.entity);
-      if (agent.thrashCount === 0 && !agent.quarantined) return; // no-op
-      const updated: Agent = { ...agent, thrashCount: 0, quarantined: false };
-      const result = await this.putIfMatchAgent(updated, existing.resourceVersion);
-      if (result.ok) return;
-    }
-  }
+
 
   async updateAgentPulseLastFiredAt(agentId: string, lastFiredAt: string): Promise<void> {
     const existing = await this.loadAgentWithRevision(agentId);

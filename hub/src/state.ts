@@ -330,7 +330,9 @@ export interface Agent {
   // Consecutive claim→lease-expire-WITHOUT-evidence count; reset to 0 on a successful
   // complete_work (progress). At the cap → `quarantined`. The C1→C2 supervisor seam.
   thrashCount: number;
-  // Locked out of claim_work once thrashCount hits the cap (the wedged-agent signal the
+  // work-593: INERT. No writer, no reader — retained as the historical record of whom the
+  // retired [A] claim-thrash lockout caught. A `true` here may be weeks stale. (Was: locked
+  // out of claim_work once thrashCount hit the cap — the wedged-agent signal the
   // C2 supervisor reads). R2: cleared only by the manual clear verb (C2 auto-recovery deferred).
   quarantined: boolean;
 }
@@ -1236,18 +1238,14 @@ export interface IEngineerRegistry {
   getAgent(agentId: string): Promise<Agent | null>;
   /** Mission-19: resolve the Agent bound to an SSE session (null if none). */
   getAgentForSession(sessionId: string): Promise<Agent | null>;
-  // ── C1-R2 (mission-94) — WorkItem claim-thrash quarantine ──
-  /** Increment the agent's claim-thrash counter (a lease expired without evidence);
-   *  quarantines at `quarantineCap`. CAS-retry so increments aren't lost. Returns the
-   *  new {thrashCount, quarantined} (null if the agent is absent). */
-  recordWorkItemThrash(agentId: string, quarantineCap: number): Promise<{ thrashCount: number; quarantined: boolean } | null>;
+  // ── C1-R2 (mission-94) — WorkItem claim-thrash COUNTER (work-593) ──
+  /** Increment the agent's claim-thrash counter (a lease expired without evidence).
+   *  CAS-retry so increments aren't lost. Returns the new {thrashCount} (null if the agent
+   *  is absent). work-593: NO CAP — nothing branches on the value any more. */
+  recordWorkItemThrash(agentId: string): Promise<{ thrashCount: number } | null>;
   /** Reset the thrash counter to 0 on demonstrated progress (a successful complete_work).
-   *  Returns the PRIOR thrashCount (0 if no-op) so the caller can audit a non-noop reset.
-   *  Does NOT clear `quarantined` (that is the manual clear path). */
+   *  Returns the PRIOR thrashCount (0 if no-op) so the caller can audit a non-noop reset. */
   resetWorkItemThrash(agentId: string): Promise<number>;
-  /** Manual quarantine escape (R2 interim; architect/director-authorized at the policy
-   *  layer): clear `quarantined` + reset the thrash counter. C2 auto-recovery deferred. */
-  clearWorkItemQuarantine(agentId: string): Promise<void>;
   listAgents(): Promise<Agent[]>;
   /** Mission-19: return non-archived, online agents matching the selector (role ∧ matchLabels equality). */
   selectAgents(selector: Selector): Promise<Agent[]>;

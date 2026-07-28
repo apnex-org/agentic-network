@@ -138,7 +138,6 @@ export interface EventPolicyLegalMovesBasis {
 export interface EventPolicyAgentBasis {
   agentId?: string;
   registryRead: "not-needed" | "ok" | "failed";
-  quarantined?: boolean;
   errorReason?: string;
 }
 
@@ -478,14 +477,12 @@ export function evaluateWorkItemNotificationPolicy(
   const role = context.recipientBasis.role;
   const agentId = context.recipientBasis.agentId;
   const claimMove = context.legalMoves?.claim;
-  // Quarantine lives in the registry/policy layer, not item-local legal_moves.
-  // It must be enforced in the pure evaluator too, not only pre-normalized by
-  // the production context collector, or dry-run/replay can overclaim your-turn.
-  const quarantined = context.agent?.quarantined === true;
-  const claimable = claimMove?.legal === true && !quarantined;
-  const claimabilityReason = quarantined
-    ? "quarantined"
-    : claimMove?.reason ?? reasonForNonClaimableSnapshot(item, role);
+  // work-593: the [A] quarantine term is gone from the evaluator with the gate that fed it.
+  // Claimability is now exactly what item-local legal_moves says, with no registry-sourced
+  // override — one source of truth rather than a pure evaluator and a context collector that
+  // had to be kept in agreement.
+  const claimable = claimMove?.legal === true;
+  const claimabilityReason = claimMove?.reason ?? reasonForNonClaimableSnapshot(item, role);
 
   let presentation: MessageProjectionPresentation = "awareness";
   let actionability: MessageProjectionActionability = "ack-only";
@@ -613,15 +610,11 @@ async function collectWorkItemContext(
   }
 
   try {
-    const agent = await runtime.engineerRegistry?.getAgent(recipient.agentId);
-    context.agent = { agentId: recipient.agentId, registryRead: "ok", quarantined: !!agent?.quarantined };
-    if (agent?.quarantined) {
-      context.legalMoves = {
-        source: "item-local-legal-moves",
-        claim: { legal: false, reason: "quarantined" },
-      };
-      return context;
-    }
+    // work-593: the registry read is KEPT (it still proves the agent resolves, which is what
+    // `registryRead` reports) but the quarantine short-circuit that used to force
+    // `claim: {legal:false}` is gone. A projection no longer disagrees with legal_moves.
+    await runtime.engineerRegistry?.getAgent(recipient.agentId);
+    context.agent = { agentId: recipient.agentId, registryRead: "ok" };
   } catch (err) {
     context.agent = {
       agentId: recipient.agentId,

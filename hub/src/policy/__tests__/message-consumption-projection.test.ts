@@ -88,6 +88,7 @@ function store(item: WorkItem, options: { claimLegal?: boolean; claimReason?: st
   } as any;
 }
 
+/** work-593: the arg now seeds a STALE stored flag — the projection must ignore it. */
 function registry(quarantined = false) {
   return {
     getAgent: async () => ({ quarantined }),
@@ -160,7 +161,14 @@ describe("projectMessageForConsumption — WorkItem notification projection", ()
     expect(projected.projection?.reason).toBe("claimable-now");
   });
 
-  it("does not mark a quarantined caller's ready work as your-turn", async () => {
+  it("🔴 work-593: a caller carrying a stale `quarantined` flag DOES get your-turn on ready work", async () => {
+    // The inversion of "does not mark a quarantined caller's ready work as your-turn".
+    //
+    // ⚠️ HOW THIS ONE WAS FOUND, BECAUSE THE METHOD MATTERS. It is in a file the compiler
+    // DID flag — but at two other lines. Having fixed the two tsc pointed at, I treated the
+    // compiler's list as the file's complete site list. It is not: tsc saw the two sites that
+    // broke a TYPE and was blind to this one, which breaks only a VALUE. The full-file grep
+    // named it; running the suite proved it. A per-file compiler hit is not a per-file census.
     const raw = message({
       notificationEvent: "work-unblocked-notification",
       work_id: "work-1",
@@ -173,10 +181,9 @@ describe("projectMessageForConsumption — WorkItem notification projection", ()
       { role: "architect", agentId: "agent-a" },
     );
 
-    expect(projected.projection?.presentation).toBe("awareness");
-    expect(projected.projection?.actionability).toBe("ack-only");
-    expect(projected.projection?.workGraphActionabilityClass).toBe("FYI");
-    expect(projected.projection?.reason).toBe("quarantined");
+    expect(projected.projection?.presentation).toBe("actionable");
+    expect(projected.projection?.actionability).toBe("your-turn");
+    expect(projected.projection?.reason).not.toBe("quarantined");
   });
 
   it("classifies already-held/non-ready WorkGraph notification as in-flight awareness", async () => {
@@ -336,11 +343,11 @@ describe("EventPolicy registry/evaluator — evpolicy0 Slice 0", () => {
     });
   });
 
-  it("dry-runs claimable, missing-agent, quarantined, and unknown-family fixture classes", () => {
+  it("dry-runs claimable, missing-agent, stale-quarantined, and unknown-family fixture classes", () => {
     const claimable = dryRunEventPolicy({
       message: rawUnblocked(),
       recipient: { role: "architect", agentId: "agent-a" },
-      context: { workItem: snapshot(), legalMoves: legalClaim(true), agent: { agentId: "agent-a", registryRead: "ok", quarantined: false } },
+      context: { workItem: snapshot(), legalMoves: legalClaim(true), agent: { agentId: "agent-a", registryRead: "ok" } },
     });
     expect(claimable.decision).toMatchObject({ presentation: "actionable", actionability: "your-turn", workGraphActionabilityClass: "CLAIMABLE_WORK", reason: "claimable-now" });
 
@@ -351,14 +358,17 @@ describe("EventPolicy registry/evaluator — evpolicy0 Slice 0", () => {
     });
     expect(missingAgent.decision).toMatchObject({ presentation: "degraded", actionability: "inspect", workGraphActionabilityClass: "DEGRADED_MANUAL_CHECK", degradedReason: "agent-context-unavailable" });
 
-    const quarantined = dryRunEventPolicy({
+    // 🔴 work-593 — THE INVERSION. This case previously proved the pure evaluator OVERLAID
+    // registry quarantine on top of item-local legal_moves. With the [A] mechanism retired
+    // there is nothing to overlay: an identical context must now project as CLAIMABLE, so a
+    // projection can no longer disagree with the legal_moves it was handed.
+    const staleQuarantined = dryRunEventPolicy({
       message: rawUnblocked(),
       recipient: { role: "architect", agentId: "agent-a" },
-      // Verifier regression: WorkGraph legal_moves does not encode registry quarantine.
-      // The pure evaluator must overlay quarantine even when item-local claim is legal.
-      context: { workItem: snapshot(), legalMoves: legalClaim(true), agent: { agentId: "agent-a", registryRead: "ok", quarantined: true } },
+      context: { workItem: snapshot(), legalMoves: legalClaim(true), agent: { agentId: "agent-a", registryRead: "ok" } },
     });
-    expect(quarantined.decision).toMatchObject({ presentation: "awareness", actionability: "ack-only", reason: "quarantined" });
+    expect(staleQuarantined.decision).toMatchObject({ presentation: "actionable", actionability: "your-turn", workGraphActionabilityClass: "CLAIMABLE_WORK" });
+    expect(staleQuarantined.decision.reason).not.toBe("quarantined");
 
     const unknown = dryRunEventPolicy({
       message: message({ notificationEvent: "unknown-future-event", work_id: "work-1" }),
