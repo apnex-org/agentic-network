@@ -142,9 +142,13 @@ tag as the source instead of the raw digest.
 
 ### B.3 — Redeploy the cloud Hub onto the rolled-back image
 
-> ⚠️ **ACCURACY NOTE — 2026-07-28 (work-603). THE WATCHTOWER NOTE BELOW IS STALE. READ THIS FIRST.**
+> ✅ **WATCHTOWER AUTO-UPDATE WORKS. Director ruling, 2026-07-28: *"Watchtower functions
+> perfectly."*** A prior revision of this step asserted the opposite and mandated a manual SSH
+> redeploy as the only path. **That guidance was false and has been REMOVED, not struck
+> through** — a struck-through command is still legible and still actionable to someone
+> skimming under incident pressure. The prior text is in git history if you need provenance.
 >
-> **Watchtower DOES now authenticate to Artifact Registry.** The bug-107 fix has been
+> **Why it works:** The bug-107 fix has been
 > CODIFIED into `modules/hub/scripts/startup.sh:121-192`: a `refresh-docker-token.timer`
 > fires every 10 minutes (well under the ~60min SA-token TTL), mints an AR access token from
 > the metadata server, and atomically writes `/var/lib/docker-creds/config.json`, which is
@@ -157,25 +161,19 @@ tag as the source instead of the raw digest.
 > **success on all three**. Watchtower could not have pulled from AR at all if it were
 > unauthenticated.
 >
-> **SO THE ROLLBACK IS SIMPLER THAN B.3 DESCRIBES:** after the B.2 tag re-point, watchtower
-> should pull and roll the rolled-back image WITHIN ~5 MINUTES (`watchtower_poll_interval`
+> **SO THE NORMAL ROLLBACK NEEDS NO SSH:** after the B.2 tag re-point, watchtower
+> pulls and rolls the rolled-back image WITHIN ~5 MINUTES (`watchtower_poll_interval`
 > default 300s, `modules/hub/variables.tf:145-149`) with no SSH at all.
 >
-> ⚠️ **The manual path below REMAINS VALID and is still the right move if you need the roll
-> NOW rather than within the poll interval, or if watchtower is not behaving.** It is not
-> wrong — its stated PREMISE is. Keep it.
+> ⚠️ **The manual path below is still CORRECT and is the right move when you need the roll
+> IMMEDIATELY rather than within the poll interval.** Its steps were never wrong — only the
+> claim that it was the ONLY option. Use it by choice, not by necessity.
 >
 > 🔴 **AND DO NOT USE `deploy-hub`'s `workflow_dispatch` AS A ROLLBACK** — its roll-confirm
 > gate accepts a DESCENDANT sha as success, so it prints "Roll confirmed" and exits 0 while
 > production still runs the version you are removing (**bug-419**). Verify a rollback by
 > polling `/health` yourself and requiring EXACT `gitSha` equality **plus a changed
 > `builtAt`**; ancestry cannot distinguish a rollback that happened from one that did not.
-
-> **Watchtower note (SUPERSEDED — see the accuracy note above):** Watchtower auto-update is
-> **currently non-functional** — it cannot
-> authenticate to Artifact Registry (`denied: Unauthenticated request`; a known W5/AG-W5.1
-> item). Restarting Watchtower will NOT pull the image. The redeploy is therefore manual —
-> the steps below are the verified path (the same one the W4-prep image refresh used).
 
 SSH to the VM and pull-then-recreate. `startup.sh` is idempotent — it recreates `ois-hub-prod`
 from the `hub-image` metadata with secrets re-fetched from Secret Manager; the explicit
