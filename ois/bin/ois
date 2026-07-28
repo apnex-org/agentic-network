@@ -276,6 +276,20 @@ env_lines() {
 # own marketplace-add + cache-wipe target $HOME/.claude (operator dir), NOT the sovereign
 # seats; the per-seat converge in claude_seed is what makes each SEAT live. Result path is
 # process-constant → cached in _CLAUDE_PLUGIN_MP (latch avoids re-running under `seed --all`).
+# bug-368 preflight: can the pinned plugin version actually be OBTAINED from the registry?
+# Returns 0 = resolves · 1 = DEFINITIVELY absent (E404) · 2 = INDETERMINATE (network/registry
+# trouble). The three-way split is deliberate: a definitive 404 is a permanent, actionable fact
+# worth failing on, whereas a transient registry outage must NOT brick seeding — treating "I
+# could not ask" as "the answer is no" would convert a network blip into a fleet-wide seed
+# failure, i.e. the very outage this guard exists to prevent.
+claude_plugin_version_resolves() { # <version> -> 0 resolves | 1 absent | 2 indeterminate
+  local ver="$1" out rc
+  out="$(npm view "@apnex/claude-plugin@$ver" version 2>&1)"; rc=$?
+  [[ $rc -eq 0 && -n "$out" ]] && return 0
+  grep -qiE 'E404|is not in this registry|no matching version' <<<"$out" && return 1
+  return 2
+}
+
 claude_npm_ensure() {
   [[ -n "$_CLAUDE_PLUGIN_MP" ]] && return 0
   command -v npm >/dev/null 2>&1 || fatal "'npm' not found on PATH (needed for @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION)"
@@ -290,7 +304,38 @@ claude_npm_ensure() {
   # re-installing the older registry tarball over the repaired package.
   if [[ "$installed_ver" == "$CLAUDE_PLUGIN_VERSION" ]]; then
     echo "  seeding : using installed @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION at $mp"
+    # bug-368: this path works ONLY because a local copy happens to match the pin. If the pin is
+    # not obtainable from the registry, that local copy is the fleet's ONLY one and nothing can
+    # replace it — a box rebuild, `npm prune`, an nvm/node version change or a stray
+    # `npm uninstall -g` drops straight through to the install branch below and fatals every
+    # claude seat's next seed. WARN, never fatal: seeding demonstrably works right now, and
+    # turning a live working path into a hard failure would BE the outage this guard prevents.
+    if ! claude_plugin_version_resolves "$CLAUDE_PLUGIN_VERSION"; then
+      echo "  ⚠ bug-368: pinned @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION is NOT OBTAINABLE from the registry."
+      echo "  ⚠   Seeding survives only because $mp already holds it. That copy is IRREPLACEABLE:"
+      echo "  ⚠   if it is lost, NO claude seat can seed. Do NOT uninstall/prune it."
+      echo "  ⚠   Remedy is Director-gated (idea-584): publish the pinned version, or re-pin to a published one."
+    fi
   else
+    # bug-368: PREFLIGHT BEFORE INSTALLING. Previously an unobtainable pin surfaced as a generic
+    # `npm install failed` at seed time, which names neither the version nor the remedy. Fail
+    # early and say exactly what is wrong. This is the check that would have caught the 0.1.16
+    # rider before it reached a seat.
+    claude_plugin_version_resolves "$CLAUDE_PLUGIN_VERSION"; local _pf=$?
+    if [[ $_pf -eq 1 ]]; then
+      echo "  ✖ bug-368: @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION does NOT EXIST on the registry (E404)." >&2
+      echo "  ✖   No local copy is present either (installed: ${installed_ver:-none}), so there is nothing to fall back to." >&2
+      echo "  ✖   NOT falling back to another version on purpose: a silent substitution would change which" >&2
+      echo "  ✖   artifact this seat runs without recording it, and you would not know what is deployed." >&2
+      echo "  ✖   Fix CLAUDE_PLUGIN_VERSION (ois:49) to a PUBLISHED version, or publish this one (idea-584)." >&2
+      echo "  ✖   Published versions: $(npm view @apnex/claude-plugin versions --json 2>/dev/null | tr -d ' \n' || echo '<registry unreachable>')" >&2
+      fatal "unobtainable pinned plugin version @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION (bug-368)"
+    elif [[ $_pf -eq 2 ]]; then
+      # Indeterminate: could not reach the registry to ask. Do NOT convert "I could not ask" into
+      # "the answer is no" — that would brick seeding on a transient blip. Warn and let the real
+      # install attempt below produce the authoritative error.
+      echo "  ⚠ bug-368 preflight: could not determine whether @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION exists (registry unreachable); attempting install anyway." >&2
+    fi
     echo "  seeding : npm install -g @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION"
     npm install -g "@apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION" >/dev/null || fatal "npm install -g @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION failed"
   fi
@@ -864,7 +909,16 @@ _seat_new_session() { # <session/socket> <command-string> — same target for -L
   # below stay correct; `env -u TMUX -u TMUX_PANE` stops the new `-L` client from binding to the
   # OUTER server when ois is invoked inside tmux. Harness-agnostic (protects claude/pi/opencode);
   # paired with the exact-OIS_SEAT_ID reap (reap_seat) for defense in depth.
-  env -u TMUX -u TMUX_PANE setsid -w tmux -L "$s" new-session -d -s "$s" -x "$cols" -y "$rows" "$@" || return 1
+  # bug-363: ALSO scrub OIS_SEAT_ID. #641 re-keys the seat's canonical id inside do_launch — i.e.
+  # INSIDE the new session — but THIS tmux server is forked BEFORE that export, from the CALLER's
+  # environment. Peer-spawning (`ois up <peer>` from inside a live seat's pane) therefore left the
+  # new seat's tmux SERVER carrying the SPAWNER's OIS_SEAT_ID for its entire life, and the
+  # exact-id reap (which has no argv filter, by design) would then signal it during a teardown of
+  # the SPAWNER — killing the server that hosts a co-resident seat. That is bug-303's blast radius
+  # returning through the ENV vector after setsid closed the pgid one: same failure, different
+  # inherited attribute. Measured 2026-07-25 (reap set for one seat contained two other seats'
+  # tmux servers); scrubbing here means a forked server can never carry a foreign seat's identity.
+  env -u TMUX -u TMUX_PANE -u OIS_SEAT_ID setsid -w tmux -L "$s" new-session -d -s "$s" -x "$cols" -y "$rows" "$@" || return 1
   stmux "$s" set-option -g window-size manual 2>/dev/null || true
 }
 
@@ -1024,18 +1078,63 @@ _seat_pid_starttime() {
   local -a f=($rest); echo "${f[19]}"  # 0-based: f[19] == stat field 22 (starttime)
 }
 
+# _seat_pid_foreign_socket <pid> <seat_id> -> 0 (TRUE) when the proc's argv positively names a
+# DIFFERENT seat's tmux socket (`-L ois-…` / `-Lois-…` != seat_id); 1 otherwise (incl. unreadable
+# argv or no -L at all). bug-363 defence-in-depth.
+_seat_pid_foreign_socket() {
+  local pid="$1" seat_id="$2" tok want=0 sock=""
+  while IFS= read -r -d '' tok; do
+    if [[ "$want" == 1 ]]; then sock="$tok"; want=0
+    elif [[ "$tok" == "-L" ]]; then want=1
+    elif [[ "$tok" == -L?* ]]; then sock="${tok#-L}"; fi
+    [[ -n "$sock" ]] && break
+  done < "/proc/$pid/cmdline" 2>/dev/null
+  [[ -n "$sock" && "$sock" == ois-* && "$sock" != "$seat_id" ]]
+}
+
+# ⚠️ THE argv INVARIANT — REWORDED AT FORWARD-PORT (work-605), NOT DROPPED.
+# main carried: "NO argv/comm prefilter — the exact-environ id is the only gate, so completeness
+# never depends on a proc's command line." That was TRUE of main and is FALSE of this file:
+# _reap_seat_signal below DOES argv-prefilter, via _seat_pid_foreign_socket.
+#
+# THE INVARIANT SURVIVES WHERE IT MATTERED AND WAS DELIBERATELY RELAXED WHERE IT DID NOT:
+#   _seat_live_count      NO argv filter. Completeness of "what still EXISTS carrying this id"
+#                         must never depend on a command line. The original invariant, intact —
+#                         and its own bug-363 F1 note records that filtering it was implemented,
+#                         then REJECTED on exactly this ground.
+#   _reap_seat_signal     argv-prefiltered ON PURPOSE. bug-363: signalling a PID that positively
+#                         names ANOTHER seat's `-L ois-…` socket is how a reap reached a
+#                         co-resident seat's tmux server. Here, INCOMPLETENESS IS PREFERABLE TO
+#                         BLAST RADIUS — the opposite trade from the count.
+#   _seat_excluded_count  exists so that relaxation is VISIBLE rather than silently subtracted.
+#
+# So the rule is no longer "argv is never consulted" but "argv may narrow WHAT IS SIGNALLED,
+# never WHAT IS COUNTED." Recorded because a silent drop would lose a deliberate decision.
+#
 # _reap_seat_signal <seat_id> <sig>: send <sig> to every own-user PID whose environ OIS_SEAT_ID
 # EXACTLY == <seat_id>, re-validating ownership + start-identity IMMEDIATELY before the signal — this
 # BOUNDS (does NOT eliminate) PID reuse; the residual read→signal window is non-zero (no atomicity
 # without pidfd). Excludes self/parent. FAIL-CLOSED: no id / mismatch / unreadable environ → skip.
-# NO argv/comm prefilter — the exact-environ id is the only gate, so completeness never depends on
-# a proc's command line.
+# The exact-environ id remains the ONLY INCLUSION gate: nothing is reaped on the strength of its
+# argv, so no descendant is missed for want of a recognisable command line.
+# bug-363 F3 — stating the limit precisely, because the earlier wording ("coverage unchanged
+# whatever its argv says") was FALSE: for the excluded class, reaping DOES depend on argv. An
+# env-carrying descendant is reaped whatever its argv says UNLESS that argv positively names a
+# DIFFERENT seat's `-L ois-…` socket, which is the one deliberate exception below.
+# bug-363 adds one argv-based EXCLUSION, which is not the same thing as a prefilter: a proc that
+# POSITIVELY names another seat's `-L ois-…` socket is provably foreign infrastructure, and no
+# correct reap of THIS seat ever needs to signal it. An exclusion can only ever shrink the blast
+# radius; a prefilter would have shrunk COVERAGE, which is what bug-303's design note rightly
+# refused. This is belt-and-braces behind the `env -u OIS_SEAT_ID` root-cause fix in
+# _seat_new_session: if a foreign id ever leaks in again by some other path, one wrong identifier
+# still cannot authorise killing another seat's tmux server.
 _reap_seat_signal() {
   local seat_id="$1" sig="$2" pid st1 st2
   [[ -n "$seat_id" ]] || return 0
   for pid in $(pgrep -u "$(id -u)" 2>/dev/null); do
     [[ "$pid" == "$$" || "$pid" == "${PPID:-}" ]] && continue
     [[ "$(_seat_id_of_pid "$pid")" == "$seat_id" ]] || continue          # exact ownership
+    _seat_pid_foreign_socket "$pid" "$seat_id" && continue               # bug-363: never another seat's socket
     st1=$(_seat_pid_starttime "$pid"); [[ -n "$st1" ]] || continue
     [[ "$(_seat_id_of_pid "$pid")" == "$seat_id" ]] || continue          # re-validate id just before signal
     st2=$(_seat_pid_starttime "$pid"); [[ "$st1" == "$st2" ]] || continue # start-identity unchanged (PID-reuse bound)
@@ -1045,12 +1144,40 @@ _reap_seat_signal() {
 }
 
 # _seat_live_count <seat_id> -> number of own-user PIDs currently carrying OIS_SEAT_ID==<seat_id>.
+#
+# bug-363 F1 — DELIBERATELY UNFILTERED, and this was ruled after being implemented the other way.
+# It is tempting to subtract the policy-excluded procs here so the count agrees with what
+# _reap_seat_signal will actually signal, making reap_seat converge instead of burning its 6
+# rounds. That was REJECTED, and the reasoning matters more than the outcome:
+#   _seat_live_count answers "what still EXISTS carrying this seat's id" — a statement about the
+#   world. _reap_seat_signal answers "what may I SIGNAL" — a statement about policy. Collapsing
+#   them makes the count report POLICY WHILE APPEARING TO REPORT REALITY, and the next operator
+#   debugging a genuine straggler loses the only honest number available.
+# The 6-round burn is NOT a spurious alarm: something really is alive that the reap will not
+# kill. The alarm was CORRECT AND MISLABELLED, so the fix is to label it accurately (see the
+# straggler message in reap_seat) — not to silence it by making the count agree.
+# Keeping the divergence VISIBLE is the point; papering it would manufacture exactly the
+# surface-disagrees-with-predicate defect this arc has filed repeatedly.
 _seat_live_count() {
   local seat_id="$1" pid n=0
   [[ -n "$seat_id" ]] || { echo 0; return 0; }
   for pid in $(pgrep -u "$(id -u)" 2>/dev/null); do
     [[ "$pid" == "$$" || "$pid" == "${PPID:-}" ]] && continue
     [[ "$(_seat_id_of_pid "$pid")" == "$seat_id" ]] && n=$((n+1))
+  done
+  echo "$n"
+}
+
+# _seat_excluded_count <seat_id> -> PIDs carrying the id but DELIBERATELY excluded from the reap
+# (they positively name another seat's `-L ois-…` socket). Diagnostic only — never a predicate.
+# Exists so the exclusion is VISIBLE rather than silently subtracted from the pending count.
+_seat_excluded_count() {
+  local seat_id="$1" pid n=0
+  [[ -n "$seat_id" ]] || { echo 0; return 0; }
+  for pid in $(pgrep -u "$(id -u)" 2>/dev/null); do
+    [[ "$pid" == "$$" || "$pid" == "${PPID:-}" ]] && continue
+    [[ "$(_seat_id_of_pid "$pid")" == "$seat_id" ]] || continue
+    _seat_pid_foreign_socket "$pid" "$seat_id" && n=$((n+1))
   done
   echo "$n"
 }
@@ -1068,7 +1195,18 @@ reap_seat() {
     [[ "$(_seat_live_count "$seat_id")" -eq 0 ]] && { echo "  · reaped seat $seat_id (quiescent after $round round(s))"; return 0; }
     sleep 1
   done
-  echo "  · reap_seat $seat_id: $(_seat_live_count "$seat_id") proc(s) still live after 6 rounds — left as stragglers (safety-over-completeness: env-scrubbed/unkillable; never a cross-seat kill)"
+  # bug-363 F1: name the ACTUAL cause, and SPLIT THE TWO CLASSES. The old text blamed
+  # "env-scrubbed/unkillable" for every survivor, which is the wrong class for a policy-excluded
+  # proc: that proc carries the id and is perfectly killable — it is spared DELIBERATELY because
+  # its argv names another seat's socket. An operator reading the old message at 3am would go
+  # hunting a scrubbed environment that was never there. The count itself stays honest (see
+  # _seat_live_count); only the explanation is corrected.
+  local _live _excl; _live=$(_seat_live_count "$seat_id"); _excl=$(_seat_excluded_count "$seat_id")
+  if [[ "$_excl" -gt 0 ]]; then
+    echo "  · reap_seat $seat_id: $_live proc(s) still live after 6 rounds — of which $_excl SPARED BY POLICY (argv names another seat's -L ois-… socket; killable, deliberately not killed — bug-363), remainder env-scrubbed/replaced or unkillable. Never a cross-seat kill."
+  else
+    echo "  · reap_seat $seat_id: $_live proc(s) still live after 6 rounds — left as stragglers (safety-over-completeness: environment scrubbed/replaced, or unkillable; never a cross-seat kill)"
+  fi
   return 0
 }
 
