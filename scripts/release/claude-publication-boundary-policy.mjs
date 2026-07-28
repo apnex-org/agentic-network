@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 
-export const CLAUDE_RELEASE_VERSION = "0.1.20";
+export const CLAUDE_RELEASE_VERSION = "0.1.21";
 export const CLAUDE_RELEASE_PACKAGE = "@apnex/claude-plugin";
 export const CLAUDE_RELEASE_TAG = `claude-plugin-v${CLAUDE_RELEASE_VERSION}`;
 export const CLAUDE_PROVENANCE_REPOSITORY = "https://github.com/apnex-org/agentic-network";
