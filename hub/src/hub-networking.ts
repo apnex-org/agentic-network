@@ -215,6 +215,14 @@ export interface HubNetworkingConfig {
    *  created after HubNetworking in index.ts). Surfaced on /health so a poll-healthy-but-delivery-
    *  failing bridge is loud in production (closes the "bridge.health() has zero prod consumers"). */
   repoEventBridgeHealth?: () => unknown;
+  /** work-589/bug-398 (D1): lazy getter for the storage list-admission gate snapshot. The gate is
+   *  GLOBAL across every list operation of every kind and is strict FIFO, so a two-row point lookup
+   *  can be refused because it queued behind somebody else's 500-row scan — which is how a handshake
+   *  identity read fails and a seat silently degrades to `anonymous-<role>`. Its counters
+   *  (admitted / rejectedQueueFull / rejectedTimeout / highWater*) existed with ZERO consumers, so
+   *  "why did the gate saturate" was unanswerable by anyone, at any priority. Same shape and same
+   *  defect class as `repoEventBridgeHealth` above. */
+  listAdmissionHealth?: () => unknown;
 }
 
 /** Factory function type for creating MCP servers with tools registered */
@@ -338,6 +346,7 @@ export class HubNetworking {
       gitSha: config.gitSha ?? "",
       builtAt: config.builtAt ?? "",
       repoEventBridgeHealth: config.repoEventBridgeHealth ?? (() => undefined),
+      listAdmissionHealth: config.listAdmissionHealth ?? (() => undefined),
     };
 
     this.log = this.config.quiet
@@ -1020,6 +1029,13 @@ export class HubNetworking {
         // + lastSuccessfulDelivery so a poll-healthy-but-delivery-failing bridge is NOT dark. null
         // when the bridge isn't wired (local dev / tests).
         repoEventBridge: this.config.repoEventBridgeHealth?.() ?? null,
+        // work-589/bug-398 (D1): the storage list-admission gate — active/queued against their
+        // caps, plus admitted / rejectedQueueFull / rejectedTimeout and the observed high-water
+        // marks. This is the ONLY surface from which "is the gate saturating, and which way is it
+        // failing" can be answered; `rejectedQueueFull` vs `rejectedTimeout` distinguishes an
+        // instantaneous burst from sustained congestion, which the truncated error text cannot.
+        // null when the substrate exposes no gate (memory substrate / local dev / tests).
+        listAdmission: this.config.listAdmissionHealth?.() ?? null,
       });
     });
 

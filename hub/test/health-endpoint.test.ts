@@ -15,6 +15,7 @@ import { HubNetworking, type CreateMcpServerFn, type HubNetworkingConfig } from 
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { IAuditStore, IEngineerRegistry } from "../src/state.js";
 import type { IMessageStore } from "../src/entities/message.js";
+import { AdmissionGate } from "../src/storage-substrate/admission-gate.js";
 
 const stubRegistry = {} as unknown as IEngineerRegistry;
 const stubAudit = {} as unknown as IAuditStore;
@@ -111,5 +112,73 @@ describe("/health endpoint", () => {
     await hub.start();
     const body = await (await fetch(`http://127.0.0.1:${hub.port}/health`)).json();
     expect(body.repoEventBridge).toBeNull();
+  });
+
+  // ── work-589 / bug-398 (D1): the list-admission gate must be READABLE ──────
+  //
+  // getListAdmissionSnapshot() shipped with ZERO consumers, so "why did the
+  // gate saturate" was unanswerable by anyone. The gate is GLOBAL and strict
+  // FIFO, so a two-row identity lookup can be refused behind someone else's
+  // 500-row scan — which is how a handshake read fails and a seat degrades to
+  // `anonymous-<role>`. These pin the counters to a caller-facing surface.
+
+  it("reports listAdmission: null on /health when the substrate exposes no gate", async () => {
+    hub = makeHub();
+    await hub.start();
+    const body = await (await fetch(`http://127.0.0.1:${hub.port}/health`)).json();
+    expect(body.listAdmission).toBeNull();
+  });
+
+  it("EXPOSES the list-admission gate snapshot on /health when wired (work-589)", async () => {
+    hub = makeHub({
+      listAdmissionHealth: () => ({
+        active: 3, queued: 7, maxActive: 8, maxQueued: 128,
+        highWaterActive: 8, highWaterQueued: 40,
+        admitted: 1234, rejectedQueueFull: 2, rejectedTimeout: 5,
+      }),
+    });
+    await hub.start();
+    const body = await (await fetch(`http://127.0.0.1:${hub.port}/health`)).json();
+    // rejectedQueueFull vs rejectedTimeout is the load-bearing pair: it
+    // distinguishes an instantaneous burst from sustained congestion, which
+    // the truncated StorageAdmissionError text cannot.
+    expect(body.listAdmission).toMatchObject({
+      active: 3, queued: 7, maxActive: 8, maxQueued: 128,
+      admitted: 1234, rejectedQueueFull: 2, rejectedTimeout: 5,
+    });
+  });
+
+  it("🔴 the counters MOVE — /health reflects real gate traffic, not a frozen zero snapshot", async () => {
+    // The falsifier that a static getter cannot pass. A REAL AdmissionGate is
+    // driven with genuine admit + reject traffic (in-process, ephemeral, no
+    // infrastructure), and /health must report the CHANGED counters. A getter
+    // wired to a constant, or wired once at boot instead of read per request,
+    // fails here while passing every assertion above.
+    const gate = new AdmissionGate(1, 0, 1_000);
+    hub = makeHub({ listAdmissionHealth: () => gate.snapshot() });
+    await hub.start();
+
+    const before = await (await fetch(`http://127.0.0.1:${hub.port}/health`)).json();
+    expect(before.listAdmission).toMatchObject({ admitted: 0, rejectedQueueFull: 0, active: 0 });
+
+    // Occupy the single slot, then force a queue-full rejection against it.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    const inFlight = gate.run(() => held);
+    await expect(gate.run(async () => "second")).rejects.toThrow(/queue full/);
+
+    const during = await (await fetch(`http://127.0.0.1:${hub.port}/health`)).json();
+    expect(during.listAdmission).toMatchObject({ active: 1, admitted: 1, rejectedQueueFull: 1 });
+    // Strictly moved, not merely non-zero.
+    expect(during.listAdmission.admitted).toBeGreaterThan(before.listAdmission.admitted);
+    expect(during.listAdmission.rejectedQueueFull).toBeGreaterThan(before.listAdmission.rejectedQueueFull);
+
+    release();
+    await inFlight;
+    const after = await (await fetch(`http://127.0.0.1:${hub.port}/health`)).json();
+    // Released slot is observable too — proves the value is read per request,
+    // not captured once at wiring time.
+    expect(after.listAdmission.active).toBe(0);
+    expect(after.listAdmission.highWaterActive).toBe(1);
   });
 });
