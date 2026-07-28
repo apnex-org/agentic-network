@@ -7,6 +7,7 @@
  */
 
 import type { ZodType } from "zod";
+import { errorEnvelopeResult } from "./error-envelope.js";
 import type { IPolicyContext, PolicyHandler, PolicyResult, DomainEvent } from "./types.js";
 
 type Role = "architect" | "engineer" | "director" | "verifier" | "any";
@@ -258,7 +259,28 @@ export class PolicyRouter {
     } catch (err) {
       const elapsed = Date.now() - startTime;
       this.log(`[ERROR] ${toolName} failed after ${elapsed}ms (role: ${ctx.role}): ${err}`);
-      throw err;
+      // 🔴 work-591 / bug-398 — SERIALISE, DO NOT RETHROW.
+      //
+      // MECHANICS: this catch previously logged and rethrew. `mcp-binding.ts`
+      // returns `router.handle(...)` with no catch of its own, so the throw
+      // escaped to the SDK and reached the client as PROSE — on a boundary that
+      // contracts JSON, and which this same method already honours for its own
+      // refusals (unknown-tool and RBAC denial above).
+      //
+      // RATIONALE: this is half of bug-398's root cause, not a cosmetic gap. A
+      // StorageAdmissionError arrived at the adapter handshake as the plaintext
+      // `storage list admission ...`; the JSON parse failed; the failure was
+      // treated as NON-FATAL; the session bound its role and never its agentId,
+      // and a live seat silently became `anonymous-<role>`. The defect is EVERY
+      // error class not enumerated in a policy's `mapVerbError`, on EVERY tool —
+      // so it is fixed here, at the one boundary they all pass through, rather
+      // than at the single call site that happened to hurt.
+      //
+      // CONSEQUENCE: callers branch on `errorKind` and read `transience` instead
+      // of pattern-matching prose. Restore `ctx.emit` first — the success path
+      // below does, and an error must not leave the context mutated.
+      ctx.emit = originalEmit;
+      return errorEnvelopeResult(err, toolName);
     }
 
     // Observability

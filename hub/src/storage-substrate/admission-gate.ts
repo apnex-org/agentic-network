@@ -11,6 +11,30 @@
 export class StorageAdmissionError extends Error {
   readonly code = "storage_admission_backpressure";
 
+  // work-591 / bug-398 — DECLARE THE ERROR CONTRACT ON THE CLASS (idea-671).
+  //
+  // These are CLASS-LEVEL CONSTANTS, not composed at the throw site. That is what
+  // makes the six-property standard affordable on a path that fires under load:
+  // the expensive thing is building a sentence per occurrence, not carrying
+  // structured fields on an error that is already being constructed.
+  //
+  // 🔴 `transience` is the property this arc was missing. This error is
+  // BACKPRESSURE — the single case where retrying is not only meaningful but
+  // correct — and nothing in the old plaintext told a caller that. The adapter
+  // handshake guessed "non-fatal", proceeded without binding an agentId, and a
+  // live seat silently became `anonymous-<role>` (bug-398).
+  readonly errorKind = "storage_admission_backpressure";
+  readonly transience = "transient" as const;
+  readonly rationale =
+    "The storage list-admission gate is bounded on purpose: it is the backpressure boundary in front of PostgreSQL, so a saturated database sheds load here instead of accepting an unbounded waiter queue.";
+  readonly route =
+    "Retry after `retryAfterMs` with backoff. If retries keep failing, the gate is saturated rather than momentarily busy — escalate instead of looping.";
+  // ⚠️ A GENUINE guarantee, not an optimistic one: admission is refused BEFORE the
+  // query is issued, so the statement never ran and no storage state was touched.
+  // Declared only because the class can actually promise it.
+  readonly atomicity =
+    "Nothing was changed by this call — admission was refused before the query was issued.";
+
   constructor(
     message: string,
     readonly retryAfterMs: number,

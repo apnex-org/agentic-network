@@ -387,17 +387,37 @@ export class AgentRepositorySubstrate implements IEngineerRegistry {
         }
         const batch = await this.listAgentsRaw({ limit: pageSize, offset: page * pageSize });
         if (batch.length === 0) break;
+
+        // work-591 FIX TO work-590's OWN DEFECT: these writes were `await`ed ONE AT A
+        // TIME. Independent point-writes serialised for no reason — at 522 agents that
+        // took over five seconds and pushed a pre-existing sibling test past its timeout.
+        // It passed once and failed the next run, which is the worst kind: a boundary
+        // marginal enough to red CI intermittently rather than reproducibly.
+        //
+        // Bounded concurrency, not unbounded: `put` is NOT admission-gated (only `list`
+        // is), so an unbounded Promise.all over a large fleet would push straight past the
+        // gate that exists to protect PostgreSQL — using the ungated lane to do exactly
+        // what the gated one refuses. A fixed window keeps boot fast without becoming the
+        // stampede the gate was built for.
+        const writes: Array<{ sid: string; agentId: string }> = [];
         for (const a of batch) {
           agents++;
           if (a.archived) continue;
-          for (const sid of a.registeredSessions ?? []) {
+          for (const sid of a.registeredSessions ?? []) writes.push({ sid, agentId: a.id });
+        }
+        const WRITE_CONCURRENCY = 32;
+        for (let i = 0; i < writes.length; i += WRITE_CONCURRENCY) {
+          const window = writes.slice(i, i + WRITE_CONCURRENCY);
+          const settled = await Promise.all(window.map(async ({ sid, agentId }) => {
             try {
-              await this.substrate.put(SESSION_BINDING_KIND, { id: sid, agentId: a.id });
-              bindings++;
+              await this.substrate.put(SESSION_BINDING_KIND, { id: sid, agentId });
+              return true;
             } catch (err) {
-              console.error(`[AgentRepositorySubstrate] session-binding backfill write failed (${sid} → ${a.id}): ${(err as Error)?.message ?? err}`);
+              console.error(`[AgentRepositorySubstrate] session-binding backfill write failed (${sid} → ${agentId}): ${(err as Error)?.message ?? err}`);
+              return false;
             }
-          }
+          }));
+          bindings += settled.filter(Boolean).length;
         }
         if (batch.length < pageSize) break;
       }
