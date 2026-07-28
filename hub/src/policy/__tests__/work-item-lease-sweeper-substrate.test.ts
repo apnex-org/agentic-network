@@ -188,7 +188,23 @@ describe("WorkItemLeaseSweeper (real-pg)", () => {
     });
     await mk("work-h3-review", "review", { evidence: [{ requirementId: "r", kind: "freeform", producedAt: "2020-01-01T00:01:00.000Z" }] });
     await mk("work-h3-blocked", "blocked", { blockedOn: { blockerKind: "WorkItem", reason: "dep" } });
-    await mk("work-h3-claimed", "claimed");
+    // work-594: the claimed row now carries DATED lapses inside its poison window. The
+    // fixture previously relied on a bare `leaseExpiryCount: 3` with no recallHistory —
+    // which is precisely the contract this node replaced, and (swept at 2099) would now be
+    // 79 years outside any window. THE ASSERTION'S PURPOSE IS PRESERVED, NOT WEAKENED: it
+    // still proves a claimed row at the cap terminally abandons; it just has to reach the
+    // cap the way the code now counts. Swept at a controlled `now` rather than FUTURE so the
+    // lapses can be dated relative to it.
+    await mk("work-h3-claimed", "claimed", {
+      leaseWindowMs: 3_600_000, // 1h lease -> 3h poison window
+      recallHistory: [
+        { operationId: "lease-expiry:work-h3-claimed:t1", recalledAt: "2020-01-01T03:00:00.000Z",
+          actor: { role: "system", agentId: "lease-expiry-sweeper" }, reason: "prior lapse", before: { phase: "claimed" } },
+        { operationId: "lease-expiry:work-h3-claimed:t2", recalledAt: "2020-01-01T04:00:00.000Z",
+          actor: { role: "system", agentId: "lease-expiry-sweeper" }, reason: "prior lapse", before: { phase: "claimed" } },
+      ],
+    });
+    const CLAIMED_NOW = "2020-01-01T05:00:00.000Z"; // both priors within the 3h window
 
     // review + blocked at cap(3): re-queue, count UNCHANGED, NOT abandoned
     expect(await repo.expireLease("work-h3-review", FUTURE, 3)).toBe("requeued");
@@ -201,7 +217,101 @@ describe("WorkItemLeaseSweeper (real-pg)", () => {
     expect((await repo.getWorkItem("work-h3-blocked"))!.leaseExpiryCount).toBe(3);
 
     // claimed at cap(3): poison STILL applies → terminal abandon
-    expect(await repo.expireLease("work-h3-claimed", FUTURE, 3)).toBe("abandoned");
+    expect(await repo.expireLease("work-h3-claimed", CLAIMED_NOW, 3)).toBe("abandoned");
     expect((await repo.getWorkItem("work-h3-claimed"))!.status).toBe("abandoned");
   }, OP_TIMEOUT);
+
+  // ══ work-594 / bug-406 — THE POISON CAP IS A WINDOW, NOT A LIFETIME BUDGET ══════
+  //
+  // 🔴 WHAT WENT WRONG. `leaseExpiryCount` is cumulative over the row's ENTIRE LIFETIME and
+  // shared across every holder it has ever had, with no reset path anywhere in hub/src. A row
+  // that lapsed twice weeks ago sat permanently one lapse from irreversible abandon, and
+  // whoever drew it next inherited that invisibly. `work-bp-seatrec0-arc_driver` — the previous
+  // planning arc's CONTROLLER NODE — died exactly that way, to a holder that had RENEWED ON
+  // SCHEDULE and then lost the ability to prove who it was (bug-398, closed by this same arc).
+  //
+  // ─── TWO FALSIFIERS DOING DIFFERENT WORK (idea-677) ──────────────────────────
+  //   1 NEGATIVE  the SPREAD row must go RED against today's code: today `abandoned`,
+  //               after `requeued`. A test that merely exercises the counter passes both.
+  //   2 POSITIVE  🔴 the CONSECUTIVE row MUST STILL DIE. Without it, DELETING THE CAP
+  //               ENTIRELY passes falsifier 1 — and since B5 removed quarantine (the REACH
+  //               half) hours ago, that would mean this arc deleted BOTH HALVES of the
+  //               protection pair. This assertion is the proof it did not.
+  //
+  // The two rows differ ONLY in the timestamps of their prior lapses. Same phase, same
+  // leaseExpiryCount, same cap, same lease window — so the outcome cannot be attributed to
+  // anything but the window.
+  describe("work-594: poison is evaluated over a window derived from the lease", () => {
+    // A literal replay of the live instance. NOW is its third lapse; the two priors are its
+    // real recorded times. Window = poisonCap(3) x leaseWindowMs(1h) = 3h.
+    const NOW = "2026-07-27T00:30:39.000Z";
+    const SPREAD = ["2026-07-26T21:21:37.000Z", "2026-07-26T22:31:54.000Z"]; // -3h09m (OUT), -1h58m (in)
+    const BURST = ["2026-07-26T22:30:39.000Z", "2026-07-26T23:30:39.000Z"];  // -2h,     -1h    (both in)
+
+    async function rowWithLapses(id: string, lapses: string[]) {
+      await substrate.put("WorkItem", {
+        id, type: "task", priority: "normal", roleEligibility: [], dependsOn: [],
+        evidenceRequirements: [], targetRef: null, status: "in_progress",
+        leaseWindowMs: 3_600_000, // 1h -> a 3h poison window; also exercises the self-scaling
+        lease: { holder: "agent-w594", token: `tok-${id}`, claimedAt: "2026-07-26T23:30:39.000Z",
+                 expiresAt: "2026-07-27T00:30:00.000Z", heartbeatAt: "2026-07-27T00:15:39.000Z" },
+        evidence: [], frictionReflections: [], blockedOn: null,
+        // Both rows carry the SAME lifetime count. Under today's code that alone decides.
+        leaseExpiryCount: lapses.length,
+        recallHistory: lapses.map((at, i) => ({
+          operationId: `lease-expiry:${id}:tok-prior-${i}`,
+          recalledAt: at, actor: { role: "system", agentId: "lease-expiry-sweeper" },
+          reason: "prior lapse", before: { phase: "in_progress" },
+        })),
+        createdAt: "2026-07-26T20:00:00.000Z", updatedAt: "2026-07-26T20:00:00.000Z",
+      });
+    }
+
+    it("🔴 FALSIFIER 1 — SPREAD lapses (the live instance) REQUEUE; today's code abandons them", async () => {
+      await rowWithLapses("work-w594-spread", SPREAD);
+      const outcome = await repo.expireLease("work-w594-spread", NOW, 3);
+      // The oldest lapse is 3h09m back — OUTSIDE the 3h window — so only 1 prior counts,
+      // plus this one = 2 < 3. Today: lifetime 2 + 1 = 3 >= 3 -> "abandoned".
+      expect(outcome).toBe("requeued");
+      const w = await repo.getWorkItem("work-w594-spread");
+      expect(w!.status).toBe("ready");                 // recoverable, not terminally consumed
+      expect(w!.leaseExpiryCount).toBe(3);             // the LIFETIME counter still advances
+    }, OP_TIMEOUT);
+
+    it("🔴 FALSIFIER 2 — CONSECUTIVE lapses STILL POISON-ABANDON (the cap remains reachable)", async () => {
+      await rowWithLapses("work-w594-burst", BURST);
+      const outcome = await repo.expireLease("work-w594-burst", NOW, 3);
+      // Both priors are inside the 3h window -> 2 + 1 = 3 >= 3. A genuinely poisonous row,
+      // one that consumes seat after seat without progressing, still dies.
+      expect(outcome).toBe("abandoned");
+      expect((await repo.getWorkItem("work-w594-burst"))!.status).toBe("abandoned");
+    }, OP_TIMEOUT);
+
+    it("the two rows are distinguished ONLY by lapse timing — same lifetime count, same cap", async () => {
+      // Pins the attribution. If someone later "simplifies" the window away, this is the test
+      // that says the difference was never supposed to come from the counter.
+      const spread = await repo.getWorkItem("work-w594-spread");
+      const burst = await repo.getWorkItem("work-w594-burst");
+      expect(spread!.leaseExpiryCount).toBe(burst!.leaseExpiryCount); // identical counters...
+      expect(spread!.status).not.toBe(burst!.status);                 // ...opposite outcomes
+    }, OP_TIMEOUT);
+
+    it("a row with NO lapse history is never poisoned on its first lapse (the amnesty case)", async () => {
+      // Rows whose lapses predate bug-384 carry a lifetime count with NO recallHistory to date
+      // it. They count 0 and get a clean budget. Erring toward NOT terminating rows is the
+      // safe direction, and the live census found zero non-terminal rows at lec>=2.
+      await substrate.put("WorkItem", {
+        id: "work-w594-legacy", type: "task", priority: "normal", roleEligibility: [], dependsOn: [],
+        evidenceRequirements: [], targetRef: null, status: "in_progress", leaseWindowMs: 3_600_000,
+        lease: { holder: "a", token: "t-legacy", claimedAt: "2026-07-26T23:30:39.000Z",
+                 expiresAt: "2026-07-27T00:30:00.000Z", heartbeatAt: "2026-07-26T23:30:39.000Z" },
+        evidence: [], frictionReflections: [], blockedOn: null,
+        leaseExpiryCount: 7,           // a large LIFETIME debt with no dated record behind it
+        recallHistory: [],
+        createdAt: "2026-07-01T00:00:00.000Z", updatedAt: "2026-07-01T00:00:00.000Z",
+      });
+      expect(await repo.expireLease("work-w594-legacy", NOW, 3)).toBe("requeued");
+    }, OP_TIMEOUT);
+  });
+
 });
