@@ -493,6 +493,10 @@ const hub = new HubNetworking(
     // reads its health at /health-request time so deliveryFailing/lastSuccessfulDelivery surface
     // in production (closes the "bridge.health() has zero prod consumers" gap).
     repoEventBridgeHealth: () => repoEventBridge?.health(),
+    // work-589/bug-398 (D1): same lazy-getter shape, same gap being closed — getListAdmissionSnapshot()
+    // had ZERO production consumers, so gate saturation was undiagnosable. Read at /health-request
+    // time so the counters reflect the moment the question is asked.
+    listAdmissionHealth: () => substrate.getListAdmissionSnapshot(),
   },
   // M-Session-Claim-Separation (mission-40) T2: thread audit store through
   // for SSE-subscribe auto-claim hook to emit agent_session_implicit_claim
