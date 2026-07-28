@@ -141,6 +141,31 @@ describe("AgentRepositorySubstrate (W4.x.1 Option Y sibling-pattern)", () => {
 
     // Fresh repository = post-Hub-restart empty in-memory session map.
     const restarted = new AgentRepositorySubstrate(substrate);
+
+    // 🔴 work-590 SPEC CHANGE, RECORDED — NOT A TEST REPAIR.
+    //
+    // The PROPERTY this test protects is unchanged and still asserted below:
+    // sessions persisted on Agent rows must rehydrate after a Hub restart, and
+    // must do so beyond the old 500-row window (hence the 520 filler rows).
+    //
+    // What changed is the MECHANISM. bug-343 rehydrated by indexed pinpoint
+    // `list()` filters. work-590 removes that dependency entirely, because the
+    // list-admission gate is global and strict FIFO — so a two-row identity
+    // lookup could be refused behind an unrelated 500-row scan, which is how a
+    // live seat silently became `anonymous-<role>` (bug-398). Resolution is now
+    // an ungated point-read of an AgentSessionBinding pointer row.
+    //
+    // ⚠️ THIS TEST WENT RED FOR THE RIGHT REASON AND IS WORTH THE COMMENT: it
+    // writes Agent rows DIRECTLY VIA SQL, bypassing every repository write path,
+    // so no pointer rows exist — an exact model of the PRE-DEPLOY state, where
+    // sessions registered before this code shipped have no pointer row yet.
+    // Production covers that with a boot-time backfill in index.ts; the explicit
+    // call here is what the Hub does at startup, not a workaround.
+    //
+    // If this line is ever deleted to "simplify", resolution silently depends on
+    // a backfill nobody runs, and the first deploy degrades the whole fleet.
+    await restarted.backfillSessionBindings();
+
     expect((await restarted.getAgentForSession("session-scale-current"))?.id).toBe("agent-scale-current");
     expect((await restarted.getAgentForSession("session-scale-registered"))?.id).toBe("agent-scale-registered");
   });

@@ -547,6 +547,38 @@ const RepoEventBridgeDedupe: SchemaDef = {
   renameMap: { body: "status.dedupe" },
 };
 
+// ─── work-590 / bug-398 — AgentSessionBinding (identity resolution off the gated path) ───
+//
+// A session→agent pointer row keyed by the SESSION ID, so `getAgentForSession`
+// resolves via an UNGATED point-read (`substrate.get`) instead of a GATED
+// `list()`.
+//
+// WHY THIS KIND EXISTS. The storage list-admission gate is GLOBAL across every
+// list operation of every kind and is STRICT FIFO with no priority lane
+// (work-587). So a two-row identity lookup could be refused because it queued
+// behind an unrelated 500-row scan — and that is how a handshake identity read
+// fails and a seat silently degrades to `anonymous-<role>` (work-579, bug-398).
+// `get()` / `getWithRevision()` are NOT gated; only `list()` is. This kind moves
+// identity resolution onto the ungated lane.
+//
+// NOT AN OPTIMISATION. bug-343 already made the same lookup cheaper — whole-kind
+// scan → pinpointed filter — and the failure survived it, because a cheaper query
+// still queues. The dependency is the defect, not the cost.
+//
+// NO INDEXES, NO FILTERABLE KEYS, BY DESIGN: this row is only ever read by
+// primary key. Adding a filterable index would re-admit the very access pattern
+// the kind exists to remove.
+const AgentSessionBinding: SchemaDef = {
+  kind: "AgentSessionBinding",
+  version: 1,
+  fields: [
+    { name: "id", type: "string", required: true },
+  ],
+  indexes: [],
+  watchable: false,
+  renameMap: { agentId: "status.agentId" },
+};
+
 // ─── mission-88 W0 — MigrationCursor (per A2 thread-635 + Q3 thread-639) ───
 
 /**
@@ -1106,6 +1138,9 @@ export const ALL_SCHEMAS: SchemaDef[] = [
   // 2 NEW mission-84 W3 (repo-event-bridge cursor + dedupe; cluster #23 closure)
   RepoEventBridgeCursor,
   RepoEventBridgeDedupe,
+
+  // 1 NEW work-590 / bug-398 (session→agent pointer; ungated point-read identity)
+  AgentSessionBinding,
 
   // 1 NEW mission-88 W0 (migration-progress checkpoint for v2-envelope cutover)
   MigrationCursor,

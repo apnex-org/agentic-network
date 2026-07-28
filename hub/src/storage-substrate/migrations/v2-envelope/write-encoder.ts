@@ -43,6 +43,7 @@ import { createArchitectDecisionMigrationModule } from "./kinds/ArchitectDecisio
 import { createDirectorHistoryEntryMigrationModule } from "./kinds/DirectorHistoryEntry.js";
 import { createReviewHistoryEntryMigrationModule } from "./kinds/ReviewHistoryEntry.js";
 import { createThreadHistoryEntryMigrationModule } from "./kinds/ThreadHistoryEntry.js";
+import { createAgentSessionBindingMigrationModule } from "./kinds/AgentSessionBinding.js";
 import { createRepoEventBridgeCursorMigrationModule } from "./kinds/RepoEventBridgeCursor.js";
 import { createRepoEventBridgeDedupeMigrationModule } from "./kinds/RepoEventBridgeDedupe.js";
 import { createWorkItemMigrationModule } from "./kinds/WorkItem.js";
@@ -87,6 +88,7 @@ const MODULE_FACTORIES: Record<string, (schema: SchemaDef) => KindMigrationModul
   ThreadHistoryEntry: createThreadHistoryEntryMigrationModule,
   RepoEventBridgeCursor: createRepoEventBridgeCursorMigrationModule,
   RepoEventBridgeDedupe: createRepoEventBridgeDedupeMigrationModule,
+  AgentSessionBinding: createAgentSessionBindingMigrationModule,  // work-590 / bug-398
   WorkItem: createWorkItemMigrationModule,  // C1-R2 mission-94
   WorkRevisionFamily: createWorkRevisionFamilyMigrationModule,
   WorkGraphTopologyGeneration: createWorkGraphTopologyGenerationMigrationModule,

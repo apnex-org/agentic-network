@@ -60,6 +60,7 @@ import { createArchitectDecisionMigrationModule } from "../migrations/v2-envelop
 import { createDirectorHistoryEntryMigrationModule } from "../migrations/v2-envelope/kinds/DirectorHistoryEntry.js";
 import { createReviewHistoryEntryMigrationModule } from "../migrations/v2-envelope/kinds/ReviewHistoryEntry.js";
 import { createThreadHistoryEntryMigrationModule } from "../migrations/v2-envelope/kinds/ThreadHistoryEntry.js";
+import { createAgentSessionBindingMigrationModule } from "../migrations/v2-envelope/kinds/AgentSessionBinding.js";
 import { createRepoEventBridgeCursorMigrationModule } from "../migrations/v2-envelope/kinds/RepoEventBridgeCursor.js";
 import { createRepoEventBridgeDedupeMigrationModule } from "../migrations/v2-envelope/kinds/RepoEventBridgeDedupe.js";
 
@@ -138,6 +139,7 @@ const EXPECTED_RENAME_INVENTORY: Record<string, RenameMap> = {
   ThreadHistoryEntry: { timestamp: "metadata.createdAt", threadId: "metadata.threadId" },
   RepoEventBridgeCursor: { body: "status.cursor" },
   RepoEventBridgeDedupe: { body: "status.dedupe" },
+  AgentSessionBinding: { agentId: "status.agentId" },
   Document: { category: "metadata.labels.category" },
 };
 
@@ -171,6 +173,7 @@ const MODULE_FACTORIES: Record<string, (s: SchemaDef) => KindMigrationModule> = 
   ThreadHistoryEntry: createThreadHistoryEntryMigrationModule,
   RepoEventBridgeCursor: createRepoEventBridgeCursorMigrationModule,
   RepoEventBridgeDedupe: createRepoEventBridgeDedupeMigrationModule,
+  AgentSessionBinding: createAgentSessionBindingMigrationModule,
   Document: createDocumentMigrationModule,
   WorkItem: createWorkItemMigrationModule,  // C1-R2 mission-94
   WorkRevisionFamily: createWorkRevisionFamilyMigrationModule,
@@ -273,8 +276,12 @@ describe("W1.1 renameMap inventory + faithfulness — complete field-movement au
       }
     }
     // Mission-140 adds seven preserve-not-inject revision storage kinds.
-    expect(ALL_SCHEMAS.filter((s) => s.renameMap !== undefined)).toHaveLength(28);
-    expect(ALL_SCHEMAS).toHaveLength(40);
+    // work-590 adds AgentSessionBinding (session→agent pointer row, renameMap
+    // agentId → status.agentId): 28 → 29 renameMaps, 40 → 41 kinds. Both counts
+    // move together because the new kind carries a renameMap; a kind added
+    // WITHOUT one moves only the second.
+    expect(ALL_SCHEMAS.filter((s) => s.renameMap !== undefined)).toHaveLength(29);
+    expect(ALL_SCHEMAS).toHaveLength(41);
   });
 
   it("W1.1b every renameMap entry resolves to the encoder's ACTUAL placement (sentinel-probe vs migrateOne)", () => {
