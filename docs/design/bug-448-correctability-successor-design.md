@@ -326,3 +326,59 @@ rows counted as candidates. **This is a third case: ready, genuinely actionable,
 agent saturated.** The alarm cannot distinguish *"nobody is picking this up"* from *"nobody can."*
 Routed to bug-423's node as a sibling of steve's requested *"all remaining work is deliberately
 parked"* reason code.
+
+---
+
+# Rev 3 — verifier precisions from the PR #603 review (`work-622`)
+
+## 15. What `claimedAt` actually carried — and what replacing it costs
+
+The freshness fix attempted in PR #603 (anchor on `createdAt` rather than `lease.claimedAt`) was
+reviewed **REQUEST CHANGES**. The precise statement of why, from the reviewer, matters more than the
+verdict:
+
+> **The current `claimedAt` / earliest-same-holder floor IS a coarse holder-authorization boundary.
+> `createdAt` is not.** SEAL and relation remain independent controls, but they cover narrower
+> domains. **The failure is replacing the holder boundary with mere existence and then claiming the
+> other two controls preserve the lost property.**
+
+That is the general form of the trap, and §4's authority floor must be designed against it:
+
+> **When removing a control, name the property it carried, then show which surviving control carries
+> that same property — not merely that other controls exist.** "X and Y are independent" is not an
+> argument that X or Y covers what Z was doing.
+
+**Measured consequences on the exact head** (`a3b03f82`), both executable:
+- an arbitrary external commit locator produced at T0+1h completed under a **different holder's**
+  first claim at T0+24h;
+- a supported `VirtualClock.set` produced `claimedAt < createdAt`, **disproving the patch's
+  "ALWAYS / strictly looser / zero regression"** claim outright.
+
+⚠️ **AND SAME-ROW RESET PRESERVES `createdAt`** — so an artifact produced under contract A stays
+fresh after bindings clear and contract B is authored. **That is §0's F1 laundering path with a wider
+mouth.** Any successor authority-floor design must close it explicitly, not inherit it.
+
+## 16. Proof does not migrate between bugs
+
+> *"The bug-261 result may inform bug-448's contract-lineage design, but their proof does not
+> migrate: bug-261 remains independently OPEN, PR #603 remains CHANGES_REQUESTED, and any successor
+> implementation needs its own exact candidate / A8 gate."*
+
+Recorded because the temptation runs the other way: two findings that corroborate each other from
+different directions feel like one result with twice the evidence. **They are two results.** The
+successor arc inherits bug-261's *reasoning* as an input and inherits **none of its verification**.
+
+## 17. `idea-705` — the conjunctive-RED testing standard, now a durable rule
+
+Filed by the verifier out of the #603 review, where a negative test proved nothing:
+
+> Every conjunctive RED must **isolate each independent rejection arm**, assert the **specific failure
+> code/reason**, and **mutation-kill that arm**. A test accepting `guardA | guardB` proves only that
+> at least one fired.
+
+It explicitly covers authority, freshness, relevance, seal and other fail-closed predicates —
+i.e. **every gate this packet proposes to build.** §5's three-exit FSM tests and §4's authority-floor
+tests are both conjunctive by nature and must meet it.
+
+⚠️ The #603 test that motivated the rule was green with relation disabled *and* green with freshness
+bypassed. **It was not a weak test; it was a test of nothing, and it read as coverage.**
