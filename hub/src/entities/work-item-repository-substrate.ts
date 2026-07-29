@@ -2403,6 +2403,10 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       return { workId: w.id, ...observation, status, isHolder, gateMet: false, moves: verbs.map((verb) => ({ verb, legal: false, reason })) };
     }
     const isCreator = w.createdBy?.agentId === caller.agentId;
+    // HOISTED from the pause/recall block below (nodestate0b-v2 criterion 3): `abandon` now
+    // consults it too, and it sat AFTER that line. Declared once here beside `isCreator` so the
+    // two override-identity predicates are read from the same place by every verb that needs them.
+    const isSteward = caller.role === "architect" || caller.role === "director";
     const notHolder = "the caller is not the lease-holder";
 
     // Gate-aware complete: a COMPLETABLE arc needs all completionDependsOn children done; a leaf
@@ -2458,17 +2462,28 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // read), so a cold agent may try renew and get the "already expired" reject. Acceptable + now disclosed.
     add("renew", isHolder && LEASE_HELD_PHASES.includes(status), !isHolder ? notHolder : `renew requires a held lease, was ${status}`);
     add("release", isHolder && RELEASABLE_PHASES.includes(status), !isHolder ? notHolder : `release requires an active claim, was ${status}`);
-    // abandon: the holder OR the creator (override authority), from a RELEASABLE phase; the
-    // CREATOR alone also from `ready` (bug-219 fix (c) — mirrors the abandonWork guard).
-    add("abandon", (isHolder || isCreator) && (RELEASABLE_PHASES.includes(status) || (status === "ready" && isCreator)),
-      !(isHolder || isCreator) ? "the caller is neither the lease-holder nor the creator" : `abandon requires an active claim (or the creator from ready), was ${status}`);
+    // abandon: the holder, the creator, OR A STEWARD (override authority), from a RELEASABLE
+    // phase; the CREATOR or a STEWARD also from `ready` (bug-219 fix (c) — mirrors the
+    // abandonWork guard, which this line must stay in exact parity with).
+    //
+    // 🔴 nodestate0b-v2 criterion 3 — THE STEWARD ARM WAS NEVER WIRED INTO THIS PREDICATE.
+    // The suspended-row post-filter below DOES consult the disposal matrix, but it can only
+    // ever DOWNGRADE a move: it `continue`s on `!move.legal`. So when this base predicate
+    // computed `false` for an architect — who is neither holder nor creator — the matrix's
+    // steward ALLOW arm was never reached, and legal_moves advertised ILLEGAL for a disposal
+    // `abandonWork` performs. Same parity break as the creator arm, one actor class over.
+    //
+    // WHY MY EARLIER FIX MISSED IT: I wired the matrix into the POST-FILTER, which was the
+    // right place for the arms that reach it, and never asked which callers never get there.
+    // A post-filter that can only subtract cannot repair a predicate that under-admits.
+    add("abandon", (isHolder || isCreator || isSteward) && (RELEASABLE_PHASES.includes(status) || (status === "ready" && (isCreator || isSteward))),
+      !(isHolder || isCreator || isSteward) ? "the caller is neither the lease-holder, the creator, nor a steward" : `abandon requires an active claim (or the creator/steward from ready), was ${status}`);
     // complete: holder + COMPLETABLE + the completion-gate met.
     add("complete", isHolder && COMPLETABLE_PHASES.includes(status) && gateMet,
       !isHolder ? notHolder : !COMPLETABLE_PHASES.includes(status) ? `complete requires in_progress or review, was ${status}` : "completion-gate unmet — downstream completionDependsOn children are not all done");
     // Mission-140 pause/recall authority. Resolve immutable family creator rather than
     // trusting successor createdBy/revisedBy; holder status alone grants neither verb.
     const isOriginalCreator = await this.originalCreatorAgentId(w) === caller.agentId;
-    const isSteward = caller.role === "architect" || caller.role === "director";
     const pausePhase = ["ready", "claimed", "in_progress", "blocked"].includes(status);
     const canPause = status === "ready" ? (isOriginalCreator || isSteward) : isSteward;
     add("pause", canPause && pausePhase,
@@ -3755,8 +3770,16 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       this.assertNotFailedSealed(w);
       const isHolderWithToken = w.lease?.holder === agentId && w.lease?.token === opts?.leaseToken;
       const isCreator = w.createdBy?.agentId === agentId;
-      if (!isHolderWithToken && !isCreator && !(opts?.actorRole === "architect" || opts?.actorRole === "director")) {
-        throw new TransitionRejected(`abandon requires the lease-holder (with matching token) or the creator, not ${agentId}`);
+      // Named rather than inlined: the SAME predicate is now consulted twice in this function —
+      // here for authority, and again at the phase gate below — and legal_moves mirrors both.
+      // Three call sites deriving "is this caller a steward" independently is how the arms drift.
+      const isSteward = opts?.actorRole === "architect" || opts?.actorRole === "director";
+      if (!isHolderWithToken && !isCreator && !isSteward) {
+        // nodestate0b-v2: the guard has admitted STEWARDS since actorRole was threaded, but the
+        // message never said so — it described the rule this guard used to enforce. Naming all
+        // three admitted identities, because a refusal that misstates who WOULD be admitted sends
+        // the caller looking for the wrong remedy.
+        throw new TransitionRejected(`abandon requires the lease-holder (with matching token), the creator, or a steward, not ${agentId}`);
       }
       // 🔴 idea-640 / nodefix0 — `abandonWork` IS THE ONE HOLDER VERB THAT DOES NOT ROUTE THROUGH
       // `assertLease`, so the suspension refusal added there does not reach it. It has its own authority
@@ -3797,8 +3820,20 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       // matrix satisfied. That population is currently EMPTY (re-verified: zero rows,
       // truncated:false at limit 500) and per the ruling NO MIGRATION is built for it.
       // Recorded so the next reader does not assume this change freed it.
-      if (!RELEASABLE_PHASES.includes(w.status) && !(w.status === "ready" && isCreator)) {
-        throw new TransitionRejected(`abandon requires an active claim (or the creator from ready), was ${w.status}`);
+      // 🔴 nodestate0b-v2 criterion 3, ARM 2 — THIS GATE SWALLOWED THE MATRIX'S STEWARD ARM.
+      // `evaluateSuspendedDisposalAuthority` returns {allowed:true, reason:"steward"} for an
+      // architect over ANY suspended row, and the authority check at the top of this function
+      // already admits stewards on any row at all. This gate then refused them from `ready`,
+      // so a decision the layer above had already GRANTED could not be exercised.
+      //
+      // This is not a widening of steward AUTHORITY — that authority is granted above, and a
+      // steward can already abandon from every RELEASABLE phase. It removes an inconsistency
+      // where the one phase without a lease was also the one phase an override identity could
+      // not reach, which is precisely the situation bug-219 fix (c) added the creator arm for.
+      // A steward is the same kind of override identity as a creator, with strictly more claim
+      // on the decision.
+      if (!RELEASABLE_PHASES.includes(w.status) && !(w.status === "ready" && (isCreator || isSteward))) {
+        throw new TransitionRejected(`abandon requires an active claim (or the creator/steward from ready), was ${w.status}`);
       }
       const nowISO = this.clock.now().toISOString();
       // 🔴 bug-424: TERMINATING RESOLVES THE WITHDRAWAL. Suspension means "withdrawn from
@@ -3845,9 +3880,21 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // This pre-read verdict is stable across the CAS: completionDependsOn is immutable spec
     // and `done` is TERMINAL (monotonic) — a child can only move toward done, never back —
     // so no TOCTOU admits a premature close (the only race re-runs as a retryable reject).
-    // A vanished child can never reach `done` → fail-CLOSED (blocks). `abandoned` ≠ `done`
-    // → an abandoned child also blocks (an arc must not close over unfinished work — the
-    // A8 one-enforced-close integrity posture; the arc-holder re-queues it to proceed).
+    // A vanished child can never reach `done` → fail-CLOSED (blocks).
+    //
+    // 🔴 SUPERSEDED BY bug-433, CORRECTED HERE RATHER THAN DELETED. This comment used to read:
+    //   "`abandoned` ≠ `done` → an abandoned child also blocks (an arc must not close over
+    //    unfinished work — the A8 one-enforced-close integrity posture; the arc-holder
+    //    re-queues it to proceed)."
+    // That WAS the rule and is no longer. `computeCompletionProgress` routes every child
+    // through the shared `classifyGateChild`, which DROPS `abandoned` from the active gate set:
+    // only `done` satisfies, only `abandoned` drops, and failed/missing stay pending. An arc
+    // whose children were all abandoned is therefore completable, and `gateOpen` agrees.
+    // The integrity posture the old text protected is now carried by OBSERVABILITY instead of
+    // by refusal — `declared`/`active`/`droppedAbandoned`/`failed`/`missing` are separately
+    // named so "0 active / N abandoned" cannot be misread as "all work delivered".
+    // Left visible because a reader who trusted the old sentence would draw the opposite
+    // conclusion from the same code.
     if (item.completionDependsOn.length > 0) {
       const prog = await this.computeCompletionProgress(item.completionDependsOn);
       if (prog.pending.length > 0) {

@@ -172,7 +172,7 @@ describe("WorkItem verbs (real-pg: claim / lease / FSM)", () => {
     expect(abandoned!.status).toBe("abandoned");
     // a random third party (not holder, not creator) cannot abandon
     const { id } = await claim("agent-holder2");
-    await expect(repo.abandonWork(id, "agent-random")).rejects.toThrow(/lease-holder .* or the creator/);
+    await expect(repo.abandonWork(id, "agent-random")).rejects.toThrow(/lease-holder .*, the creator, or a steward/);
   }, OP_TIMEOUT);
 
   it("bug-219 creator abandon from ready: the CREATOR (no seat can claim it) abandons a ready item; a non-creator is rejected", async () => {
@@ -180,7 +180,7 @@ describe("WorkItem verbs (real-pg: claim / lease / FSM)", () => {
     // director-gated: no director seat exists → the item is unclaimable, the frozen shape bug-219 fixes
     const w = await repo.createWorkItem({ type: "task", roleEligibility: ["director"], createdBy: creator });
     // a non-creator from ready: rejected on identity (ready holds no lease → no holder path exists)
-    await expect(repo.abandonWork(w.id, "agent-219-random", { reason: "nope" })).rejects.toThrow(/lease-holder .* or the creator/);
+    await expect(repo.abandonWork(w.id, "agent-219-random", { reason: "nope" })).rejects.toThrow(/lease-holder .*, the creator, or a steward/);
     // the creator from ready: succeeds, terminal, lease stays null
     const abandoned = await repo.abandonWork(w.id, "agent-219-creator", { reason: "Director retired it" });
     expect(abandoned!.status).toBe("abandoned");
@@ -514,8 +514,14 @@ describe("WorkItem verbs (real-pg: claim / lease / FSM)", () => {
       const w = await repo.createWorkItem({ type: "task", roleEligibility: ["director"], createdBy: { agentId: "agent-219-lm-creator", role: "architect" } });
       const other = (await repo.getLegalMoves(w.id, { agentId: "agent-219-lm-other", role: "engineer" }))!;
       expect(moveOf(other, "abandon").legal).toBe(false);
-      expect(moveOf(other, "abandon").reason).toMatch(/neither the lease-holder nor the creator/);
-      await expect(repo.abandonWork(w.id, "agent-219-lm-other")).rejects.toThrow(/lease-holder .* or the creator/); // verb agrees: rejects
+      // nodestate0b-v2 criterion 3: NARROWED, not widened. The SUBJECT of this case is unchanged —
+      // `agent-219-lm-other` is neither holder, creator nor steward and is still refused by both
+      // surfaces. Only the reason text grew a third identity, because `abandon` now admits stewards
+      // (the arm bug-424's matrix always granted and these two layers never wired). Matching the
+      // exact new wording rather than loosening the regex: a matcher widened to survive a behaviour
+      // change is a ratchet pointing the wrong way.
+      expect(moveOf(other, "abandon").reason).toMatch(/neither the lease-holder, the creator, nor a steward/);
+      await expect(repo.abandonWork(w.id, "agent-219-lm-other")).rejects.toThrow(/lease-holder .*, the creator, or a steward/); // verb agrees: rejects
       const lm = (await repo.getLegalMoves(w.id, { agentId: "agent-219-lm-creator", role: "architect" }))!;
       expect(lm.status).toBe("ready");
       expect(lm.isHolder).toBe(false);

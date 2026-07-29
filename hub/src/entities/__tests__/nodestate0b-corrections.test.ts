@@ -133,8 +133,15 @@ describe("F2 (bug-423 F9-3) — the watchdog DECIDES on suspension, not merely r
     // because a fixture that steps the timestamp itself never exercises the dependency.
     //
     // This case drives the REAL verb and takes its baseline from the REAL pre-pause marker, so the
-    // coupling is EXECUTED. If pauseWork stops moving `enteredCurrentStateAt`, this reds. A comment
-    // cannot fail; this can.
+    // coupling is EXECUTED against the real verb rather than a hand-built row.
+    //
+    // 🔴 CORRECTED (verifier, nodestate0b-v2): this comment used to claim "if pauseWork stops
+    // moving `enteredCurrentStateAt`, this reds". THAT IS NO LONGER TRUE, and the reason is the
+    // fix itself — the suspension flip is now decided BEFORE the dwell guard, so progress is
+    // INDEPENDENT of whether the marker moves. This case would survive that change.
+    // The DETERMINISTIC same-instant case below is the load-bearing guard for bug-461; this one
+    // is realistic-path evidence. A test comment that describes a dependency the fix deliberately
+    // removed is exactly the stale-artefact defect this arc keeps meeting.
     const { repo } = fixture();
     const w = await item(repo);
     const before = (await repo.getWorkItem(w.id))!;
