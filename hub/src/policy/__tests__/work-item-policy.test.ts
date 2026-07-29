@@ -728,7 +728,10 @@ describe("work-item-policy (C1-R2 sub-PR-3b)", () => {
     await router.handle("abandon_work", { workId: "work-1", reason: "obsolete" }, ctxFor(stub, "architect"));
     // calls[0] is the work-54 from_status pre-read (getWorkItem); the verb call follows.
     const verbCall = stub.calls.find((c) => c.method === "abandonWork")!;
-    expect(verbCall.args).toEqual(["work-1", "anonymous-architect", { reason: "obsolete", leaseToken: undefined }]);
+    // bug-424: the disposal authority matrix needs the CALLER'S ROLE, which the repository
+    // could not previously see. Asserted explicitly rather than loosened — the role reaching
+    // the store is the whole point of the signature change.
+    expect(verbCall.args).toEqual(["work-1", "anonymous-architect", { reason: "obsolete", leaseToken: undefined, actorRole: "architect" }]);
   });
 
   it("list_ready_work: defaults role to the caller; surfaces truncation loudly", async () => {

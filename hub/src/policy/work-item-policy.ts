@@ -328,6 +328,10 @@ async function abandonWork(args: Record<string, unknown>, ctx: IPolicyContext): 
     const w = await store.abandonWork(args.workId as string, caller.agentId, {
       reason: args.reason as string | undefined,
       leaseToken: args.leaseToken as string | undefined,
+      // bug-424: the disposal authority matrix needs the CALLER'S ROLE, which the
+      // repository could not previously see. `caller` carries the authoritative
+      // registry role (resolveCreatedBy), not ctx.role.
+      actorRole: caller.role,
     });
     if (!w) return notFound(args.workId as string);
     await emitWorkTransition(ctx, { item: w, verb: "abandon_work", fromStatus: before?.status ?? null, actor: caller });
