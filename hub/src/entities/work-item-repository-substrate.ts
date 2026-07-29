@@ -278,6 +278,70 @@ export function isActivelyWithdrawn(w: Pick<WorkItem, "suspended">): boolean {
   return w.suspended === true;
 }
 
+/**
+ * bug-433 — THE ONE SHARED GATE CLASSIFIER. Every graph gate resolves a child
+ * through this and nothing else, so the start gate, the completion gate and the
+ * stint projection cannot drift apart.
+ *
+ * Director ruling 2026-07-29: *"DependsOn should only engage against live nodes …
+ * That mechanism exists to encode heirarchy, not to poison or block abandon nodes
+ * forever."* Clarified: *"I meant abandoned or canceled nodes."*
+ *
+ * 🔴 REBUTTAL, NOT DELETION. The prior rationale read: *"a VANISHED or non-`done`
+ * (incl. abandoned) child counts pending (fail-CLOSED — the same posture the gate
+ * enforces)."* That posture was deliberate and it is now PARTLY REVERSED — but only
+ * for `abandoned`, and the reasoning is not that fail-closed was wrong. It is that
+ * ABANDONED IS A DELIBERATE TERMINATION, i.e. a decision already taken by someone
+ * with authority, not an absence of information. Fail-closed is the right posture
+ * toward the UNKNOWN; it is the wrong posture toward the DECIDED. Every other arm
+ * below stays fail-closed for exactly the original reason.
+ *
+ * 🔴 `failed_sealed` IS DELIBERATELY *NOT* DROPPED. A gate that drops its own
+ * failures is not a gate. Do NOT reimplement this against `TERMINAL_WORK_PHASES` —
+ * that set contains `failed_sealed`, so keying off it would invert the ruling and
+ * make the gate erase the very outcomes it exists to record.
+ */
+export type GateChildResolution = "satisfied" | "dropped_abandoned" | "pending" | "missing";
+
+/**
+ * DECLARED vs ACTIVE topology, both observable. `done`/`total`/`pending` describe the
+ * ACTIVE gate set and are what the gate decides on; `declared`/`droppedAbandoned`/
+ * `missing` preserve what was asked for and why it is no longer counted.
+ *
+ * ⚠️ THE ACCEPTANCE BAR: an arc whose every child was abandoned is now COMPLETABLE
+ * (`total: 0`, `pending: []`). `droppedAbandoned` is what stops that reading as
+ * "all work delivered" — **0 active / N abandoned must never be mistakable for
+ * done**. That is the point of carrying the field, not a nicety.
+ */
+export type CompletionProgress = {
+  done: number;
+  total: number;
+  pending: string[];
+  declared: string[];
+  droppedAbandoned: string[];
+  missing: string[];
+};
+
+export function classifyGateChild(
+  // TWO REPRESENTATIONS OF ABSENCE reach this, and the classifier owns both so no caller
+  // has to know which it holds: the gates pass a NULL row (the point-get missed), while
+  // the stint projection pre-resolves children and carries a `"missing"` SENTINEL. They
+  // mean the same thing and must classify the same way.
+  child: { status: WorkItemPhase | "missing" } | null | undefined,
+): GateChildResolution {
+  // MISSING is kept DISTINCT from dropped: both leave the gate unsatisfied, but one is
+  // a decision and the other is an absence, and a projection that merged them would
+  // hide a vanished row behind a deliberate one (bug-449 is anti-scope here, but this
+  // is the seam it would surface through).
+  if (!child) return "missing";
+  if (child.status === "missing") return "missing";
+  if (child.status === "done") return "satisfied";
+  if (child.status === "abandoned") return "dropped_abandoned";
+  // Everything else — ready|claimed|in_progress|blocked|paused|review|failed_sealed —
+  // is PENDING and BLOCKING.
+  return "pending";
+}
+
 /** Phases from which release_work / abandon_work are legal (FSM §3.1). review is
  *  excluded — a review item advances only via complete_work or the lease-expiry
  *  sweeper (sub-PR-4); review-edge finalization lands with complete_work (3a-ii). */
@@ -1947,25 +2011,47 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
   /**
    * work-88 (arc-node): the k/N COMPLETION-gate progress over a node's DIRECT
    * completionDependsOn children. `done` = children at phase=done; `pending` = the
-   * not-yet-done ids; a VANISHED or non-`done` (incl. abandoned) child counts pending
-   * (fail-CLOSED — the same posture the gate enforces). Per-child point-gets: the
+   * not-yet-done ids. bug-433 CHANGED THIS: a VANISHED or non-`done` child still counts
+   * pending (fail-CLOSED), but an ABANDONED child is now DYNAMICALLY DROPPED instead.
+   * The prior rationale — that abandoned counted pending under the same fail-closed
+   * posture — is rebutted rather than removed: fail-closed is right toward the UNKNOWN
+   * and wrong toward the DECIDED, and abandonment is a decision already taken. See
+   * `classifyGateChild`. Per-child point-gets: the
    * envelope-safe canonical read (an id-`$in` batch over the JSONB `data->>'id'` path is
    * unverified on envelope rows — cal #90 silent-miss risk — so deferred as a perf
    * follow-up; the direct-children fan-out is small). ONE source of truth — the
    * complete_work gate AND the get_work projection both call this.
    */
-  private async computeCompletionProgress(completionDependsOn: string[]): Promise<{ done: number; total: number; pending: string[] }> {
+  private async computeCompletionProgress(completionDependsOn: string[]): Promise<CompletionProgress> {
     const pending: string[] = [];
+    const droppedAbandoned: string[] = [];
+    const missing: string[] = [];
     for (const childId of completionDependsOn) {
       const child = await this.getCurrentProjectionItem(childId);
-      if (!child || child.status !== "done") pending.push(childId);
+      switch (classifyGateChild(child)) {
+        case "satisfied": break;
+        case "dropped_abandoned": droppedAbandoned.push(childId); break;
+        case "missing": missing.push(childId); pending.push(childId); break;
+        case "pending": pending.push(childId); break;
+      }
     }
-    return { done: completionDependsOn.length - pending.length, total: completionDependsOn.length, pending };
+    // ACTIVE counts drive the gate; DECLARED topology stays visible beside them. The
+    // array is never mutated — dropping is a READ-TIME classification, so which scope
+    // was dropped is always recoverable.
+    const active = completionDependsOn.length - droppedAbandoned.length;
+    return {
+      done: active - pending.length,
+      total: active,
+      pending,
+      declared: [...completionDependsOn],
+      droppedAbandoned,
+      missing,
+    };
   }
 
   /** The opt-in get_work projection (FR — feeds the cold-start get_current_stint). Reads
    *  the arc fresh, then projects its completion-gate progress. null if the arc is gone. */
-  async getCompletionProgress(workId: string): Promise<{ done: number; total: number; pending: string[] } | null> {
+  async getCompletionProgress(workId: string): Promise<CompletionProgress | null> {
     if (!this.currentness.currentPin()) return this.withReadPin(() => this.getCompletionProgress(workId));
     const w = await this.getCurrentProjectionItem(workId);
     if (!w) return null;
@@ -2059,8 +2145,16 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // two-axis state is how the histogram and the dwell-time drift apart. The histogram still sums
     // to `total`, and `paused` means what it has always meant to a reader: withdrawn from execution.
     const countOf = (s: string) => children.filter((c) => (c.suspended ? "paused" : c.status) === s).length;
-    const total = children.length;
-    const done = countOf("done");
+    // bug-433: ACTIVE topology. Abandoned children are DYNAMICALLY DROPPED from the
+    // gate set via the SHARED classifier — the same one computeCompletionProgress uses,
+    // which is what keeps these two parallel computations in agreement (the parity test
+    // below is what proves it). The `children` array itself is NEVER filtered: declared
+    // topology stays fully visible, dropping is a read-time classification.
+    const droppedAbandoned = children.filter((c) => classifyGateChild(c) === "dropped_abandoned").map((c) => c.id);
+    const missingChildren = children.filter((c) => classifyGateChild(c) === "missing").map((c) => c.id);
+    const activeChildren = children.filter((c) => classifyGateChild(c) !== "dropped_abandoned");
+    const total = activeChildren.length;
+    const done = activeChildren.filter((c) => classifyGateChild(c) === "satisfied").length;
     const statusCounts: Record<string, number> = {
       ready: countOf("ready"), claimed: countOf("claimed"), in_progress: countOf("in_progress"),
       blocked: countOf("blocked"), paused: countOf("paused"), review: countOf("review"), done, abandoned: countOf("abandoned"),
@@ -2078,11 +2172,20 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       arcId: arc.id,
       ...observation,
       arcStatus: arc.status,
-      // pending = NOT done. This k/N is PARALLEL-COMPUTED from the per-child read above (NOT a
-      // call to computeCompletionProgress) — it is PARITY-ASSERTED against the gate by a test
+      // pending = NOT done, over the ACTIVE set. Still PARALLEL-COMPUTED from the per-child read
+      // above (NOT a call to computeCompletionProgress) to avoid a second fan-out — but bug-433
+      // routes BOTH definitions through `classifyGateChild`, so they can no longer disagree about
+      // what a child resolution MEANS, only about how they enumerate. PARITY-ASSERTED by a test
       // (getStintProjection.completion deepEquals getCompletionProgress), which reds if the two
       // parallel definitions ever drift (work-94 sub-3; the agreement-pin calibration).
-      completion: { done, total, pending: children.filter((c) => c.status !== "done").map((c) => c.id) },
+      completion: {
+        done,
+        total,
+        pending: activeChildren.filter((c) => classifyGateChild(c) !== "satisfied").map((c) => c.id),
+        declared: children.map((c) => c.id),
+        droppedAbandoned,
+        missing: missingChildren,
+      },
       // tracks the ARC completion-gate (children>0): would complete_work pass it. A LEAF (children=0)
       // has NO completion-gate — it completes freely — so gateOpen:false there means "no arc-gate",
       // NOT "blocked". gateOpen:true ⇒ a completable arc whose subtree is finalised (one-enforced-close).
@@ -4301,7 +4404,11 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const unmet: string[] = [];
     for (const depId of depIds) {
       const dep = await this.getCurrentProjectionItem(depId);
-      if (!dep || dep.status !== "done") unmet.push(depId);
+      // bug-433: ONE shared classifier with the completion gate. `dropped_abandoned`
+      // yields; `missing` remains fail-CLOSED and unmet, as the original rationale
+      // required for the UNKNOWN case.
+      if (classifyGateChild(dep) === "dropped_abandoned") continue;
+      if (classifyGateChild(dep) !== "satisfied") unmet.push(depId);
     }
     return unmet;
   }
