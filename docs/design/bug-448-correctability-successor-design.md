@@ -247,3 +247,82 @@ CORRECTIONS-REQUIRED and released three implementation nodes into claimable stat
 `work-610`'s runbook had warned about it in writing, citing the instance before that. Filed as
 **bug-453** — *a dependency edge can assert a child reached `done`; it cannot assert what the child
 concluded.* **The successor arc must not gate its build on node completion alone.**
+
+---
+
+# Rev 2 — 2026-07-29, after the first implementation landed
+
+## 11. The `isSuspended` split shipped, and it set a bar this packet did not ask for
+
+`0638d3ab` (#718) split one predicate into two, named for what they defend:
+
+```ts
+isParkedFromExecution(w: Pick<WorkItem, "suspended" | "status">)   // PROTECTION — both populations
+isActivelyWithdrawn  (w: Pick<WorkItem, "suspended">)              // DISPOSAL   — attribute only
+```
+
+🟢 **The disposal predicate's parameter type cannot see the phase.** Re-conflation is a **compile
+error**, not a test failure. The falsifier catches someone who reintroduces the phase check; the
+signature stops them writing it at all.
+
+> **Adopt this as the standard for every predicate the successor arc splits.** A guard that cannot be
+> violated beats one that reddens when violated. Where a split is expressible in the type system,
+> expressing it only in tests is a weaker choice that should be justified, not defaulted to.
+
+Its falsifier also states the rule the successor arc's tests must meet:
+
+> *"The discriminator case is the LEGACY row, the ONLY input on which the two predicates are required
+> to disagree — a test that never exercises it would pass against the unsplit predicate and prove
+> nothing."*
+
+…and asserts the split itself, not merely its outputs:
+`expect(isParkedFromExecution(legacy)).not.toBe(isActivelyWithdrawn(legacy))` —
+*"any predicate pair that agrees on every input has not been split."*
+
+⚠️ **AND IT DID NOT FREE THE LEGACY POPULATION, BY ITS AUTHOR'S OWN NOTICE.** `abandonWork` carries a
+**second, independent** refusal — `RELEASABLE_PHASES` excludes `"paused"`. The PR says so in the code
+comment rather than letting the next reader assume the path opened. **That is the `pauseWork` lesson
+(§below) applied prospectively, within an hour of learning it.**
+
+## 12. A reading rule the successor arc should treat as binding
+
+**`pauseWork` carries two independent refusals eight lines apart** — `:2796` the seal guard, `:2804`
+the phase list — **and reading either one alone gives a complete-looking answer.** The first
+classification of this arc concluded "yield the guard and pause opens" on exactly that mistake.
+
+> **Before concluding that changing a predicate opens a path, enumerate every refusal in the
+> function.** Not the first one that explains what you observed. This packet's §5 FSM work is where
+> that error would be most expensive.
+
+## 13. Instrument discipline — seven wrong beliefs, one shape
+
+The session that produced this packet retracted **seven** architect claims. Every one was a boundary
+decided once and never re-measured, and the last three came in ten minutes on a single question
+(*is this PR merging?*):
+
+```
+autoMergeRequest        reports auto-merge, not merge-queue membership
+mergeStateStatus=CLEAN  means mergeable, not idle
+mergeQueue.entries      lagged — AWAITING_CHECKS for a PR already on main
+git log origin/main     correct
+```
+
+**Each was a field adjacent to the question, read as if it were the answer.** The general form —
+and the reason it belongs in a design packet rather than a retro — is that §6's ten-consumer map and
+§7's generation matrix are both exercises in *reading adjacent fields correctly*. The engineer's
+counter-habit is the one to adopt: **print the stored keys beside the value**, so the instrument is
+checked at the same moment as its output.
+
+## 14. A third watchdog over-fire mode, not in bug-423 or bug-437
+
+Observed eleven times during this arc, correct every time, actionable never:
+
+```
+ready + claimable + unclaimed  ·  the only eligible role is at WIP cap
+```
+
+bug-437 names *"ready but not yet actionable"* — a row gated by something. bug-423 names suspended
+rows counted as candidates. **This is a third case: ready, genuinely actionable, and every eligible
+agent saturated.** The alarm cannot distinguish *"nobody is picking this up"* from *"nobody can."*
+Routed to bug-423's node as a sibling of steve's requested *"all remaining work is deliberately
+parked"* reason code.
