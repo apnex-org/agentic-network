@@ -3727,7 +3727,14 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         throw new TransitionRejected(`abandon requires an active claim (or the creator from ready), was ${w.status}`);
       }
       const nowISO = this.clock.now().toISOString();
-      return { ...w, status: "abandoned", lease: null, blockedOn: null, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
+      // 🔴 bug-424: TERMINATING RESOLVES THE WITHDRAWAL. Suspension means "withdrawn from
+      // execution PENDING RESUMPTION"; an abandoned row has nothing left to resume, so
+      // leaving `suspended: true` would produce a row that is both terminal AND parked —
+      // incoherent, and it would keep reading as parked to every projection.
+      // Caught by the workgraph-sim oracle catalog, which asserts the (phase, suspended)
+      // PAIR rather than the phase alone. The hub suite cannot see this: the sim is a
+      // separate workspace consumer driving the real FSM.
+      return { ...w, status: "abandoned", suspended: false, lease: null, blockedOn: null, ...accrueExitingState(w, nowISO), updatedAt: nowISO };
     });
   }
 

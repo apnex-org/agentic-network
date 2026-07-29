@@ -135,6 +135,14 @@ export const SPEC: Record<Phase, Record<SpecVerb, Move>> = {
   // it drives a ready row and suspends it; unpause clears the attribute and the phase was never lost.
   paused: row({
     unpause_work: { legal: true, to: "ready" },
+    // 🔴 bug-424 — REBUTTED, NOT WIDENED. This row previously left `abandon_work` at the
+    // default (illegal), encoding a BLANKET refusal of disposal on a suspended row. The
+    // Director's ruling and steve's F8 replace that blanket with an AUTHORITY MATRIX:
+    // stewards (architect/director) and the self-suspending holder may dispose; a holder
+    // whose row was suspended BY A STEWARD may not, and an unknown suspender fails closed.
+    // The oracle drives this row as the ARCHITECT (oracles.ts:141), which is the steward
+    // arm — so `legal: true` here asserts stewardship specifically, not a general opening.
+    abandon_work: { legal: true, to: "abandoned", note: "steward (architect/director) or the SELF-suspending holder only — bug-424 authority matrix; a steward-suspended holder is still refused" },
   }),
   review: row({
     complete_work: { legal: true, to: "gate", note: "→done once the gate is satisfied and explicit frictionReflection is present; missing friction persists valid evidence but stays same" },
