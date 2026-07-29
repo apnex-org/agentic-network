@@ -198,29 +198,36 @@ half of `bug-424` (`abandonWork` refusing `isSuspended`) is unaffected and remai
 
 **Re-verify before scoping legacy-tail work. Do not build a migration for an empty set.**
 
-### 2. 🔴 `bug-448` GAINS A HARD ORDERING CONSTRAINT — this is the node-0 finding
+### 2. The seal-less population — measured, and then ruled irrelevant
 
 The migration at `:4428` **has run**: `failed-sealed-phase-v4.test.ts` describes these twelve
 rows as stored `ready`; they are now stored `failed_sealed`. **But `failedGateSeal` is `null` on
 all twelve.** They are terminal via `hasActiveVerifierFail`, not via a seal object.
 
-```
-reset clears  attestations + attestationHistory   <- the ONLY record of the failure
-failedGateSeal is null                            <- nothing left to persist
-                                              =>  THE FAILURE IS ERASED COMPLETELY
-```
+> 🔴 **AN EARLIER REVISION OF THIS SECTION CALLED THAT "A HARD ORDERING CONSTRAINT" AND
+> REQUIRED THAT A SEAL EXIST BEFORE RESET IS PERMITTED. THE DIRECTOR REMOVED IT — TWICE.**
+>
+> Verbatim, 2026-07-29:
+> - *"reset must function on any paused node."*
+> - *"seals / evidence etc dont matter. If you (the architect) want to reset a node and clear
+>   the lease, you can pause it then do so."*
+>
+> **THERE IS NO PRECONDITION ON RESET.** No seal-minting, no backfill, no migration gate, no
+> ordering between record-preservation and correctability. The architect pauses, resets, edits.
+> That is the whole path. **Do not build machinery around the failure record.**
 
-**Permitting reset on today's population would do precisely what the ruling forbids.** The
-anti-laundering property depends on a seal that these rows do not have.
+**What survives from the measurement:** the twelve rows carry no seal object, so
+`failedGateSeal != null` matches nothing in the live population and any guard keyed on it is
+inert today. `hasActiveVerifierFail` is the term that actually fires. **That is a fact about
+which predicate to look at — not a constraint on when reset may run.**
 
-**REQUIRED ORDERING — a seal must exist before reset is permitted on a row.** Either mint one
-for the seal-less population, or mint one at reset time from the active FAIL being cleared.
-**Whichever is chosen, it lands BEFORE correctability is unblocked, not alongside it.**
-
-⚠️ **AND IT COMPLICATES THE ACTIVE/HISTORICAL SPLIT.** For these twelve there is no historical
-seal to split from — only the active fail. A naive split leaves all twelve blocked, because the
-active FAIL is exactly what the guards would keep reading. **The split alone does not deliver
-the ruling on the population that actually exists.**
+⚠️ **HOW THIS SECTION WENT WRONG, because it is the arc's recurring shape.** The measurement
+was correct. The inference — *therefore reset must be gated* — was mine, was not asked for, and
+imported a constraint the Director then removed. **A correct measurement with an invented
+consequence attached is more dangerous than no measurement, because the consequence inherits
+the measurement's credibility.** It cost a whole seeded node, which had to be repurposed rather
+than abandoned because abandoning it would have bricked the driver (bug-433 — the defect this
+arc repairs, encountered while repairing it).
 
 ### 3. `effectiveDisposition` is circular and must not be trusted as an independent signal
 
