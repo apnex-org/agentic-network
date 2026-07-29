@@ -63,14 +63,46 @@ legitimate; only its *unclearability* was the defect.
 
 ## In scope
 
+> 🔴 **NARROWED 2026-07-29 AFTER THE PRE-BUILD AUDIT. bug-448 NO LONGER SHIPS FROM THIS ARC.**
+> `docs/verification/nodestate0-prebuild-failure-mode-audit.md` returned **CORRECTIONS REQUIRED
+> BEFORE IMPLEMENTATION**. Two findings are decisive and neither is fixable by an implementation
+> node:
+> - **F1** — the anti-gameability counter-control does not hold. "Evidence-free" deletes row-local
+>   *pointers*, not artifacts; `allowPreClaim:true` re-admits them under a weakened requirement,
+>   verifier authority can be downgraded, and `targetRef` unfreezes because its freeze keys on
+>   `attestationHistory`, which reset clears.
+> - **F4** — removing guards does not *create* a retry transition. `pauseWork` accepts four phases
+>   and `failed_sealed` is not among them.
+>
+> **This arc closes TWO criticals, not three.** bug-448 leaves as a design packet
+> (`docs/design/bug-448-correctability-successor-design.md`) rather than a half-fix.
+
 | Item | State | Work |
 |---|---|---|
-| **bug-448** | 🔴 RULED, unbuilt — **CRITICAL** | Classify 6 guard sites; split active-fail from historical-seal. A failed node currently cannot be edited, paused, claimed **or abandoned** |
-| **bug-433** | 🔴 RULED, unbuilt — **CRITICAL** | One predicate written twice: `unmetDependencies:4266`, `computeCompletionProgress:1926` |
-| **bug-424** | 🔴 unbuilt — **CRITICAL** | Owner-exception on abandon + the legacy `status:"paused"` tail |
-| **bug-423** | ⚪ confirmed open — minor | Watchdog counts suspended rows as ready candidates |
-| **bug-414** | ⚪ **UNVERIFIED** | Orphans — may fall out of bug-433 by construction; **measure before scoping** |
+| **bug-433** | 🔴 RULED, unbuilt — **CRITICAL** | Auto-drop. **One shared classifier across SEVEN surfaces**, not the two obvious predicates (audit F7). Declared-vs-active topology both observable |
+| **bug-424** | 🔴 unbuilt — **CRITICAL** | Disposal authority. **The matrix is unresolved, not assumed** (audit F8): `abandonWork` receives no role, and holder-after-self-suspension must differ from holder-after-steward-suspension |
+| **bug-423** | ⚪ confirmed open — minor | **Seven faces, not four** (audit F9): + suspended `isLiveInFlight` suppressing the warning, suspended driver reading active, `suspended` absent from the progress fingerprint |
+| **isSuspended split** | 🟢 **PR #718** — queued | `isParkedFromExecution` (both populations) vs `isActivelyWithdrawn` (attribute only). Only `abandonWork` moves; 21 sites unchanged |
+| **bug-414** | ⚪ **PREMISE STALE** (audit F10) | The append-only verbs already exist; the original calls used `set:{…}`, the wrong surface. **Do not build a second edge API.** State which half closed |
+| **bug-448** | 🔵 **DEFERRED — design only** | Successor design packet. **No capability-predicate code ships from this arc**; the verifier will FAIL any change to `assertNotFailedSealed` / `isFailedGateSealed` / `effectiveDisposition` / `resetWork`'s clearing |
 | `idea-640` residue | 2 open questions | Does pause freeze `expiresAt`? Enumerate "minor edits" precisely |
+
+### Measured while driving — two beliefs the arc falsified
+
+```
+set: { evidenceRequirements }   ->  changed: [runbook, evidenceRequirements]   ✅ EDITABLE
+set: { dependsOn }              ->  unrecognized_keys                          ❌ NOT EDITABLE
+```
+
+**`evidenceRequirements` are NOT immutable-forever.** `idea-640`'s FULL tier
+(`pause → reset → update`) rewrites a contract wholesale, gated on the row being evidence-free.
+Two node contracts in this arc were rewritten in place rather than re-seeded.
+
+**Topology edges ARE effectively immutable** — only `appendDependsOn`/`appendCompletionDependsOn`,
+at every tier. **Spec fields yield; graph shape does not.** That asymmetry is the residue `bug-433`
+leaves behind, and it is why two nodes in this arc carry misleading ids: retiring them means
+abandoning them, and abandoning a child in `completionDependsOn` bricks the driver — the defect
+under repair, encountered while repairing it.
 
 ### Key code locations (measured on `origin/main`, 2026-07-29)
 
