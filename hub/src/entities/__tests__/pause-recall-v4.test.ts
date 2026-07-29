@@ -172,7 +172,13 @@ describe("pause/recall-v4 authority and exact state", () => {
       ["release", /release rejected: .* is SUSPENDED .*accepts no holder verb/],
       ["complete", /complete rejected: .* is SUSPENDED .*accepts no holder verb/],
       // abandon guards SEPARATELY (not via assertLease) and says so in its own words.
-      ["abandon", /abandon rejected: .* is SUSPENDED .*cannot be abandoned/],
+      // 🔴 bug-424 NARROWED THIS ROW RATHER THAN WIDENING IT. abandon is no longer a BLANKET
+      // refusal on suspension — it now resolves an authority matrix, and this fixture is the
+      // holder-after-STEWARD-suspension row (ARCH paused; HOLDER calls). Per this test's own
+      // rule, the repair pins the ONE mechanism that must refuse, so a refusal for any OTHER
+      // reason — including a regression to the blanket rule — still REDS. Naming the exact
+      // authority reason makes it STRICTLY narrower than the phrase it replaced.
+      ["abandon", /abandon rejected: .* is SUSPENDED .*holder_after_steward_suspension/],
     ];
     expect(expected).toHaveLength(calls.length);
     for (const [index, call] of calls.entries()) {

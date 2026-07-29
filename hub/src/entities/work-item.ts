@@ -1049,7 +1049,7 @@ export interface IWorkItemStore {
    *  matching token) OR the creator (no token — override authority) may abandon; the
    *  creator may also abandon from `ready` (bug-219 fix (c): closes items whose
    *  roleEligibility has no registered seat). */
-  abandonWork(workId: string, agentId: string, opts?: { reason?: string; leaseToken?: string }): Promise<WorkItem | null>;
+  abandonWork(workId: string, agentId: string, opts?: { reason?: string; leaseToken?: string; actorRole?: string }): Promise<WorkItem | null>;
 
   /** Mission-140 pause/recall: ready may be paused by original creator/architect/Director;
    *  claimed|in_progress|blocked may be force-paused only by architect/Director. The one row CAS

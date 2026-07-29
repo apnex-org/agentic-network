@@ -279,6 +279,72 @@ export function isActivelyWithdrawn(w: Pick<WorkItem, "suspended">): boolean {
 }
 
 /**
+ * bug-424 — WHO SUSPENDED THIS ROW. There is no `suspendedBy` field; the suspending
+ * actor is recoverable only from the most recent pause entry in `recallHistory`
+ * (pauseWork appends one, carrying `actor: {agentId, role}`).
+ *
+ * 🔴 RETURNS null WHEN UNKNOWN, AND THE CALLER MUST FAIL CLOSED. Rows paused before
+ * recallHistory existed carry no entry — the same population whose pre-pause phase is
+ * already unrecoverable (see pauseWork). Treating "unknown suspender" as "self" would
+ * hand the holder an override of a withdrawal nobody can prove they made.
+ */
+function lastSuspenderAgentId(w: Pick<WorkItem, "recallHistory">): string | null {
+  const history = w.recallHistory ?? [];
+  for (let i = history.length - 1; i >= 0; i--) {
+    const actor = history[i]?.actor;
+    if (actor?.agentId) return actor.agentId;
+  }
+  return null;
+}
+
+/**
+ * bug-424 — THE DISPOSAL AUTHORITY MATRIX, resolved explicitly rather than by a blanket
+ * exception. The original instruction was "creator, architect, or lease-holder"; steve's
+ * audit rejected it, because an architect may have suspended an ACTIVE HOLDER PRECISELY
+ * TO STOP TERMINAL ACTION, and a blanket holder exception defeats that withdrawal.
+ *
+ *   creator, own suspended-READY row            ALLOW   no lease exists, so a direct
+ *                                                       terminal CAS exposes no second claimant
+ *   architect / director, any suspended row     ALLOW   stewardship
+ *   exact holder after SELF-suspension          ALLOW   their own withdrawal to reverse
+ *   exact holder after STEWARD suspension       DENY    management withdrawal outranks the withdrawn
+ *   suspender unknown                           DENY    fail-closed (see lastSuspenderAgentId)
+ *   unrelated caller                            DENY    always
+ *
+ * ⚠️ THE TWO HOLDER ROWS MUST DIFFER. That is the whole point of the matrix, and it is
+ * why this cannot be answered from `agentId` alone — it needs the SUSPENDER's identity
+ * as well as the caller's.
+ */
+export type DisposalAuthority = { allowed: boolean; reason: string };
+
+export function evaluateSuspendedDisposalAuthority(
+  w: Pick<WorkItem, "suspended" | "status" | "lease" | "createdBy" | "recallHistory">,
+  caller: { agentId: string; role: string },
+  opts: { leaseToken?: string },
+): DisposalAuthority {
+  const isSteward = caller.role === "architect" || caller.role === "director";
+  if (isSteward) return { allowed: true, reason: "steward" };
+
+  const isHolderWithToken = w.lease?.holder === caller.agentId && w.lease?.token === opts.leaseToken;
+  const isCreator = w.createdBy?.agentId === caller.agentId;
+
+  // A suspended READY row has no live lease, so the creator terminating it cannot race a
+  // second claimant. This is the case the claimable-window argument actually covers.
+  if (isCreator && w.status === "ready" && !w.lease) return { allowed: true, reason: "creator_of_suspended_ready" };
+
+  if (isHolderWithToken) {
+    const suspender = lastSuspenderAgentId(w);
+    if (suspender === null) {
+      return { allowed: false, reason: "holder_but_suspender_unknown_fail_closed" };
+    }
+    if (suspender === caller.agentId) return { allowed: true, reason: "holder_after_self_suspension" };
+    return { allowed: false, reason: "holder_after_steward_suspension" };
+  }
+
+  return { allowed: false, reason: "unrelated_caller" };
+}
+
+/**
  * bug-433 — THE ONE SHARED GATE CLASSIFIER. Every graph gate resolves a child
  * through this and nothing else, so the start gate, the completion gate and the
  * stint projection cannot drift apart.
@@ -2106,7 +2172,11 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const readyChildren: WorkItem[] = [];
     for (const childId of childIds) {
       const child = await this.getCurrentProjectionItem(childId);
-      if (!child || isFailedGateSealed(child) || child.status !== "ready") continue;
+      // bug-423: a PARKED child keeps status "ready", so without the parked check
+      // getNextAction offered fenced work as the next action. Suspension is withdrawal
+      // from execution — it must be part of the shared claimability model, not patched
+      // at one call site.
+      if (!child || isFailedGateSealed(child) || isParkedFromExecution(child) || child.status !== "ready") continue;
       if (role && child.roleEligibility.length > 0 && !child.roleEligibility.includes(role)) continue;
       if (child.dependsOn.length > 0 && (await this.unmetDependencies(child.dependsOn)).length > 0) continue;
       readyChildren.push(child);
@@ -3606,12 +3676,12 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     });
   }
 
-  async abandonWork(workId: string, agentId: string, opts?: { reason?: string; leaseToken?: string }): Promise<WorkItem | null> {
+  async abandonWork(workId: string, agentId: string, opts?: { reason?: string; leaseToken?: string; actorRole?: string }): Promise<WorkItem | null> {
     return this.tryCasUpdate(workId, (w) => {
       this.assertNotFailedSealed(w);
       const isHolderWithToken = w.lease?.holder === agentId && w.lease?.token === opts?.leaseToken;
       const isCreator = w.createdBy?.agentId === agentId;
-      if (!isHolderWithToken && !isCreator) {
+      if (!isHolderWithToken && !isCreator && !(opts?.actorRole === "architect" || opts?.actorRole === "director")) {
         throw new TransitionRejected(`abandon requires the lease-holder (with matching token) or the creator, not ${agentId}`);
       }
       // 🔴 idea-640 / nodefix0 — `abandonWork` IS THE ONE HOLDER VERB THAT DOES NOT ROUTE THROUGH
@@ -3631,11 +3701,28 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       // nodestate0: DISPOSAL reads `isActivelyWithdrawn`, NOT `isParkedFromExecution`.
       // The guard protects a LIVE withdrawal decision; it must not also refuse a row
       // whose only remaining mark of suspension is a legacy phase no verb can clear.
+      // bug-424 — a suspended row is no longer BLANKET-refused. Authority is resolved by
+      // the matrix, which distinguishes a holder reversing their OWN withdrawal from a
+      // holder overriding a STEWARD's. A DIRECT terminal CAS: never internally unpause,
+      // which would make the row momentarily claimable inside a call meant to end it.
       if (isActivelyWithdrawn(w)) {
-        throw new TransitionRejected(
-          `abandon rejected: ${w.id} is SUSPENDED (status=${w.status}); a suspended row is withdrawn from execution and cannot be abandoned. Unpause it first — abandoning is terminal.`,
+        const authority = evaluateSuspendedDisposalAuthority(
+          w,
+          { agentId, role: opts?.actorRole ?? "unknown" },
+          { leaseToken: opts?.leaseToken },
         );
+        if (!authority.allowed) {
+          throw new TransitionRejected(
+            `abandon rejected: ${w.id} is SUSPENDED (status=${w.status}) and ${agentId} may not dispose of it (${authority.reason}). ` +
+            `A steward's withdrawal outranks the withdrawn party; unpause it first, or have the suspending party or an architect abandon it.`,
+          );
+        }
       }
+      // ⚠️ SECOND, INDEPENDENT REFUSAL — deliberately UNCHANGED. RELEASABLE_PHASES excludes
+      // "paused", so a LEGACY `status:"paused"` row is still refused here even with the
+      // matrix satisfied. That population is currently EMPTY (re-verified: zero rows,
+      // truncated:false at limit 500) and per the ruling NO MIGRATION is built for it.
+      // Recorded so the next reader does not assume this change freed it.
       if (!RELEASABLE_PHASES.includes(w.status) && !(w.status === "ready" && isCreator)) {
         throw new TransitionRejected(`abandon requires an active claim (or the creator from ready), was ${w.status}`);
       }

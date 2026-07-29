@@ -9,6 +9,7 @@
  */
 import type { NextActionProjection, WorkItem, WorkItemBlockedOn, WorkItemPhase } from "../entities/work-item.js";
 import type { Selector } from "../state.js";
+import { isParkedFromExecution } from "../entities/work-item-repository-substrate.js";
 
 export type DriverProgressEventKind =
   | "workitem_transition"
@@ -59,6 +60,9 @@ export interface DriverRoleLaneDispatchPayload {
 
 export interface DriverChildProgressFingerprint {
   status: WorkItemPhase | "missing";
+  /** bug-423 F9 face 3: suspension leaves status/holder/evidence untouched, so without
+   *  this field pause and unpause are INVISIBLE to progress detection. */
+  suspended?: boolean;
   leaseHolder: string | null;
   blockedOnKey: string | null;
   evidenceCount: number;
@@ -100,7 +104,11 @@ export type DriverLivenessWatchdogReason =
   | "caller_gated"
   | "no_graph_action"
   | "threshold_not_elapsed"
-  | "no_progress_with_ready_action";
+  | "no_progress_with_ready_action"
+  // bug-423 F9: DELIBERATELY PARKED is a different state from "nobody is picking up
+  // available work". Collapsing them is what made the watchdog either cry wolf over a
+  // fenced arc or (worse) go silent on a real stall.
+  | "all_remaining_work_parked";
 
 export interface DriverLivenessActionRef {
   kind: "driver_next_action" | "role_lane_ready";
@@ -120,6 +128,9 @@ export interface DriverLivenessWatchdogVerdict {
   childStatuses: Array<{
     id: string;
     status: WorkItemPhase;
+    /** bug-423: suspension leaves `status` untouched, so a fenced row reports `ready`.
+     *  This field is what stops that reading as claimable. */
+    suspended: boolean;
     leaseHolder: string | null;
     blockedOn: WorkItemBlockedOn | null;
   }>;
@@ -150,6 +161,10 @@ export function evaluateDriverLivenessWatchdog(input: DriverLivenessWatchdogInpu
   const childStatuses = input.children.map((child) => ({
     id: child.id,
     status: child.status,
+    // 🔴 bug-423: a projection reporting status:"ready" for a FENCED row lies to every
+    // consumer. Suspension leaves `status` untouched, so without this field the two are
+    // indistinguishable in the verdict.
+    suspended: isParkedFromExecution(child),
     leaseHolder: child.lease?.holder ?? null,
     blockedOn: child.blockedOn,
   }));
@@ -164,7 +179,9 @@ export function evaluateDriverLivenessWatchdog(input: DriverLivenessWatchdogInpu
     ...extra,
   });
 
-  if (!ACTIVE_DRIVER_STATES.has(input.driver.status) || !input.driver.lease) {
+  // 🔴 bug-423 F9 face 2: a SUSPENDED DRIVER keeps its active status and its lease, so
+  // it passed this test and the watchdog kept evaluating an arc nobody was driving.
+  if (isParkedFromExecution(input.driver) || !ACTIVE_DRIVER_STATES.has(input.driver.status) || !input.driver.lease) {
     return baseVerdict("ok", "driver_not_active");
   }
 
@@ -194,6 +211,17 @@ export function evaluateDriverLivenessWatchdog(input: DriverLivenessWatchdogInpu
 
     if (hasCallerGate(input.driverNextAction) || (input.roleLaneNextActions ?? []).some((lane) => hasCallerGate(lane.projection))) {
       return baseVerdict("suppressed", "caller_gated");
+    }
+
+    // 🔴 bug-423: "everything left is DELIBERATELY PARKED" is a DIFFERENT state from
+    // "nobody is picking up available work", and collapsing them is what made this
+    // watchdog untrustworthy in both directions. This is ACCURACY, NOT SUPPRESSION —
+    // the verdict is still `ok`, but it now says WHY, and it only fires when EVERY
+    // remaining child is parked. An arc with a parked child AND genuinely claimable
+    // sibling work does not reach here: it takes the ready-action path above.
+    const remaining = input.children.filter((child) => child.status !== "done" && child.status !== "abandoned");
+    if (remaining.length > 0 && remaining.every((child) => isParkedFromExecution(child))) {
+      return baseVerdict("ok", "all_remaining_work_parked");
     }
 
     return baseVerdict("ok", "no_graph_action");
@@ -273,6 +301,11 @@ export function isTypedRoleLaneDispatchProgressEvent(
 export function fingerprintWorkItemForDriverProgress(item: WorkItem): DriverChildProgressFingerprint {
   return {
     status: item.status,
+    // 🔴 bug-423 F9 face 3: WITHOUT THIS, pause/unpause is INVISIBLE to progress
+    // detection whenever phase, holder and evidence are unchanged — which is the normal
+    // case, since suspension leaves all three alone. A fence and a lift both registered
+    // as "nothing happened".
+    suspended: item.suspended === true,
     leaseHolder: item.lease?.holder ?? null,
     blockedOnKey: blockedOnKey(item.blockedOn),
     evidenceCount: item.evidence.length,
@@ -349,6 +382,11 @@ function hasCallerGate(projection: NextActionProjection): boolean {
 }
 
 function isLiveInFlight(child: WorkItem, now: string): boolean {
+  // 🔴 bug-423 F9 face 1: a SUSPENDED child RETAINS its lease, so without this the
+  // watchdog read it as live in-flight work and SUPPRESSED the warning — silence caused
+  // by the very act of parking. Suspension is withdrawal from execution; a withdrawn row
+  // is not in flight however healthy its lease looks.
+  if (isParkedFromExecution(child)) return false;
   if (!IN_FLIGHT_CHILD_STATES.has(child.status)) return false;
   if (!child.lease) return false;
   return parseTime(child.lease.expiresAt) > parseTime(now);
