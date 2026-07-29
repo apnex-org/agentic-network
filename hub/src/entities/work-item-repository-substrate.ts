@@ -239,8 +239,43 @@ const FIELD_TIER = {
   evidenceRequirements: "full",
 } satisfies Record<WorkItemUpdateSetField, EditTier>;
 
-function isSuspended(w: Pick<WorkItem, "suspended" | "status">): boolean {
+/**
+ * nodestate0 — ONE PREDICATE SPLIT INTO TWO BY INTENT. Named for what they DEFEND,
+ * not for what they match: a predicate named after its shape is exactly how the
+ * original (`isSuspended`) drifted into serving two opposite jobs.
+ *
+ * ── PROTECTION ─────────────────────────────────────────────────────────────────
+ * Defends a PARKED ROW from being worked: claimed, edited, offered in a queue, or
+ * swept. Covering BOTH populations is CORRECT here — a row parked under either
+ * representation must not be executed, and which representation it uses is
+ * irrelevant to that question.
+ */
+export function isParkedFromExecution(w: Pick<WorkItem, "suspended" | "status">): boolean {
   return w.suspended === true || w.status === "paused";
+}
+
+/**
+ * ── DISPOSAL ───────────────────────────────────────────────────────────────────
+ * Defends A LIVE WITHDRAWAL DECISION from being overridden by a terminal one.
+ * `abandonWork`'s own rationale states the intent: *"the decision to end the work
+ * should be taken on a live row, not on one somebody else has withdrawn from
+ * execution."* What that protects is the WITHDRAWER — someone currently holding
+ * the row back — so it must key on the ATTRIBUTE, which is what a withdrawal sets
+ * and what `unpause` clears.
+ *
+ * 🔴 IT MUST NOT READ `status === "paused"`, AND THAT IS bug-424's DEADLOCK:
+ * `unpause` clears the ATTRIBUTE and NOTHING EVER CLEARS THE PHASE. A legacy row
+ * therefore unpauses, still matches the protection predicate via its phase, and
+ * abandon refuses it FOREVER. Nobody is withdrawing it any more; the row is simply
+ * wearing a phase no verb can take off.
+ *
+ * ⚠️ THIS SPLIT ALONE DOES NOT FREE THE LEGACY POPULATION — see `abandonWork`,
+ * where a second, independent refusal (`RELEASABLE_PHASES`) still excludes
+ * `"paused"`. That half is `impl_disposal`'s owner-exception work, deliberately
+ * NOT done here.
+ */
+export function isActivelyWithdrawn(w: Pick<WorkItem, "suspended">): boolean {
+  return w.suspended === true;
 }
 
 /** Phases from which release_work / abandon_work are legal (FSM §3.1). review is
@@ -721,7 +756,7 @@ export function accrueExitingState(
   // 35,792,638 ms as a SEPARATE bucket, which is how a ten-hour wedge stopped being counted as engineer
   // work-time. Three distinguishable things, all real: RESERVED (`claimed`), EXECUTING (`in_progress`),
   // SUSPENDED (`paused`). Collapsing any two loses a fact somebody will later need.
-  const bucket = isSuspended(w) ? "paused" : w.status;
+  const bucket = isParkedFromExecution(w) ? "paused" : w.status;
   // The exiting status is always a non-terminal DWELL state (a transition only leaves a dwell
   // state; terminal done/abandoned are never the FROM-state). Guard defensively so a non-bucket
   // status is a no-op accrual, never a throw mid-CAS.
@@ -1289,7 +1324,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // SUSPENDED row is now editable in a bounded way instead of being frozen outright, and a LIVE row
     // is refused for a reason that names the remedy.
     // idea-640 / nodefix0 — BEHAVIOUR-PRESERVING ONLY. `before.status === "paused"` became
-    // `isSuspended(before)`, and NOTHING ELSE CHANGED HERE.
+    // `isParkedFromExecution(before)`, and NOTHING ELSE CHANGED HERE.
     //
     // 🔴 THE THREE-TIER PREDICATE IS DELIBERATELY NOT BUILT AT THIS SITE, AND THE REASON IS A CONFLICT
     // BETWEEN TWO RATIFIED DECISIONS, NOT AN IMPLEMENTATION GAP.
@@ -1343,7 +1378,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     //   no lease                 -> ready/unclaimed OR post-reset FULL tier -> ALLOWED
     //   lease + suspended        -> MINOR tier                              -> ALLOWED (these fields)
     //   lease + NOT suspended    -> LIVE AND HELD                           -> REFUSED
-    const suspendedForEdit = isSuspended(before);
+    const suspendedForEdit = isParkedFromExecution(before);
     // systemProjectionSeam: see appendSystemProjectionEdge. Skips ONLY this tier refusal, and only
     // for a mutation the seam built itself (no `set` can reach here from that path).
     if (!systemProjectionSeam && changesClaimantAuthority && (activePin.mode === "generation" || (!!before.lease && !suspendedForEdit))) {
@@ -1366,7 +1401,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // ships, so the shape is preserved verbatim and ONE defect is repaired:
     //
     //   WAS   ["ready","paused"].includes(item.status)      <- a PHASE check
-    //   NOW   before.status === "ready" || isSuspended()    <- the two-axis repair
+    //   NOW   before.status === "ready" || isParkedFromExecution()    <- the two-axis repair
     //
     // That phase check is an EIGHTH instance of the phase-vs-attribute defect this arc closed seven
     // of. It was inert ONLY because `revise_work` has no internal caller — which is precisely why no
@@ -1602,7 +1637,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // its recallHistory) for no reason. Narrowing here is what lets the pre-existing
     // `pause-recall-frozen-authority-v4` deep-equal contract test stay green WITHOUT EDITING IT, which
     // is the evidence that this change preserves behaviour rather than the evidence being my say-so.
-    if (isSuspended(next) && (next.recallHistory?.length ?? 0) > 0) {
+    if (isParkedFromExecution(next) && (next.recallHistory?.length ?? 0) > 0) {
       const history = [...next.recallHistory!];
       const lastIndex = history.length - 1;
       const last = history[lastIndex]!;
@@ -2010,7 +2045,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (!child) {
         children.push({ id: childId, status: "missing", leaseHolder: null, stateDurations: { ...DEFAULT_STATE_DURATIONS } });
       } else {
-        children.push({ id: childId, status: child.status, suspended: isSuspended(child), leaseHolder: child.lease?.holder ?? null, stateDurations: child.stateDurations });
+        children.push({ id: childId, status: child.status, suspended: isParkedFromExecution(child), leaseHolder: child.lease?.holder ?? null, stateDurations: child.stateDurations });
       }
     }
     // 🔴 idea-640: BUCKET ON THE PAIR, NOT ON THE PHASE. Suspension no longer moves the phase, so
@@ -2020,7 +2055,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // to the architect who withdrew it. A field that silently means nothing is survivable; a field
     // that confidently means the opposite is not.
     // The rule is IDENTICAL to the one already ratified for duration accrual (accrueExitingState:
-    // `isSuspended(w) ? "paused" : w.status`), deliberately — two different bucketings of the same
+    // `isParkedFromExecution(w) ? "paused" : w.status`), deliberately — two different bucketings of the same
     // two-axis state is how the histogram and the dwell-time drift apart. The histogram still sums
     // to `total`, and `paused` means what it has always meant to a reader: withdrawn from execution.
     const countOf = (s: string) => children.filter((c) => (c.suspended ? "paused" : c.status) === s).length;
@@ -2134,7 +2169,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const w = await this.getWorkItem(workId);
     if (!w) return null;
     const status = w.status;
-    const suspended = isSuspended(w);
+    const suspended = isParkedFromExecution(w);
     const isHolder = !!w.lease && w.lease.holder === caller.agentId;
     const pin = this.currentness.currentPin()!;
     const observation = pin.mode === "generation" ? { observedTopologyGeneration: pin.head.generation, observedTopologyHash: pin.head.topologyHash } : {};
@@ -2393,8 +2428,8 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // is the projection half of a defence-in-depth pair — the scan must not advertise what the verb
     // will refuse, or it manufactures exactly the silent friction idea-353 exists to kill.
     const listed = current
-      ? current.filter((item) => item.status === "ready" && !isSuspended(item))
-      : (await this.substrate.list<WorkItem>(KIND, { filter: { status: "ready" }, limit: READY_SCAN_CAP })).items.map(cloneWorkItem).filter((item) => !isSuspended(item));
+      ? current.filter((item) => item.status === "ready" && !isParkedFromExecution(item))
+      : (await this.substrate.list<WorkItem>(KIND, { filter: { status: "ready" }, limit: READY_SCAN_CAP })).items.map(cloneWorkItem).filter((item) => !isParkedFromExecution(item));
     const truncated = !current && listed.length >= READY_SCAN_CAP;
     const ready = listed;
     const nonFailed = ready.filter((w) => !isFailedGateSealed(w));
@@ -2475,7 +2510,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
           // withdrawn row sits in the claimable pool and someone picks it up.
           //
           // CONSEQUENCE: unpause the row before claiming it. Nothing has been changed by this call.
-          if (isSuspended(w)) {
+          if (isParkedFromExecution(w)) {
             throw new TransitionRejected(
               `claim rejected: ${w.id} is SUSPENDED (status=${w.status}); a suspended row is withdrawn from execution and cannot be claimed. Unpause it first.`,
             );
@@ -2803,7 +2838,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
         // in the allowed set, so a second pause would append a duplicate recallHistory entry and mint a
         // second holder notice for a row nobody resumed. FOURTH instance of this class in one change:
         // a guard that was satisfied by the phase and silently stops being satisfied by anything.
-        if (isSuspended(w)) {
+        if (isParkedFromExecution(w)) {
           throw new TransitionRejected(`pause rejected: ${w.id} is ALREADY suspended (status=${w.status}); unpause it before suspending again`);
         }
         if (w.status === "ready" && w.lease) throw new TransitionRejected(`pause rejected corrupt ready row ${w.id}: unexpected live lease`);
@@ -3029,7 +3064,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       // suspension left the phase, so unpause would have refused every row it exists to resume — the
       // third instance of this class in one change (reset and claim were the others). The legacy
       // `status: "paused"` population is covered by the same predicate.
-      if (!isSuspended(w)) throw new TransitionRejected(`unpause requires a SUSPENDED row; ${w.id} is not suspended (status=${w.status})`);
+      if (!isParkedFromExecution(w)) throw new TransitionRejected(`unpause requires a SUSPENDED row; ${w.id} is not suspended (status=${w.status})`);
       const lastRecall = (w.recallHistory ?? []).at(-1);
       const currentAuthority = this.deriveFrozenRecallAuthority(w);
       // work-553 / bug-390: compare against the LATEST SANCTIONED baseline, falling back to the
@@ -3131,7 +3166,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       // refused EVERY row suspended under the new model — reset would never fire again, silently, on
       // the exact rows it exists for. The legacy `status: "paused"` population is covered by the same
       // predicate, so both remain resettable.
-      if (!isSuspended(w)) {
+      if (!isParkedFromExecution(w)) {
         throw new TransitionRejected(
           `reset requires a SUSPENDED row; ${w.id} is not suspended (status=${w.status}).\n` +
           `MECHANICS: reset revokes the lease and nullifies submitted evidence. It is legal ONLY from ` +
@@ -3490,7 +3525,10 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       //
       // CONSEQUENCE: unpause before abandoning. The decision to end the work should be taken on a live
       // row, not on one somebody else has withdrawn from execution.
-      if (isSuspended(w)) {
+      // nodestate0: DISPOSAL reads `isActivelyWithdrawn`, NOT `isParkedFromExecution`.
+      // The guard protects a LIVE withdrawal decision; it must not also refuse a row
+      // whose only remaining mark of suspension is a legacy phase no verb can clear.
+      if (isActivelyWithdrawn(w)) {
         throw new TransitionRejected(
           `abandon rejected: ${w.id} is SUSPENDED (status=${w.status}); a suspended row is withdrawn from execution and cannot be abandoned. Unpause it first — abandoning is terminal.`,
         );
@@ -4025,7 +4063,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const current = await this.currentGenerationItems(this.currentness.currentPin()!);
     // idea-640 / nodefix0 — SUSPENSION IS EXCLUDED IN CODE ON BOTH BRANCHES, NOT IN THE QUERY.
     //
-    // MECHANICS: the store filter narrows on phase + expiry; `isSuspended` then drops suspended rows
+    // MECHANICS: the store filter narrows on phase + expiry; `isParkedFromExecution` then drops suspended rows
     // from whatever came back. The exclusion is applied identically to the in-memory and the store
     // branch, and again at the act (`expireLease`) — defence in depth at scan AND act, as before.
     //
@@ -4040,13 +4078,13 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // CONSEQUENCE: a suspended row may be FETCHED and then discarded. That is a bounded cost — the
     // suspended population is small (28 rows measured live) — paid to keep the guard verifiable.
     if (current) {
-      return current.filter((item) => !isSuspended(item) && LEASE_HELD_PHASES.includes(item.status) && !!item.lease && item.lease.expiresAt < nowISO).slice(0, limit);
+      return current.filter((item) => !isParkedFromExecution(item) && LEASE_HELD_PHASES.includes(item.status) && !!item.lease && item.lease.expiresAt < nowISO).slice(0, limit);
     }
     const { items } = await this.substrate.list<WorkItem>(KIND, {
       filter: { status: { $in: [...LEASE_HELD_PHASES] }, "status.lease.expiresAt": { $lt: nowISO } },
       limit,
     });
-    const unsuspended = items.map(cloneWorkItem).filter((item) => !isSuspended(item));
+    const unsuspended = items.map(cloneWorkItem).filter((item) => !isParkedFromExecution(item));
     return this.currentness.filterCurrent(unsuspended, this.currentness.currentPin()!);
   }
 
@@ -4066,12 +4104,12 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       const w = cloneWorkItem(existing.entity);
       this.currentness.assertCurrent(w, this.currentness.currentPin()!);
       // race-safe re-check: only sweep an item that is STILL lease-held AND still expired.
-      // idea-640 / nodefix0: `!isSuspended(w)` is the ACT-side half of the sweeper guard. Before the
+      // idea-640 / nodefix0: `!isParkedFromExecution(w)` is the ACT-side half of the sweeper guard. Before the
       // attribute model this was free — `paused` is absent from LEASE_HELD_PHASES — but a suspended row
       // now keeps its lifecycle phase, so that protection is gone and must be stated. THE SCAN ALREADY
       // EXCLUDES THESE; this is the second, independent line, because a row can be suspended between
       // the scan and the act.
-      if (isSuspended(w) || !LEASE_HELD_PHASES.includes(w.status) || !w.lease || w.lease.expiresAt >= nowISO) {
+      if (isParkedFromExecution(w) || !LEASE_HELD_PHASES.includes(w.status) || !w.lease || w.lease.expiresAt >= nowISO) {
         return "skipped";
       }
 
@@ -4296,7 +4334,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     //
     // CONSEQUENCE: unpause the row to resume. The lease, holder and token are all retained across the
     // suspension, so nothing needs re-claiming.
-    if (isSuspended(w)) {
+    if (isParkedFromExecution(w)) {
       throw new TransitionRejected(
         `${verb} rejected: ${w.id} is SUSPENDED (status=${w.status}); a suspended row is withdrawn from execution and accepts no holder verb. Unpause it to resume — your lease is retained.`,
       );
