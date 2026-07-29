@@ -182,23 +182,6 @@ jobs:
           npm run build --workspace=@apnex/storage-provider --workspace=@apnex/repo-event-bridge --workspace=hub
           npm run build --workspace=@apnex/workgraph-sim
       - name: Test
-        # 🔴 NON-BLOCKING WHILE THE SIM IS INCOMPLETE — Director ruling 2026-07-29,
-        # verbatim: "workgraph-sim is not fully completed yet, can ignore for now".
-        #
-        # The job STILL RUNS and its result stays visible; only its power to block a
-        # merge is suspended. Deleting the cell or dropping it from the aggregator
-        # would have removed the signal too — an unfinished oracle is worth reading
-        # even when it is not worth obeying.
-        #
-        # OBSERVED: green on #722 (bug-433 gate change), red on #723 (bug-424/423
-        # authority threading) — adjacent commits. The likeliest cause is that the
-        # sim's harness was never finished to supply the caller `role` that
-        # `abandonWork` now requires, i.e. a fidelity gap in the simulator rather
-        # than a defect in the product change.
-        #
-        # 🔴 REVIVAL: restore blocking by deleting `continue-on-error` once the sim
-        # is complete and green. Tracked as bug-455; the platform is idea-449.
-        continue-on-error: true
         run: npm test --workspace=@apnex/workgraph-sim
 
   # ── Blocking: ois shell regressions (piuplift0 p1 / PR #606) ─────────
