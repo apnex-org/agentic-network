@@ -68,7 +68,82 @@ describe("Steve nodestate0 verify_build falsifiers — post-fix forms", () => {
     expect(abandoned!.suspended).toBe(false);
   });
 
-  it("criterion 4/F9-3: suspension-only fingerprint change is reported as child_state progress", () => {
+  // 🔴 F2 BAR REVISED BY THE VERIFIER 13:42Z, AFTER HE ACCEPTED THE FIDELITY FINDING BELOW.
+  // The stepped-clock fixture that follows steps `enteredCurrentStateAt` past the baseline, so it
+  // clears the dwell guard BY CONSTRUCTION and CANNOT observe bug-461 -- the real-row case where
+  // pause and baseline collide in the same instant and the guard swallows the change (measured:
+  // 28/40 real pauses missed). It was authored to falsify the COMPARATOR defect and does that
+  // precisely, so it REMAINS as narrower regression evidence -- but per his ruling it CANNOT
+  // DISCHARGE F2 ALONE. These two coupling cases are now the load-bearing half of criterion 4.
+  //
+  // A fixture that supplies the condition it is meant to test cannot fail on that condition.
+
+  it("criterion 4/F9-3 coupling: a REAL pauseWork is reported as child_state progress", async () => {
+    const { repo } = fixture();
+    const w = await item(repo);
+    const before = (await repo.getWorkItem(w.id))!;
+    await repo.pauseWork({ workId: w.id, operationId: "coupling", reason: "real pause" }, CREATOR);
+    const after = (await repo.getWorkItem(w.id))!;
+
+    const lease = { holder: "h", token: "t", claimedAt: "2026-01-01T00:00:00Z", expiresAt: "2099-01-01T00:00:00Z", heartbeatAt: "2026-01-01T00:00:00Z" };
+    const driver = { id: "driver", status: "in_progress", suspended: false, lease,
+      blockedOn: null, evidence: [], enteredCurrentStateAt: before.enteredCurrentStateAt } as never;
+
+    const progress = findDriverProgress({
+      driver,
+      children: [after as never],
+      driverNextAction: { arcId: "driver", nextAction: null, readyCandidates: 0, hasChildren: true } as never,
+      baseline: {
+        // baselined while the row was LIVE, then the row was suspended -- the real sequence
+        recordedAt: before.enteredCurrentStateAt,
+        driverFingerprint: fingerprintWorkItemForDriverProgress(driver),
+        childFingerprints: { [w.id]: fingerprintWorkItemForDriverProgress(before) },
+      },
+      now: "2099-01-01T00:00:00Z",
+      thresholdMs: 1,
+    } as never);
+
+    expect(progress).toEqual({
+      source: "snapshot",
+      kind: "child_state",
+      childId: w.id,
+    });
+  });
+
+  it("criterion 4/F9-3 coupling: pause and baseline at the SAME instant still report child_state progress", () => {
+    // LOAD-BEARING per the verifier: reverting the single dwell-bypass mechanism must red THIS.
+    // The realistic case above passes or fails on whether the clock happens to tick, so it cannot
+    // be relied on to pin the guard; this one pins `entered === baselineAt` exactly, making the
+    // dwell equality the thing under test rather than a race.
+    const T = "2026-01-01T00:00:00.000Z";
+    const lease = { holder: "h", token: "t", claimedAt: T, expiresAt: "2099-01-01T00:00:00Z", heartbeatAt: T };
+    const driver = { id: "driver", status: "in_progress", suspended: false, lease,
+      blockedOn: null, evidence: [], enteredCurrentStateAt: T } as never;
+    const beforeChild = { id: "child", status: "ready", suspended: false, lease: null,
+      blockedOn: null, evidence: [], enteredCurrentStateAt: T } as never;
+    const afterChild = { ...(beforeChild as object), suspended: true } as never;
+
+    const progress = findDriverProgress({
+      driver,
+      children: [afterChild],
+      driverNextAction: { arcId: "driver", nextAction: null, readyCandidates: 0, hasChildren: true } as never,
+      baseline: {
+        recordedAt: T, // identical to the child's dwell marker: `entered <= baselineAt` is TRUE
+        driverFingerprint: fingerprintWorkItemForDriverProgress(driver),
+        childFingerprints: { child: fingerprintWorkItemForDriverProgress(beforeChild) },
+      },
+      now: "2026-01-01T12:00:00Z",
+      thresholdMs: 1,
+    } as never);
+
+    expect(progress).toEqual({
+      source: "snapshot",
+      kind: "child_state",
+      childId: "child",
+    });
+  });
+
+  it("criterion 4/F9-3 [narrower regression evidence]: stepped-clock suspension-only change is reported as child_state progress", () => {
     const driver = {
       id: "driver", status: "in_progress", suspended: false,
       lease: { holder: "h", token: "t", claimedAt: "2026-01-01T00:00:00Z", expiresAt: "2099-01-01T00:00:00Z", heartbeatAt: "2026-01-01T00:00:00Z" },
