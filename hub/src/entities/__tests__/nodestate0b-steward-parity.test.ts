@@ -133,6 +133,36 @@ describe("criterion 3 — the disposal decision agrees across matrix, legal_move
     expectAgreement(v, false);
   });
 
+  it("🔴 bug-462 SCOPE: a steward over an UNSUSPENDED ready row is refused by all three", async () => {
+    // THE CONTEXT THIS TABLE ORIGINALLY OMITTED. Every row above suspends first, so the
+    // steward arms were only ever exercised WITH the withdrawal present — and the fix that
+    // satisfied them dropped the suspension conjunct without a single row noticing.
+    // The helper compares all three LAYERS; it cannot tell me I forgot a CONTEXT. Enumerating
+    // (actor x context), not just actor, is the part that was missing.
+    const repo = fixture();
+    const w = await item(repo);
+    expect((await repo.getWorkItem(w.id))!.suspended).not.toBe(true);
+    expectAgreement(await disposalVerdicts(repo, w.id, STEWARD), false);
+    expect((await repo.getWorkItem(w.id))!.status).toBe("ready"); // and nothing was terminalized
+  });
+
+  it("🔴 bug-462 SCOPE: a DIRECTOR over an UNSUSPENDED ready row is refused by all three", async () => {
+    const repo = fixture();
+    const w = await item(repo);
+    expectAgreement(await disposalVerdicts(repo, w.id, DIRECTOR), false);
+    expect((await repo.getWorkItem(w.id))!.status).toBe("ready");
+  });
+
+  it("🟢 CONTROL: the CREATOR arm from ready is UNCONDITIONAL — it must NOT have been narrowed", async () => {
+    // bug-219 fix (c): a role-gated ready row with no eligible seat is otherwise unclaimable
+    // and un-closeable, so the creator needs no suspension. Narrowing BOTH arms to `suspended`
+    // would have satisfied the scope bar and reintroduced that dead-end.
+    const repo = fixture();
+    const w = await item(repo);
+    expect((await repo.getWorkItem(w.id))!.suspended).not.toBe(true);
+    expectAgreement(await disposalVerdicts(repo, w.id, CREATOR), true);
+  });
+
   it("🟢 an UNRELATED caller is refused by all three", async () => {
     const repo = fixture();
     const w = await item(repo);
