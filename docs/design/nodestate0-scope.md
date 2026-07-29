@@ -111,7 +111,7 @@ hub/src/entities/work-item-repository-substrate.ts
   :242   isSuspended            suspended === true || status === "paused"
   :839   isFailedGateSealed     effectiveDisposition==="failed_sealed" || failedGateSeal!=null
                                 || hasActiveVerifierFail(item)
-  :1249  applyWorkItemMutation  } 
+  :1249  applyWorkItemMutation  }
   :1926  computeCompletionProgress   completion gate — ONE source of truth for
                                      complete_work AND the get_work projection
   :2464  claimWorkItem          }
