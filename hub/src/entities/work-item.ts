@@ -156,6 +156,12 @@ export interface StintChild {
    *  management attribute. A reader that looks at `status` alone will read a withdrawn row as a
    *  live one — which is exactly what statusCounts did until this field existed. */
   suspended?: boolean;
+  /** bug-433 / nodestate0b F4: a failed-sealed child still classifies `pending` (it must keep
+   *  holding the gate shut), so the phase alone cannot distinguish it from work still in flight.
+   *  The projection carries the flag because `StintChild` does not carry the seal fields
+   *  (`effectiveDisposition` / `failedGateSeal`) that `isFailedGateSealed` reads — without it,
+   *  the stint's `failed` set could not be computed in parity with computeCompletionProgress. */
+  failedSealed?: boolean;
   leaseHolder: string | null;
   /** idea-384 Part A (work-98): per-state wall-clock (ms) for this child — the per-node
    *  duration surface on get_current_stint. Zeroed for a `missing` child. (PART B's
@@ -185,12 +191,19 @@ export interface StintProjection {
     total: number;
     pending: string[];
     declared: string[];
+    /** nodestate0b F4: the five sets are separately named because counts plus one mixed
+     *  `pending` array cannot tell a FAILED child from one merely still in flight. */
+    active: string[];
     droppedAbandoned: string[];
+    failed: string[];
     missing: string[];
   };
-  /** tracks the ARC completion-gate (children>0): `total>0 && done===total` — complete_work would
-   *  pass it (the one-enforced-close surface). A LEAF (children=0) has NO completion-gate (completes
-   *  freely), so gateOpen:false there means "no arc-gate to be open", NOT "blocked". */
+  /** tracks the ARC completion-gate: `declared>0 && pending.length===0` — complete_work would pass
+   *  it (the one-enforced-close surface). A LEAF (declared=0) has NO completion-gate (completes
+   *  freely), so gateOpen:false there means "no arc-gate to be open", NOT "blocked".
+   *  🔴 nodestate0b F3: was `total>0 && done===total`, which reported FALSE on an all-abandoned arc
+   *  while complete_work ACCEPTED it. The discriminator is DECLARED topology, not the active count —
+   *  `total===0` is reached both by a leaf and by an all-abandoned arc, and only the latter opens. */
   gateOpen: boolean;
   /** children actively held (claimed + in_progress + review). */
   inFlight: number;

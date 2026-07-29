@@ -317,9 +317,29 @@ function hasSnapshotProgress(
   baselineFingerprint: DriverChildProgressFingerprint | undefined,
   baselineAt: string,
 ): boolean {
+  const current = fingerprintWorkItemForDriverProgress(item);
+
+  // 🔴 bug-461 / nodestate0b F2 — SUSPENSION IS AN ATTRIBUTE FLIP, NOT A PHASE DWELL, SO THE
+  // DWELL GUARD BELOW MUST NOT ADJUDICATE IT.
+  //
+  // MEASURED, not reasoned: with the comparator fix alone, 28 of 40 real `pauseWork` calls were
+  // still MISSED. `enteredCurrentStateAt` only moves if a millisecond happens to tick between the
+  // row entering its phase and being suspended — suspension does not change the phase, so the
+  // marker is not advanced BY the suspension, only incidentally by the clock. At substrate speed
+  // the two land in the same millisecond ~70% of the time and `entered <= baselineAt` holds, so
+  // the function returned false BEFORE ever reaching the comparator.
+  //
+  // WHY BYPASSING THE GUARD IS CORRECT HERE: the guard exists to stop `updatedAt`/heartbeat churn
+  // on a still-`ready` row reading as progress. A suspension FLIP is the opposite of churn — it is
+  // a deliberate management act and the single most decision-relevant thing that can happen to a
+  // row a liveness watchdog is watching. It is graph-factual by construction: the field only
+  // changes when someone withdrew or restored the row.
+  //
+  // This is checked BEFORE the dwell return; every other field stays behind it, unchanged.
+  if (baselineFingerprint && current.suspended !== baselineFingerprint.suspended) return true;
+
   if (parseTime(item.enteredCurrentStateAt) <= parseTime(baselineAt)) return false;
 
-  const current = fingerprintWorkItemForDriverProgress(item);
   if (!baselineFingerprint) {
     // A state other than ready after the baseline is a graph transition.  A
     // still-ready row may simply be old ready work with an updatedAt churn and
@@ -333,7 +353,15 @@ function hasSnapshotProgress(
   return current.status !== baselineFingerprint.status
     || current.leaseHolder !== baselineFingerprint.leaseHolder
     || current.blockedOnKey !== baselineFingerprint.blockedOnKey
-    || current.evidenceCount !== baselineFingerprint.evidenceCount;
+    || current.evidenceCount !== baselineFingerprint.evidenceCount
+    // 🔴 bug-423 F9-3 / nodestate0b F2 — THE FIELD WAS STORED AND NEVER READ.
+    // `fingerprintWorkItemForDriverProgress` has carried `suspended` since the first
+    // attempt, but this comparator did not consult it, so pause/unpause was invisible
+    // to the progress decision while LOOKING fixed from a test that only inspected the
+    // fingerprint. Suspension IS graph-factual: it is the difference between a row that
+    // is being worked and one deliberately withdrawn, which is exactly what a liveness
+    // watchdog exists to tell apart.
+    || current.suspended !== baselineFingerprint.suspended;
 }
 
 function findGraphAction(input: DriverLivenessWatchdogInput): DriverLivenessActionRef | undefined {
