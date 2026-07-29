@@ -353,15 +353,15 @@ function hasSnapshotProgress(
   return current.status !== baselineFingerprint.status
     || current.leaseHolder !== baselineFingerprint.leaseHolder
     || current.blockedOnKey !== baselineFingerprint.blockedOnKey
-    || current.evidenceCount !== baselineFingerprint.evidenceCount
-    // 🔴 bug-423 F9-3 / nodestate0b F2 — THE FIELD WAS STORED AND NEVER READ.
-    // `fingerprintWorkItemForDriverProgress` has carried `suspended` since the first
-    // attempt, but this comparator did not consult it, so pause/unpause was invisible
-    // to the progress decision while LOOKING fixed from a test that only inspected the
-    // fingerprint. Suspension IS graph-factual: it is the difference between a row that
-    // is being worked and one deliberately withdrawn, which is exactly what a liveness
-    // watchdog exists to tell apart.
-    || current.suspended !== baselineFingerprint.suspended;
+    || current.evidenceCount !== baselineFingerprint.evidenceCount;
+  // 🔴 bug-423 F9-3 — `suspended` IS DELIBERATELY NOT COMPARED HERE. It is decided ABOVE,
+  // before the dwell guard, because the guard would otherwise swallow it (see bug-461).
+  // A duplicate `|| current.suspended !== baselineFingerprint.suspended` on this line was
+  // written first and then REMOVED: the pre-guard check strictly subsumes it — every case
+  // that could reach here with a differing `suspended` has already returned true — so the
+  // clause was unkillable by mutation. An assertion no mutation can red is not a guard, and
+  // leaving one in a fix for "the field was stored and never read" would have shipped that
+  // same defect in a new coat. Measured: reverting the clause reddened nothing.
 }
 
 function findGraphAction(input: DriverLivenessWatchdogInput): DriverLivenessActionRef | undefined {
