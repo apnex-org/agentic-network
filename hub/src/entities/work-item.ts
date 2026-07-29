@@ -175,7 +175,19 @@ export interface StintProjection {
   observedTopologyGeneration?: number;
   observedTopologyHash?: string;
   arcStatus: WorkItemPhase;
-  completion: { done: number; total: number; pending: string[] };
+  /** bug-433: ACTIVE gate counts (`done`/`total`/`pending`) beside DECLARED topology.
+   *  `droppedAbandoned` is load-bearing — an arc whose every child was abandoned is now
+   *  completable (`total: 0`), and this field is what stops that reading as "all work
+   *  delivered". `missing` is kept SEPARATE from dropped: one is an absence, the other a
+   *  decision, and merging them would hide a vanished row behind a deliberate one. */
+  completion: {
+    done: number;
+    total: number;
+    pending: string[];
+    declared: string[];
+    droppedAbandoned: string[];
+    missing: string[];
+  };
   /** tracks the ARC completion-gate (children>0): `total>0 && done===total` — complete_work would
    *  pass it (the one-enforced-close surface). A LEAF (children=0) has NO completion-gate (completes
    *  freely), so gateOpen:false there means "no arc-gate to be open", NOT "blocked". */

@@ -432,13 +432,40 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
         .rejects.toThrow(/completion gate.*work-ghost-99999/);
     }, OP_TIMEOUT);
 
-    it("fail-closed: an ABANDONED child blocks (abandoned ≠ done — an arc must not close over unfinished work)", async () => {
+    // 🔴 bug-433 — THIS CASE IS REBUTTED, NOT DELETED. It previously asserted
+    // "fail-closed: an ABANDONED child BLOCKS (abandoned ≠ done — an arc must not close
+    // over unfinished work)". Director ruling 2026-07-29 REVERSES that for abandoned
+    // children specifically: "DependsOn ... exists to encode heirarchy, not to poison or
+    // block abandon nodes forever", clarified as "abandoned or canceled nodes".
+    // The old reasoning was not careless — fail-closed is correct toward the UNKNOWN. It
+    // is wrong toward the DECIDED, and abandonment is a decision already taken. The
+    // fail-closed posture is retained in full for `missing` (asserted below) and for
+    // `failed_sealed`, so what changed is the classification of one arm, not the posture.
+    it("bug-433: an ABANDONED child is DYNAMICALLY DROPPED and no longer blocks — and stays visible", async () => {
       const w = await repo.createWorkItem({ type: "task", roleEligibility: [] });
       const c = await repo.claimWorkItem(w.id, "agent-arc-f");
       await repo.abandonWork(w.id, "agent-arc-f", { leaseToken: c!.lease!.token });
       expect((await repo.getWorkItem(w.id))!.status).toBe("abandoned");
+
+      const gated = await repo.createWorkItem({ type: "task", roleEligibility: [], completionDependsOn: [w.id] });
+      const progress = await repo.getCompletionProgress(gated.id);
+      // DECLARED topology is never mutated; the drop is a read-time classification.
+      expect(progress!.declared).toEqual([w.id]);
+      expect(progress!.droppedAbandoned).toEqual([w.id]);
+      expect(progress!.missing).toEqual([]);
+      // ACTIVE gate set is empty, so the gate opens.
+      expect(progress!.pending).toEqual([]);
+      expect(progress!.total).toBe(0);
+
       const arc = await startedArc([w.id], "agent-arc-f2");
-      await expect(repo.completeWork(arc.id, "agent-arc-f2", arc.token, [ev({ requirementId: "x", kind: "freeform" })], NO_FRICTION))
+      const completed = await repo.completeWork(arc.id, "agent-arc-f2", arc.token, [ev({ requirementId: "x", kind: "freeform" })], NO_FRICTION);
+      expect(completed!.status).toBe("done");
+    }, OP_TIMEOUT);
+
+    it("bug-433 CONTROL: a MISSING child still blocks — fail-closed is retained for the UNKNOWN", async () => {
+      // The posture did not go away; only the `abandoned` arm was reclassified.
+      const arc = await startedArc(["work-vanished-does-not-exist"], "agent-arc-f3");
+      await expect(repo.completeWork(arc.id, "agent-arc-f3", arc.token, [ev({ requirementId: "x", kind: "freeform" })], NO_FRICTION))
         .rejects.toThrow(/completion gate/);
     }, OP_TIMEOUT);
 
@@ -453,19 +480,19 @@ describe("WorkItem complete_work + evidence predicate (real-pg)", () => {
       const done1 = await doneChild("agent-prog-a1");
       const notDone = (await repo.createWorkItem({ type: "task", roleEligibility: [] })).id;
       const arc = await repo.createWorkItem({ type: "task", roleEligibility: [], completionDependsOn: [done1, notDone] });
-      expect(await repo.getCompletionProgress(arc.id)).toEqual({ done: 1, total: 2, pending: [notDone] });
+      expect(await repo.getCompletionProgress(arc.id)).toMatchObject({ done: 1, total: 2, pending: [notDone], droppedAbandoned: [], missing: [] });
     }, OP_TIMEOUT);
 
     it("getCompletionProgress: all children done → {done:2,total:2,pending:[]}", async () => {
       const c1 = await doneChild("agent-prog-b1");
       const c2 = await doneChild("agent-prog-b2");
       const arc = await repo.createWorkItem({ type: "task", roleEligibility: [], completionDependsOn: [c1, c2] });
-      expect(await repo.getCompletionProgress(arc.id)).toEqual({ done: 2, total: 2, pending: [] });
+      expect(await repo.getCompletionProgress(arc.id)).toMatchObject({ done: 2, total: 2, pending: [], droppedAbandoned: [], missing: [] });
     }, OP_TIMEOUT);
 
     it("getCompletionProgress: a leaf (no completionDependsOn) → {done:0,total:0,pending:[]}", async () => {
       const leaf = await repo.createWorkItem({ type: "task", roleEligibility: [] });
-      expect(await repo.getCompletionProgress(leaf.id)).toEqual({ done: 0, total: 0, pending: [] });
+      expect(await repo.getCompletionProgress(leaf.id)).toMatchObject({ done: 0, total: 0, pending: [], declared: [], droppedAbandoned: [], missing: [] });
     }, OP_TIMEOUT);
 
     it("getCompletionProgress: a non-existent work-item → null", async () => {
