@@ -2476,8 +2476,16 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // WHY MY EARLIER FIX MISSED IT: I wired the matrix into the POST-FILTER, which was the
     // right place for the arms that reach it, and never asked which callers never get there.
     // A post-filter that can only subtract cannot repair a predicate that under-admits.
-    add("abandon", (isHolder || isCreator || isSteward) && (RELEASABLE_PHASES.includes(status) || (status === "ready" && (isCreator || isSteward))),
-      !(isHolder || isCreator || isSteward) ? "the caller is neither the lease-holder, the creator, nor a steward" : `abandon requires an active claim (or the creator/steward from ready), was ${status}`);
+    // 🔴 bug-462 — THE STEWARD-FROM-`ready` ARM IS CONDITIONED ON SUSPENSION. `&& suspended` is
+    // LOAD-BEARING and must not be dropped as redundant. Without it this predicate let an
+    // UNRELATED architect or director see `abandon.legal = true` on any engineer's ordinary
+    // `ready` row and terminalize it — exceeding criterion 3 case (iv) (scoped to a SUSPENDED
+    // ready row), bug-424's scope (live WITHDRAWAL), and the public `abandon_work` contract
+    // (only the CREATOR may abandon from `ready`). The creator arm is UNCONDITIONAL by design
+    // (bug-219 fix (c)); the steward arm is not, because a steward's standing here comes from
+    // having withdrawn the row, not from the role alone.
+    add("abandon", (isHolder || isCreator || isSteward) && (RELEASABLE_PHASES.includes(status) || (status === "ready" && (isCreator || (isSteward && suspended)))),
+      !(isHolder || isCreator || isSteward) ? "the caller is neither the lease-holder, the creator, nor a steward" : `abandon requires an active claim (or the creator from ready, or a steward from a SUSPENDED ready row), was ${status}`);
     // complete: holder + COMPLETABLE + the completion-gate met.
     add("complete", isHolder && COMPLETABLE_PHASES.includes(status) && gateMet,
       !isHolder ? notHolder : !COMPLETABLE_PHASES.includes(status) ? `complete requires in_progress or review, was ${status}` : "completion-gate unmet — downstream completionDependsOn children are not all done");
@@ -3832,8 +3840,21 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       // not reach, which is precisely the situation bug-219 fix (c) added the creator arm for.
       // A steward is the same kind of override identity as a creator, with strictly more claim
       // on the decision.
-      if (!RELEASABLE_PHASES.includes(w.status) && !(w.status === "ready" && (isCreator || isSteward))) {
-        throw new TransitionRejected(`abandon requires an active claim (or the creator/steward from ready), was ${w.status}`);
+      // 🔴 bug-462 — `&& isActivelyWithdrawn(w)` IS LOAD-BEARING. See the matching legal_moves
+      // clause. My previous version omitted it and argued the change was "not a widening"
+      // because the identity check at the top of this function already admits stewards.
+      // THAT ARGUMENT WAS WRONG, and the correction is worth keeping at the site:
+      //
+      //   AN EARLY IDENTITY GUARD IS ONLY ONE CONJUNCT. EFFECTIVE AUTHORITY IS THE
+      //   CONJUNCTION. Before that change this gate made the effective ready-row decision
+      //   DENY; after it, ALLOW. Removing the denying conjunct IS the widening, whatever the
+      //   admitting one said in isolation.
+      //
+      // A guard that can only SUBTRACT was the thing holding this boundary. Reading the
+      // admitting clause alone told me stewards were "already" permitted — true of that
+      // clause, false of the composed decision.
+      if (!RELEASABLE_PHASES.includes(w.status) && !(w.status === "ready" && (isCreator || (isSteward && isActivelyWithdrawn(w))))) {
+        throw new TransitionRejected(`abandon requires an active claim (or the creator from ready, or a steward from a SUSPENDED ready row), was ${w.status}`);
       }
       const nowISO = this.clock.now().toISOString();
       // 🔴 bug-424: TERMINATING RESOLVES THE WITHDRAWAL. Suspension means "withdrawn from
