@@ -384,7 +384,16 @@ export type CompletionProgress = {
   total: number;
   pending: string[];
   declared: string[];
+  // 🔴 bug-433 / nodestate0b F4 — FIVE SETS, EACH SEPARATELY NAMED, EACH A SET OF IDS.
+  // Counts plus one mixed `pending` array do NOT discharge the requirement: a FAILED child
+  // was indistinguishable from a ready/claimed/in-progress/blocked/review one, because they
+  // all landed in `pending` together. The reason these are separate is the scope fence's
+  // "0 active / N abandoned must be impossible to mistake for all work delivered" — with the
+  // gate now OPENING on all-abandoned (F3), these sets are the ONLY thing standing between a
+  // reader and that misreading. Observability is carrying the meaning the gate no longer does.
+  active: string[];
   droppedAbandoned: string[];
+  failed: string[];
   missing: string[];
 };
 
@@ -2092,8 +2101,14 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const pending: string[] = [];
     const droppedAbandoned: string[] = [];
     const missing: string[] = [];
+    const failed: string[] = [];
     for (const childId of completionDependsOn) {
       const child = await this.getCurrentProjectionItem(childId);
+      // F4: `failed` is an OVERLAY on the classification, not a branch of it. A failed-sealed
+      // child still classifies `pending` — it must keep holding the gate shut — but it is named
+      // here as well so a reader can tell it apart from work merely still in flight. READ-ONLY
+      // use of `isFailedGateSealed`; its semantics are untouched (bug-448 stays deferred).
+      if (child && isFailedGateSealed(child)) failed.push(childId);
       switch (classifyGateChild(child)) {
         case "satisfied": break;
         case "dropped_abandoned": droppedAbandoned.push(childId); break;
@@ -2104,13 +2119,15 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // ACTIVE counts drive the gate; DECLARED topology stays visible beside them. The
     // array is never mutated — dropping is a READ-TIME classification, so which scope
     // was dropped is always recoverable.
-    const active = completionDependsOn.length - droppedAbandoned.length;
+    const active = completionDependsOn.filter((id) => !droppedAbandoned.includes(id));
     return {
-      done: active - pending.length,
-      total: active,
+      done: active.length - pending.length,
+      total: active.length,
       pending,
       declared: [...completionDependsOn],
+      active,
       droppedAbandoned,
+      failed,
       missing,
     };
   }
@@ -2201,7 +2218,7 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       if (!child) {
         children.push({ id: childId, status: "missing", leaseHolder: null, stateDurations: { ...DEFAULT_STATE_DURATIONS } });
       } else {
-        children.push({ id: childId, status: child.status, suspended: isParkedFromExecution(child), leaseHolder: child.lease?.holder ?? null, stateDurations: child.stateDurations });
+        children.push({ id: childId, status: child.status, suspended: isParkedFromExecution(child), failedSealed: isFailedGateSealed(child), leaseHolder: child.lease?.holder ?? null, stateDurations: child.stateDurations });
       }
     }
     // 🔴 idea-640: BUCKET ON THE PAIR, NOT ON THE PHASE. Suspension no longer moves the phase, so
@@ -2223,6 +2240,9 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     const droppedAbandoned = children.filter((c) => classifyGateChild(c) === "dropped_abandoned").map((c) => c.id);
     const missingChildren = children.filter((c) => classifyGateChild(c) === "missing").map((c) => c.id);
     const activeChildren = children.filter((c) => classifyGateChild(c) !== "dropped_abandoned");
+    // Hoisted: BOTH `completion.pending` and `gateOpen` now read this one array, so the projection
+    // and the gate it reports on cannot drift apart the way F3 found them.
+    const pendingIds = activeChildren.filter((c) => classifyGateChild(c) !== "satisfied").map((c) => c.id);
     const total = activeChildren.length;
     const done = activeChildren.filter((c) => classifyGateChild(c) === "satisfied").length;
     const statusCounts: Record<string, number> = {
@@ -2251,15 +2271,35 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       completion: {
         done,
         total,
-        pending: activeChildren.filter((c) => classifyGateChild(c) !== "satisfied").map((c) => c.id),
+        pending: pendingIds,
         declared: children.map((c) => c.id),
+        active: activeChildren.map((c) => c.id),
         droppedAbandoned,
+        failed: children.filter((c) => c.failedSealed === true).map((c) => c.id),
         missing: missingChildren,
       },
-      // tracks the ARC completion-gate (children>0): would complete_work pass it. A LEAF (children=0)
-      // has NO completion-gate — it completes freely — so gateOpen:false there means "no arc-gate",
-      // NOT "blocked". gateOpen:true ⇒ a completable arc whose subtree is finalised (one-enforced-close).
-      gateOpen: total > 0 && done === total,
+      // tracks the ARC completion-gate: would complete_work pass it. A LEAF (declared=0) has NO
+      // completion-gate — it completes freely — so gateOpen:false there means "no arc-gate", NOT
+      // "blocked". gateOpen:true ⇒ a completable arc whose subtree is finalised.
+      //
+      // 🔴 bug-433 / nodestate0b F3 — WAS `total > 0 && done === total`, WHICH DISAGREED WITH
+      // `complete_work` ON THE ALL-ABANDONED CASE. `complete_work` and `legal_moves` both gate on
+      // `computeCompletionProgress(...).pending.length === 0`; this surface used the ACTIVE count
+      // instead, so an arc whose children were all abandoned reported gateOpen:false while
+      // complete_work accepted it. Two surfaces, one question, opposite answers.
+      //
+      // ⚠️ THE DISCRIMINATOR IS `declared`, NOT `total`. The ruling was "gateOpen TRUE when pending
+      // is empty, including total === 0" — but `total === 0` is reached TWO ways: a LEAF (nothing
+      // was ever declared) and an ALL-ABANDONED ARC (everything declared was dropped). A bare
+      // `pending.length === 0` would flip every LEAF to gateOpen:true and silently redefine what
+      // the field means for the majority of rows. Keying the arc-ness test on `children.length`
+      // (declared topology, which abandonment never mutates) opens the all-abandoned arc and
+      // NOTHING else — exactly the blast radius the ruling intended. steve's falsifier makes the
+      // same distinction explicit: `declared = [child]` with the comment "this is an arc, not a leaf".
+      //
+      // FAIL-CLOSED PRESERVED: `failed_sealed` and `missing` children both classify `pending`, so
+      // they remain in `pendingIds` and still hold the gate shut. Only `abandoned` drops.
+      gateOpen: children.length > 0 && pendingIds.length === 0,
       inFlight: statusCounts.claimed + statusCounts.in_progress + statusCounts.review,
       blocked: statusCounts.blocked,
       statusCounts,
@@ -2459,9 +2499,43 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // CLOSED — a new verb is illegal on a suspended row until explicitly allowed here.
     if (suspended) {
       const SUSPENDED_LEGAL: WorkItemVerb[] = ["unpause", "reset"];
+      // 🔴 bug-424 / nodestate0b F1 — ABANDON IS NO LONGER BLANKET-ILLEGAL ON A SUSPENDED ROW.
+      //
+      // WHAT BROKE: the allowlist above was written when disposal was blanket-refused, so `abandon`
+      // was correctly absent from it. bug-424 replaced that blanket with an authority matrix in the
+      // authoritative CAS — and this projection kept the old rule. The result was the WORST shape a
+      // parity break can take: the surface that ISSUES calls advertised ILLEGAL for a disposal the
+      // CAS would have PERMITTED, so a creator holding a suspended-ready row was told, falsely, that
+      // they had no way to dispose of their own work.
+      //
+      // THE FIX IS PARITY BY CONSTRUCTION: this calls the SAME `evaluateSuspendedDisposalAuthority`
+      // that `abandonWork` calls, rather than restating the matrix here. A second hand-maintained
+      // copy of a rule is exactly how F1 arose in the first place, and re-deriving it would rebuild
+      // the defect one refactor later.
+      //
+      // ⚠️ DISCLOSED ASYMMETRY: `getLegalMoves` never receives the caller's lease TOKEN, so it
+      // passes the row's own token — meaning the holder arm is evaluated as if the caller holds the
+      // matching token. That is the SAME optimism `isHolder` already carries on this surface
+      // (documented above for `claim`/quarantine), not a new one. The CAS still verifies the real
+      // token, so an advertisement can be optimistic here and the write still refuses.
+      //
+      // FAIL-CLOSED IS PRESERVED: this remains an ALLOWLIST with exactly ONE conditional exemption,
+      // resolved by the matrix. A newly added verb N+1 is still illegal on a suspended row until
+      // someone explicitly allows it here.
+      const disposal = evaluateSuspendedDisposalAuthority(
+        w,
+        { agentId: caller.agentId, role: caller.role ?? "unknown" },
+        { leaseToken: w.lease?.token },
+      );
       for (const move of moves) {
         if (SUSPENDED_LEGAL.includes(move.verb) || !move.legal) continue;
-        Object.assign(move, { legal: false, reason: `the row is SUSPENDED (management attribute); phase is ${status} but execution is withdrawn — only ${SUSPENDED_LEGAL.join("|")} are legal` });
+        if (move.verb === "abandon" && disposal.allowed) continue;
+        Object.assign(move, {
+          legal: false,
+          reason: move.verb === "abandon"
+            ? `the row is SUSPENDED and ${caller.agentId} may not dispose of it (${disposal.reason}) — a steward's withdrawal outranks the withdrawn party`
+            : `the row is SUSPENDED (management attribute); phase is ${status} but execution is withdrawn — only ${SUSPENDED_LEGAL.join("|")} are legal`,
+        });
       }
     }
 
