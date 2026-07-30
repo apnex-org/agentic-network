@@ -155,12 +155,26 @@ describe("bug-99 fix: RepoEventBridgeSubstrateAdapter dual-prefix accept-list (D
   }, 30_000);
 });
 
-// ─── Known secondary defect: dual-prefix substrate-id collision (architect surface) ──
+// ─── bug-471: dual-prefix substrate-id collision — RATIFIED AND FIXED ────────────────
 //
-// These tests are SKIPPED — they document the collision-class for future
-// `.it` flip after architect ratifies the substrate-namespacing scheme
-// (composite-id vs separate-kinds-per-prefix). See file-level header for context.
-describe.skip("ARCHITECT-SURFACE: dual-prefix substrate-id collision (overlapping repoIds)", () => {
+// 🟢 UN-SKIPPED. The original note read, and is preserved here because it was correct:
+//   "These tests are SKIPPED — they document the collision-class for future `.it` flip
+//    after architect ratifies the substrate-namespacing scheme (composite-id vs
+//    separate-kinds-per-prefix)."
+//
+// The architect has now ratified COMPOSITE-ID (`<pathPrefix>:<repoId>`) over
+// separate-kinds-per-prefix, on the grounds that a new kind per poll source makes every
+// new source a schema migration — taxing precisely the thing the poll-source abstraction
+// exists to make cheap. So these two cases are the ratified target and are satisfied
+// rather than rewritten: the engineer who wrote them declined to pick an id scheme
+// autonomously, which was the right call, and left an executable specification behind.
+//
+// ⚠️ Their fixture was already the PRODUCTION one — the same repoId across both prefixes.
+// The active bug-99 test above deliberately uses DISJOINT repoIds (its line 123 says so),
+// which is why it stayed green through a live production collision: a green test whose
+// fixture diverges from production wiring in the one variable under test measures
+// something adjacent to the question.
+describe("bug-471: dual-prefix substrate-id collision (overlapping repoIds)", () => {
   let testCounter = 0;
   const uniqueRepo = () => `collision-test__repo-${++testCounter}`;
 
@@ -178,6 +192,47 @@ describe.skip("ARCHITECT-SURFACE: dual-prefix substrate-id collision (overlappin
 
     expect((await stack.mainCursorStore.readCursor(repoId)).value).toEqual(mainCursor);
     expect((await stack.workflowCursorStore.readCursor(repoId)).value).toEqual(workflowCursor);
+
+    await stack.close();
+  }, 30_000);
+
+  it("🔴 parsePath EXECUTED: same namespace+repoId under two prefixes → DIFFERENT substrate ids", async () => {
+    // THE ASSERTION THE OTHER TWO CANNOT MAKE. They prove the two stores no longer clobber
+    // each other, which is the OUTCOME. This proves the MECHANISM: that the prefix actually
+    // reaches the substrate id. Those are different claims — an implementation that isolated
+    // the stores some other way (separate kinds, a hash, a counter) would satisfy the
+    // outcome tests and silently violate the ratified scheme.
+    //
+    // It executes the REAL `parsePath` through the production write path rather than calling
+    // the private method or restating its logic — a test that recomputes `${prefix}:${repoId}`
+    // itself would pass against a broken adapter. And it asserts the EXACT id strings, because
+    // a shape assertion over the returned struct does not red when the prefix is dropped:
+    // `{kind, id}` is still well-formed when `id` is the bare repoId.
+    const stack = await bootDualPrefixStack();
+    const repoId = uniqueRepo();
+
+    const mainCursor: RepoCursor = { etag: "m", lastEventId: "evt-m", updatedAt: new Date().toISOString() };
+    const workflowCursor: RepoCursor = { etag: "w", lastEventId: "evt-w", updatedAt: new Date().toISOString() };
+    await stack.mainCursorStore.writeCursor(repoId, mainCursor, null);
+    await stack.workflowCursorStore.writeCursor(repoId, workflowCursor, null);
+
+    // Read the substrate DIRECTLY at the exact composite ids the ruling specifies.
+    //
+    // ⚠️ The id's repoId segment carries the `.json` suffix, and that is PRE-EXISTING and
+    // correct: `parsePath` splits a STORAGE PATH (`<prefix>/cursor/<repoId>.json`), so the
+    // segment after the namespace is `<repoId>.json` — not a logical repo identifier. The
+    // production row confirms it (`apnex-org/agentic-network.json`). bug-471 changes only
+    // the PREFIX half of the key; the suffix is untouched. Spelling it out because a reader
+    // comparing this to the ruling's shorthand `prefix:repoId` would otherwise think one of
+    // the two is wrong.
+    const KEY = (prefix: string) => `${prefix}:${repoId}.json`;
+    expect(await stack.substrate.get("RepoEventBridgeCursor", KEY(MAIN_PREFIX))).not.toBeNull();
+    expect(await stack.substrate.get("RepoEventBridgeCursor", KEY(WORKFLOW_RUN_PREFIX))).not.toBeNull();
+
+    // ...and prove the BARE id — the pre-fix key both sources collapsed onto — is ABSENT.
+    // Without this the test would still pass if the adapter also wrote the old key, which is
+    // exactly what a well-meant backward-compatible dual-write would do.
+    expect(await stack.substrate.get("RepoEventBridgeCursor", `${repoId}.json`)).toBeNull();
 
     await stack.close();
   }, 30_000);

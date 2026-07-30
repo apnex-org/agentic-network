@@ -41,9 +41,15 @@ describe("RepoEventBridgeSubstrateAdapter — W0.4 spike", () => {
       const r = await adapter.createOnly("repo-event-bridge/cursor/anthropic__claude-code", data);
       expect(r.ok).toBe(true);
       // mission-88 W4 A1: adapter writes envelope-shape; body lives at status.cursor
-      const stored = await substrate.get<Record<string, unknown>>("RepoEventBridgeCursor", "anthropic__claude-code");
+      // bug-471: the substrate id is now PREFIX-QUALIFIED. These assertions previously read
+      // `"anthropic__claude-code"` and were correct for the pre-ruling scheme; the architect
+      // ratified composite-id (`<pathPrefix>:<repoId>`) because one adapter serves two path
+      // prefixes and the bare id collapsed both onto one row. NARROWED to the exact new id,
+      // not loosened to a substring — a matcher widened to survive a behaviour change is a
+      // ratchet pointing the wrong way.
+      const stored = await substrate.get<Record<string, unknown>>("RepoEventBridgeCursor", "repo-event-bridge:anthropic__claude-code");
       expect(stored).not.toBeNull();
-      expect(stored!.id).toBe("anthropic__claude-code");
+      expect(stored!.id).toBe("repo-event-bridge:anthropic__claude-code");
       expect(stored!.kind).toBe("RepoEventBridgeCursor");
       expect(stored!.apiVersion).toBe("core.ois/v1");
       expect((stored!.status as Record<string, unknown>).phase).toBe("active");
@@ -54,9 +60,10 @@ describe("RepoEventBridgeSubstrateAdapter — W0.4 spike", () => {
       const data = enc.encode(JSON.stringify({ seen: ["x", "y"] }));
       await adapter.createOnly("repo-event-bridge/dedupe/owner__repo", data);
       // mission-88 W4 A1: adapter writes envelope-shape; body lives at status.dedupe
-      const stored = await substrate.get<Record<string, unknown>>("RepoEventBridgeDedupe", "owner__repo");
+      // bug-471: prefix-qualified id (see the cursor case above for the ruling).
+      const stored = await substrate.get<Record<string, unknown>>("RepoEventBridgeDedupe", "repo-event-bridge:owner__repo");
       expect(stored).not.toBeNull();
-      expect(stored!.id).toBe("owner__repo");
+      expect(stored!.id).toBe("repo-event-bridge:owner__repo");
       expect(stored!.kind).toBe("RepoEventBridgeDedupe");
       expect((stored!.status as Record<string, unknown>).dedupe).toEqual({ seen: ["x", "y"] });
     });
@@ -74,8 +81,15 @@ describe("RepoEventBridgeSubstrateAdapter — W0.4 spike", () => {
       // Note: cursor-store uses repoId like "owner__repo" but path-parse logic
       // takes everything after the namespace slash as id — even nested slashes
       await adapter.createOnly("repo-event-bridge/cursor/some/nested/id", data);
-      const stored = await substrate.get("RepoEventBridgeCursor", "some/nested/id");
-      expect(stored).toBeDefined();
+      // bug-471: prefix-qualified. NOTE the nested slashes survive intact — only the FIRST
+      // colon separates prefix from repoId, so a repoId containing slashes is unambiguous.
+      const stored = await substrate.get("RepoEventBridgeCursor", "repo-event-bridge:some/nested/id");
+      // 🔴 WAS `expect(stored).toBeDefined()`, WHICH IS VACUOUS: `substrate.get` returns
+      // `T | null`, and `null` IS defined — so that assertion passed for a MISSING row and
+      // would not have redded when bug-471 changed the id under it. It is the only case in
+      // this block that stayed green through the change, which is how I noticed. Same family
+      // as the arc's other "green that measures something adjacent" findings.
+      expect(stored).not.toBeNull();
     });
   });
 
@@ -187,15 +201,24 @@ describe("RepoEventBridgeSubstrateAdapter — W0.4 spike", () => {
       const r1 = await dualAdapter.createOnly("repo-event-bridge/cursor/owner__repo", data1);
       expect(r1.ok).toBe(true);
       // mission-88 W4 A1: envelope-shape; cursor body at status.cursor
-      const stored1 = await substrate.get<Record<string, unknown>>("RepoEventBridgeCursor", "owner__repo");
+      const stored1 = await substrate.get<Record<string, unknown>>("RepoEventBridgeCursor", "repo-event-bridge:owner__repo");
       const cursor1 = (stored1!.status as Record<string, unknown>).cursor as { cursor: string };
       expect(cursor1.cursor).toBe("main");
 
       // Workflow-runs-poll-source prefix
       const r2 = await dualAdapter.createOnly("repo-event-bridge-workflow-runs/cursor/owner__repo-wf", data2);
       expect(r2.ok).toBe(true);
-      // Both prefixes map to same substrate kind (RepoEventBridgeCursor); different id (prefix-disambig is at parsePath layer, not kind)
-      const stored2 = await substrate.get<Record<string, unknown>>("RepoEventBridgeCursor", "owner__repo-wf");
+      // Both prefixes map to the same substrate KIND (RepoEventBridgeCursor); the ID disambiguates.
+      //
+      // 🔴 bug-471: the original comment here read "different id (prefix-disambig is at parsePath
+      // layer, not kind)" — and that was NOT TRUE when it was written. parsePath discarded the
+      // prefix; these two ids differed only because the fixture used two DIFFERENT repoIds
+      // (`owner__repo` vs `owner__repo-wf`). The comment described the intended design while the
+      // code did something else, and the disjoint fixture kept it green. It is true NOW.
+      // ⚠️ This case still uses disjoint repoIds, so it does NOT cover the production condition
+      // (both sources polling the SAME repo). That case is
+      // hub/test/integration/repo-event-bridge-dual-prefix.test.ts.
+      const stored2 = await substrate.get<Record<string, unknown>>("RepoEventBridgeCursor", "repo-event-bridge-workflow-runs:owner__repo-wf");
       const cursor2 = (stored2!.status as Record<string, unknown>).cursor as { cursor: string };
       expect(cursor2.cursor).toBe("workflow");
     });
