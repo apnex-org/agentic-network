@@ -2484,8 +2484,28 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
     // (only the CREATOR may abandon from `ready`). The creator arm is UNCONDITIONAL by design
     // (bug-219 fix (c)); the steward arm is not, because a steward's standing here comes from
     // having withdrawn the row, not from the role alone.
-    add("abandon", (isHolder || isCreator || isSteward) && (RELEASABLE_PHASES.includes(status) || (status === "ready" && (isCreator || (isSteward && suspended)))),
-      !(isHolder || isCreator || isSteward) ? "the caller is neither the lease-holder, the creator, nor a steward" : `abandon requires an active claim (or the creator from ready, or a steward from a SUSPENDED ready row), was ${status}`);
+    // 🔴 bug-468 — EACH IDENTITY CARRIES ITS OWN PHASE ENVELOPE. Do NOT collapse these back
+    // into `(identityA || identityB) && (phaseX || phaseY)`.
+    //
+    // WHAT BROKE: `RELEASABLE_PHASES.includes(status)` sat OUTSIDE any identity condition, so
+    // admitting `isSteward` to the actor test (bug-424 parity, #730) silently opened EVERY
+    // active phase to an unrelated steward. bug-462 then scoped only the `ready` branch, which
+    // left `claimed`/`in_progress`/`blocked` still admitting a steward with NO holder token.
+    // A shared phase disjunction cannot express "these two identities have different phase
+    // rights", and the moment a third identity was added it granted that identity the UNION of
+    // the other two envelopes.
+    //
+    // THE ENVELOPES, per the Director's ratified scope (`abandon if PAUSED` for stewards):
+    //   holder   -- RELEASABLE phases (their own claim)
+    //   creator  -- RELEASABLE phases OR `ready` (bug-219 fix (c) override; UNCONDITIONAL)
+    //   steward  -- SUSPENDED rows ONLY, any phase (standing comes from the withdrawal, not the role)
+    const abandonByHolder = isHolder && RELEASABLE_PHASES.includes(status);
+    const abandonByCreator = isCreator && (RELEASABLE_PHASES.includes(status) || status === "ready");
+    const abandonBySteward = isSteward && suspended;
+    add("abandon", abandonByHolder || abandonByCreator || abandonBySteward,
+      !(isHolder || isCreator || isSteward)
+        ? "the caller is neither the lease-holder, the creator, nor a steward"
+        : `abandon requires an active claim (holder), an active claim or ready (creator), or a SUSPENDED row (steward) \u2014 caller does not qualify, was ${status}${suspended ? " (suspended)" : ""}`);
     // complete: holder + COMPLETABLE + the completion-gate met.
     add("complete", isHolder && COMPLETABLE_PHASES.includes(status) && gateMet,
       !isHolder ? notHolder : !COMPLETABLE_PHASES.includes(status) ? `complete requires in_progress or review, was ${status}` : "completion-gate unmet — downstream completionDependsOn children are not all done");
@@ -3853,8 +3873,20 @@ export class WorkItemRepositorySubstrate implements IWorkItemStore {
       // A guard that can only SUBTRACT was the thing holding this boundary. Reading the
       // admitting clause alone told me stewards were "already" permitted — true of that
       // clause, false of the composed decision.
-      if (!RELEASABLE_PHASES.includes(w.status) && !(w.status === "ready" && (isCreator || (isSteward && isActivelyWithdrawn(w))))) {
-        throw new TransitionRejected(`abandon requires an active claim (or the creator from ready, or a steward from a SUSPENDED ready row), was ${w.status}`);
+      // 🔴 bug-468 — IDENTITY-AWARE PHASE ENVELOPES, mirroring the legal_moves projection above.
+      // This gate used to be a PURE PHASE CHECK: identity was established at the top of the
+      // function and never re-consulted here. That is exactly why admitting stewards to the
+      // identity check opened every RELEASABLE phase to them -- the gate could not tell a
+      // steward from a holder, so it applied the holder's envelope to both.
+      //
+      // ORDERING NOTE, load-bearing: the suspension MATRIX check runs ABOVE this. A holder whose
+      // row a steward suspended is already refused there, so `okByHolder` below cannot resurrect
+      // them. Moving this block above the matrix would break that.
+      const okByHolder = isHolderWithToken && RELEASABLE_PHASES.includes(w.status);
+      const okByCreator = isCreator && (RELEASABLE_PHASES.includes(w.status) || w.status === "ready");
+      const okBySteward = isSteward && isActivelyWithdrawn(w);
+      if (!okByHolder && !okByCreator && !okBySteward) {
+        throw new TransitionRejected(`abandon requires an active claim (holder), an active claim or ready (creator), or a SUSPENDED row (steward) \u2014 ${agentId} does not qualify, was ${w.status}${isActivelyWithdrawn(w) ? " (suspended)" : ""}`);
       }
       const nowISO = this.clock.now().toISOString();
       // 🔴 bug-424: TERMINATING RESOLVES THE WITHDRAWAL. Suspension means "withdrawn from
