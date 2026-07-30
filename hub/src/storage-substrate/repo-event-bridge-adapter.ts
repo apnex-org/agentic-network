@@ -9,11 +9,24 @@
  *   createOnly(path, data)  →        createOnly(kind, entity)        data: Uint8Array → entity: {id, body: JSON.parse(data)}
  *   putIfMatch(path, ...)   →        putIfMatch(kind, entity, exp)   ditto + expectedRevision = ifMatchToken
  *
- * Path shape mapping (per Design v1.0 §2.3):
- *   <pathPrefix>/cursor/<repoId> → kind=RepoEventBridgeCursor, id=<repoId>
- *   <pathPrefix>/dedupe/<repoId> → kind=RepoEventBridgeDedupe, id=<repoId>
+ * Path shape mapping (per Design v1.0 §2.3, id scheme amended by bug-471):
+ *   <pathPrefix>/cursor/<repoId> → kind=RepoEventBridgeCursor, id=<pathPrefix>:<repoId>
+ *   <pathPrefix>/dedupe/<repoId> → kind=RepoEventBridgeDedupe, id=<pathPrefix>:<repoId>
  *
- * Entity body shape: substrate stores `{id: <repoId>, body: <cursor-store-encoded-data>}`
+ * 🔴 bug-471 — THE PREFIX IS PART OF THE ID AND THAT IS LOAD-BEARING. It previously was
+ * NOT: `matchedPrefix` was computed, used only for the slice offset, and DISCARDED, so
+ * `id` was the bare `<repoId>`. Paths were namespaced; ids were not. One adapter serves
+ * BOTH `repo-event-bridge` and `repo-event-bridge-workflow-runs` (hub/src/index.ts), and
+ * both poll sources receive the SAME repo list — so the two collapsed onto ONE substrate
+ * row per kind. Verified in production: one `RepoEventBridgeCursor` row where there must
+ * be two, holding a single `{etag, lastEventId}` slot. Those values are ENDPOINT-SPECIFIC:
+ * an etag minted by `/events` is meaningless to `/actions/runs`, and an events `lastEventId`
+ * is a nonsense high-water for workflow runs — so the sources were not merely overwriting
+ * each other's position but storing type-incompatible values in one slot. The shared dedupe
+ * row is worse: one source marking events seen makes the other skip them, which is SILENT
+ * EVENT LOSS rather than churn.
+ *
+ * Entity body shape: substrate stores `{id: <pathPrefix>:<repoId>, body: <cursor-store-encoded-data>}`
  * — the `id` field satisfies substrate's extractId requirement; `body` carries the
  * cursor-store opaque JSON shape unchanged.
  *
@@ -60,6 +73,36 @@ import type { HubStorageSubstrate } from "./types.js";
 
 const enc = new TextEncoder();
 const dec = new TextDecoder();
+
+/**
+ * 🔴 bug-471 — A BRANDED SUBSTRATE ID THAT CANNOT BE BUILT WITHOUT ITS PATH PREFIX.
+ *
+ * The brand exists for exactly one reason: to make the defect unwritable rather than
+ * merely discouraged. A plain `string` is NOT assignable here, so the pre-bug-471 line
+ * `return { kind, id: repoId }` no longer compiles. The prefix is not optional context a
+ * future reader can decide is redundant — it is a required argument of the only function
+ * that can mint the type.
+ *
+ * This is the same move as `Pick<WorkItem, "suspended">` on the disposal predicate
+ * (nodestate0/impl_seal_mint): narrow the type until the wrong call is a COMPILE ERROR
+ * instead of a test failure. That precedent exists because knowing the rule demonstrably
+ * did not stop me writing six hand-maintained copies of one three days later — a pattern
+ * you can recite is not a pattern you have, so it belongs in the signature.
+ */
+export type RepoEventBridgeEntityId = string & { readonly __repoEventBridgeIdWithPrefix: unique symbol };
+
+/**
+ * The ONLY constructor for a RepoEventBridgeEntityId. Both parameters are required, so
+ * the prefix cannot be dropped, defaulted, or passed as `undefined`.
+ *
+ * `:` is a safe separator: path prefixes are fixed internal literals
+ * (`repo-event-bridge`, `repo-event-bridge-workflow-runs`) that contain no colon, and the
+ * repoId segment is whatever followed the first `/` after the namespace. A colon appearing
+ * inside a repoId is therefore unambiguous — only the FIRST colon separates.
+ */
+export function composeEntityId(pathPrefix: string, repoId: string): RepoEventBridgeEntityId {
+  return `${pathPrefix}:${repoId}` as RepoEventBridgeEntityId;
+}
 
 export interface RepoEventBridgeSubstrateAdapterOptions {
   readonly substrate: HubStorageSubstrate;
@@ -114,7 +157,7 @@ export class RepoEventBridgeSubstrateAdapter implements StorageProviderWithToken
 
   // ── Path → (kind, id) mapping ────────────────────────────────────────────
 
-  private parsePath(path: string): { kind: string; id: string } {
+  private parsePath(path: string): { kind: string; id: RepoEventBridgeEntityId } {
     // Find FIRST matching prefix from accept-list (path.startsWith); reject if none.
     let matchedPrefix: string | undefined;
     for (const candidate of this.pathPrefixes) {
@@ -148,7 +191,13 @@ export class RepoEventBridgeSubstrateAdapter implements StorageProviderWithToken
         throw new Error(`RepoEventBridgeSubstrateAdapter: unknown namespace '${namespace}' in path '${path}'`);
     }
 
-    return { kind, id: repoId };
+    // 🔴 bug-471: `composeEntityId` is the ONLY way to produce a RepoEventBridgeEntityId, and it
+    // REQUIRES the prefix. `return { kind, id: repoId }` — the original line — is now a COMPILE
+    // ERROR, because a bare string is not assignable to the branded return type. That is
+    // deliberate: this defect will be reintroduced by a reader who sees the prefix used only for
+    // a slice offset and concludes it is not needed downstream. A comment saying "keep the
+    // prefix" is advice; a type that refuses the wrong call is enforcement.
+    return { kind, id: composeEntityId(matchedPrefix, repoId) };
   }
 
   // ── StorageProvider primitives consumed by cursor-store.ts ──────────────
