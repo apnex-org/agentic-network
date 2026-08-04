@@ -27,7 +27,11 @@ export { INTERNAL_CALL_TAG, isInternalCall } from "./contract.js";
 // bug-206: resilience/liveness probe-call marker (value exports).
 export { PROBE_CALL_TAG, isProbeCall } from "./contract.js";
 
-export { CognitivePipeline, createStandardCognitivePipeline } from "./pipeline.js";
+export {
+  CognitivePipeline,
+  createStandardCognitivePipeline,
+  HUB_PAGING_PARAMS,
+} from "./pipeline.js";
 export type { StandardPipelineConfig } from "./pipeline.js";
 
 export { CognitiveTelemetry } from "./middlewares/telemetry.js";

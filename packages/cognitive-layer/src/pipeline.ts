@@ -169,12 +169,50 @@ export class CognitivePipeline {
  * `env` is injectable so the bypass can be tested without mutating
  * process-global state.
  */
+/**
+ * work-638: tools whose MCP schema DEMONSTRABLY accepts `offset`, AND whose
+ * offset pages the same collection the summariser truncates.
+ *
+ * Both conditions are required. Declaring a tool that accepts `offset` but
+ * pages a DIFFERENT array than the one truncated would emit a hint naming a
+ * parameter that does not retrieve the omitted items — the original bug in a
+ * subtler form.
+ *
+ * SOURCE-VERIFIED, two independent instruments agreeing:
+ *   1. the seat's wire tool-catalog (93 tools, fetched 2026-07-28)
+ *   2. current Hub source — `...LIST_PAGINATION_SCHEMA` spread at the tool's
+ *      `router.register` (hub/src/policy/list-filters.ts declares limit+offset)
+ *
+ * WITHHELD DELIBERATELY — an empty entry is safer than a wrong one:
+ *   get_thread       accepts offset, but it pages `messages` while the
+ *                    summariser truncates whichever array is longest
+ *                    (participants / convergenceActions are siblings).
+ *                    Param and truncated field can disagree. EXCLUDED.
+ *   list_messages    has `since` (a ULID cursor), not offset. The disclosure
+ *                    emits a NUMERIC next_offset and cannot express a cursor.
+ *   list_ready_work  `limit` only — caps, does not page.
+ *   get_metrics      `limit` only — same.
+ *   list_documents   NO paging parameter at all (verifier-confirmed, work-637).
+ *   every other read tool     no paging parameter in schema.
+ */
+export const HUB_PAGING_PARAMS: Readonly<Record<string, string>> =
+  Object.freeze({
+    get_agents: "offset",
+    list_bugs: "offset",
+    list_ideas: "offset",
+    list_missions: "offset",
+    list_threads: "offset",
+    list_work: "offset",
+  });
+
 export function createStandardCognitivePipeline(
   telemetrySink?: (event: TelemetryEvent) => void,
   env: Record<string, string | undefined> = process.env,
+  pagingParams: Record<string, string> = HUB_PAGING_PARAMS,
 ): CognitivePipeline | undefined {
   if (env.OIS_COGNITIVE_BYPASS === "1") return undefined;
-  return CognitivePipeline.standard(
-    telemetrySink ? { telemetry: { sink: telemetrySink } } : {},
-  );
+  return CognitivePipeline.standard({
+    ...(telemetrySink ? { telemetry: { sink: telemetrySink } } : {}),
+    responseSummarizer: { perToolPagingParam: pagingParams },
+  });
 }
