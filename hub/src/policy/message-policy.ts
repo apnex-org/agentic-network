@@ -28,6 +28,12 @@
  */
 
 import { z } from "zod";
+import {
+  DEFAULT_SMALL_LIST_LIMIT,
+  listPaginationSchema,
+  pageDisclosure,
+  paginate,
+} from "./list-filters.js";
 
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
@@ -85,14 +91,33 @@ async function listMessages(
         agentId: targetAgentId ?? callerAgentId,
       },
     );
+    // work-640: list_messages previously returned EVERY matching row with no cap
+    // at any layer (measured: 10,108 rows / ~16MB / ~4M tokens on an unfiltered
+    // call). The cognitive-layer summariser was the only thing bounding it, and
+    // that has been removed — so the bound has to be real and it has to be
+    // DISCLOSED. A silent cap of 10 is the same defect one layer down.
+    //
+    // The cap is applied AFTER the store read, so this bounds what crosses the
+    // WIRE, not what the Hub reads. That is the harm actually measured (caller
+    // context destruction) and it does not make Hub-side memory any worse than
+    // today. Pushing the limit into the store is the deeper fix and is NOT done
+    // here; it is stated in the evidence rather than silently skipped.
+    const page = paginate(projectedMessages, {
+      ...args,
+      limit: (args.limit as number | undefined) ?? DEFAULT_SMALL_LIST_LIMIT,
+    });
     return {
       content: [
         {
           type: "text" as const,
           text: JSON.stringify(
             {
-              messages: projectedMessages,
-              count: projectedMessages.length,
+              messages: page.items,
+              count: page.count,
+              total: page.total,
+              offset: page.offset,
+              limit: page.limit,
+              ...pageDisclosure(page),
             },
             null,
             2,
@@ -716,6 +741,7 @@ export function registerMessagePolicy(router: PolicyRouter): void {
         .enum(MESSAGE_DELIVERY_MODES)
         .optional()
         .describe("Filter by delivery mode"),
+      ...listPaginationSchema(DEFAULT_SMALL_LIST_LIMIT),
       since: z
         .string()
         .optional()
