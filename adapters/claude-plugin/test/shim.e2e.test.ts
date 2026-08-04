@@ -39,7 +39,7 @@ import {
   ToolDescriptionEnricher,
   ErrorNormalizer,
   NormalizedError,
-  ResponseSummarizer,
+  createStandardCognitivePipeline,
   type TelemetryEvent,
 } from "@apnex/network-adapter";
 import { LoopbackTransport } from "../../../packages/network-adapter/test/helpers/loopback-transport.js";
@@ -507,52 +507,45 @@ describe("claude-plugin shim — cognitive layer integration", () => {
     await eng.agent.stop();
   });
 
-  it("ResponseSummarizer truncates oversized read results + injects _ois_pagination hint + tags Virtual Tokens Saved", async () => {
+  it("work-639: the standard pipeline does NOT truncate oversized read results", async () => {
     const events: TelemetryEvent[] = [];
-    const pipeline = new CognitivePipeline()
-      .use(new CognitiveTelemetry({ sink: (e) => events.push(e) }))
-      .use(new ResponseSummarizer({ maxItems: 3 }));
+    // The summariser is gone. Build the pipeline the SAME WAY PRODUCTION DOES
+    // rather than hand-assembling it, so this test tracks the real factory.
+    const pipeline = createStandardCognitivePipeline((e) => events.push(e));
     const eng = await createEngineerWithShim(hub, { cognitive: pipeline });
 
-    // Seed more than 3 ideas so list_ideas returns enough to trigger truncation
     for (let i = 0; i < 8; i++) {
       await eng.agent.call("create_idea", { text: `summarizer-test-${i}` });
     }
 
-    // Now call list_ideas WITHOUT a caller-limit so the summarizer's default
-    // truncation applies. bug-117: passing limit > maxItems now RAISES the cap
-    // to honor the caller, so a TRUNCATION test must not pass such a limit.
-    // (list_ideas returns up to its own DEFAULT_LIST_LIMIT of 100 either way.)
     const raw = await eng.agent.call("list_ideas", {});
     const result = typeof raw === "string" ? JSON.parse(raw) : raw;
 
-    // Summarizer should have added _ois_pagination and truncated ideas.
-    // truthretr0: this assertion previously pinned the DEFECT — it required
-    // the hint to say "offset=3" for a call with no declared paging
-    // parameter, i.e. it enforced the fabricated affordance. Now it pins the
-    // honest disclosure instead.
-    expect(result._ois_pagination).toBeDefined();
-    expect(result._ois_pagination.truncated).toBe(true);
-    expect(result._ois_pagination.field).toBe("ideas");
-    expect(result._ois_pagination.next_offset).toBeNull();
-    expect(result._ois_pagination.hint).not.toMatch(/offset=\d/);
-    expect(result._ois_pagination.count).toBe(3);
-    expect(result._ois_pagination.total).toBeGreaterThan(3);
-    expect(result._ois_pagination.omitted).toBe(
-      result._ois_pagination.total - 3,
-    );
+    // This assertion has now been inverted TWICE, and the history is the point:
+    //   originally it required hint "offset=3"  -> pinned the fabricated affordance
+    //   then it required truncated:true         -> pinned honest truncation
+    //   now it requires NO truncation at all    -> the middleware is removed
+    // A suite that agreed with the bug will agree with its removal only if
+    // someone looks, so this is checked rather than deleted.
+    expect(result._ois_pagination).toBeUndefined();
     expect(Array.isArray(result.ideas)).toBe(true);
-    expect(result.ideas).toHaveLength(3);
+    expect(result.ideas.length).toBeGreaterThan(3);
 
     // Wait for telemetry flush
     await new Promise((r) => setTimeout(r, 20));
 
-    // Virtual Tokens Saved KPI surfaced in telemetry
+    // work-639: virtualTokensSaved was set ONLY by the summariser, so it must
+    // now be absent. Asserting only that would pass on a dead pipeline, so the
+    // surviving telemetry is asserted in the same breath — absence of the
+    // summariser must not be provable by absence of everything.
     const summarizedEvent = events.find(
       (e) => e.kind === "tool_call" && e.tool === "list_ideas" && e.tags?.summarized === "true",
     );
-    expect(summarizedEvent).toBeDefined();
-    expect(Number(summarizedEvent!.tags!.virtualTokensSaved)).toBeGreaterThan(0);
+    expect(summarizedEvent).toBeUndefined();
+    const liveEvent = events.find(
+      (e) => e.kind === "tool_call" && e.tool === "list_ideas",
+    );
+    expect(liveEvent).toBeDefined(); // CognitiveTelemetry still running
 
     await eng.mcpClient.close();
     await eng.agent.stop();

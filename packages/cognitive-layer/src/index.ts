@@ -30,7 +30,6 @@ export { PROBE_CALL_TAG, isProbeCall } from "./contract.js";
 export {
   CognitivePipeline,
   createStandardCognitivePipeline,
-  HUB_PAGING_PARAMS,
 } from "./pipeline.js";
 export type { StandardPipelineConfig } from "./pipeline.js";
 
@@ -72,12 +71,3 @@ export type {
   CascadeDriftRule,
 } from "./middlewares/error-normalizer.js";
 
-export {
-  ResponseSummarizer,
-  summarizeResult,
-  buildTruncationDisclosure,
-} from "./middlewares/response-summarizer.js";
-export type {
-  ResponseSummarizerConfig,
-  TruncationDisclosure,
-} from "./middlewares/response-summarizer.js";

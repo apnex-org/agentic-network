@@ -89,12 +89,9 @@ const MANIFEST = loadHarnessManifest(resolve(__shimDir, "..", "agent-adapter.man
 const PROXY_BUILD_INFO = EMBEDDED_BUILD_INFO;
 const SDK_BUILD_INFO = EMBEDDED_BUILD_INFO;
 
-// truthretr0: DISPLAY ONLY. This const no longer DECIDES anything — the
-// kernel's createStandardCognitivePipeline owns the bypass for all three
-// adapters, so the decision cannot diverge between seats. This mirrors the
-// same env var with the same `=== "1"` semantics purely to render the
-// startup banner. If the kernel's predicate ever changes, this must follow.
-const COGNITIVE_BYPASS = process.env.OIS_COGNITIVE_BYPASS === "1";
+// work-639: the OIS_COGNITIVE_BYPASS const is GONE. The kernel no longer
+// reads that var (its sole reason, the ResponseSummarizer, was removed), so a
+// banner sourced from it would have reported a bypass that does not happen.
 
 // ── Telemetry sinks (stderr + file + ndjson events) ─────────────────
 //
@@ -200,7 +197,7 @@ async function main(): Promise<void> {
   log(`Notifications log: ${LOG_FILE}`);
   log(`Shim text log: ${SHIM_LOG_FILE}`);
   log(`Shim events log: ${SHIM_EVENTS_FILE}`);
-  log(`Cognitive: ${COGNITIVE_BYPASS ? "BYPASS (OIS_COGNITIVE_BYPASS=1; legacy passthrough)" : "ON (standard pipeline)"}`);
+  log(`Cognitive: ON (standard pipeline, summariser removed per work-639)`);
   // mission-66 commit 4: canonical event taxonomy v1 (ADR-031 §1; per
   // docs/specs/shim-observability-events.md §4.6 shim.lifecycle.shim_started).
   // Renames Phase 1 ad-hoc `shim.startup` to canonical name; required fields
@@ -214,7 +211,7 @@ async function main(): Promise<void> {
     sdkVersion: SDK_VERSION,
     hubUrl: config.hubUrl,
     role: config.role,
-    cognitiveBypass: COGNITIVE_BYPASS,
+    cognitiveBypass: false, // work-639: the bypass no longer exists; always false
     eagerWarmup: isEagerWarmupEnabled(process.env),
     // M-Build-Identity-AdvisoryTag (idea-256): build-identity in startup tele
     proxyCommitSha: PROXY_BUILD_INFO.commitSha,

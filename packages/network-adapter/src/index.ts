@@ -272,9 +272,6 @@ export {
   ToolDescriptionEnricher,
   ErrorNormalizer,
   NormalizedError,
-  ResponseSummarizer,
-  summarizeResult,
-  buildTruncationDisclosure,
 } from "@apnex/cognitive-layer";
 export type {
   CognitiveMiddleware,
@@ -299,7 +296,6 @@ export type {
   ErrorNormalizerConfig,
   ErrorRule,
   CascadeDriftRule,
-  ResponseSummarizerConfig,
 } from "@apnex/cognitive-layer";
 
 // hcapskills0 build_core — the harness-neutral, resource-generic HCAP consumer core.

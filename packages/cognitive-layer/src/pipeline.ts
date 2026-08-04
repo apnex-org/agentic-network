@@ -34,10 +34,6 @@ import {
   ErrorNormalizer,
   type ErrorNormalizerConfig,
 } from "./middlewares/error-normalizer.js";
-import {
-  ResponseSummarizer,
-  type ResponseSummarizerConfig,
-} from "./middlewares/response-summarizer.js";
 
 export interface StandardPipelineConfig {
   /** CognitiveTelemetry options. */
@@ -52,8 +48,6 @@ export interface StandardPipelineConfig {
   toolDescriptionEnricher?: ToolDescriptionEnricherConfig;
   /** ErrorNormalizer options. */
   errorNormalizer?: ErrorNormalizerConfig;
-  /** ResponseSummarizer options (Phase 2a). */
-  responseSummarizer?: ResponseSummarizerConfig;
 }
 
 export class CognitivePipeline {
@@ -134,10 +128,10 @@ export class CognitivePipeline {
     pipeline.use(new CircuitBreaker(config.circuitBreaker ?? {}));
     pipeline.use(new WriteCallDedup(config.writeCallDedup ?? {}));
     pipeline.use(new ToolResultCache(config.toolResultCache ?? {}));
-    // ResponseSummarizer (Phase 2a) sits AFTER cache so cached results
-    // are already summarized — cache-hits deliver the trimmed payload
-    // without re-running the summarization step.
-    pipeline.use(new ResponseSummarizer(config.responseSummarizer ?? {}));
+    // truthretr0/work-639: ResponseSummarizer REMOVED. Director ruling —
+    // oversize is a QUERY-LAYER problem (filters, defaults, real pagination,
+    // Hub-side); a middleware that silently chops arrays is a DEFECT, not a
+    // mitigation. Nothing downstream depended on its position or output shape.
     pipeline.use(new ToolDescriptionEnricher(config.toolDescriptionEnricher ?? {}));
     pipeline.use(new ErrorNormalizer(config.errorNormalizer ?? {}));
     return pipeline;
@@ -146,73 +140,31 @@ export class CognitivePipeline {
 
 // ── truthretr0 — the ONE construction site ────────────────────────────
 /**
- * THE single place the standard pipeline is constructed, and THE single
- * place `OIS_COGNITIVE_BYPASS` is honoured.
+ * THE single place the standard pipeline is constructed.
  *
- * Director ruling (truthretr0): *"delete the duplicated `.standard()`
- * construction from all three shims; the kernel owns the decision and the
- * bypass; adapters supply ONLY the telemetry sink."*
+ * Director ruling (truthretr0): the kernel owns the decision; adapters supply
+ * ONLY the telemetry sink. Three adapters previously each called
+ * `CognitivePipeline.standard()` independently.
  *
- * BEFORE: three adapters each called `CognitivePipeline.standard({...})`
- * independently, and exactly ONE of them (claude) read the bypass env var.
- * An operator setting `OIS_COGNITIVE_BYPASS=1` fleet-wide got a bypassed
- * claude seat and two silently-unaffected seats — a divergence that reads
- * as a code difference between adapters rather than as an ignored flag.
+ * work-639: OIS_COGNITIVE_BYPASS IS NO LONGER READ HERE, AND THAT IS THE POINT.
+ * Its sole documented reason (config/harnesses/claude.json `_envWhy`) was the
+ * ResponseSummarizer silently truncating read results. That middleware is now
+ * REMOVED, so the stopgap is discharged rather than made fleet-uniform.
  *
- * AFTER: all three call this. The bypass is honoured identically because
- * there is only one implementation of it. Adapters cannot diverge on the
- * middleware set or the bypass without deleting this call.
+ * This matters concretely: the var is `1` in the live environ of all three pi
+ * seats, and pi historically did NOT read it. Honouring it fleet-wide would
+ * have disabled all seven middlewares — taking WriteCallDedup (the double-write
+ * guard) and the cache down as collateral, which that same config comment calls
+ * "temporary". Removing the summariser instead means the guard and the cache
+ * simply keep running.
  *
- * Returns `undefined` when bypassed — the McpAgentClient contract for
- * "no cognitive pipeline, legacy passthrough".
- *
- * `env` is injectable so the bypass can be tested without mutating
- * process-global state.
+ * The env var should now be deleted from the harness config; that is a fleet-
+ * config act, not an adapter change, and is deliberately not done here.
  */
-/**
- * work-638: tools whose MCP schema DEMONSTRABLY accepts `offset`, AND whose
- * offset pages the same collection the summariser truncates.
- *
- * Both conditions are required. Declaring a tool that accepts `offset` but
- * pages a DIFFERENT array than the one truncated would emit a hint naming a
- * parameter that does not retrieve the omitted items — the original bug in a
- * subtler form.
- *
- * SOURCE-VERIFIED, two independent instruments agreeing:
- *   1. the seat's wire tool-catalog (93 tools, fetched 2026-07-28)
- *   2. current Hub source — `...LIST_PAGINATION_SCHEMA` spread at the tool's
- *      `router.register` (hub/src/policy/list-filters.ts declares limit+offset)
- *
- * WITHHELD DELIBERATELY — an empty entry is safer than a wrong one:
- *   get_thread       accepts offset, but it pages `messages` while the
- *                    summariser truncates whichever array is longest
- *                    (participants / convergenceActions are siblings).
- *                    Param and truncated field can disagree. EXCLUDED.
- *   list_messages    has `since` (a ULID cursor), not offset. The disclosure
- *                    emits a NUMERIC next_offset and cannot express a cursor.
- *   list_ready_work  `limit` only — caps, does not page.
- *   get_metrics      `limit` only — same.
- *   list_documents   NO paging parameter at all (verifier-confirmed, work-637).
- *   every other read tool     no paging parameter in schema.
- */
-export const HUB_PAGING_PARAMS: Readonly<Record<string, string>> =
-  Object.freeze({
-    get_agents: "offset",
-    list_bugs: "offset",
-    list_ideas: "offset",
-    list_missions: "offset",
-    list_threads: "offset",
-    list_work: "offset",
-  });
-
 export function createStandardCognitivePipeline(
   telemetrySink?: (event: TelemetryEvent) => void,
-  env: Record<string, string | undefined> = process.env,
-  pagingParams: Record<string, string> = HUB_PAGING_PARAMS,
-): CognitivePipeline | undefined {
-  if (env.OIS_COGNITIVE_BYPASS === "1") return undefined;
-  return CognitivePipeline.standard({
-    ...(telemetrySink ? { telemetry: { sink: telemetrySink } } : {}),
-    responseSummarizer: { perToolPagingParam: pagingParams },
-  });
+): CognitivePipeline {
+  return CognitivePipeline.standard(
+    telemetrySink ? { telemetry: { sink: telemetrySink } } : {},
+  );
 }
