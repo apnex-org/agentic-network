@@ -40,7 +40,7 @@ import {
   ToolSurfaceReconciler,
   makeFetchLiveToolSurfaceRevision,
   NotificationCoalescer,
-  CognitivePipeline,
+  createStandardCognitivePipeline,
   type HubConfig,
   type FileLogger,
   type AgentEvent,
@@ -578,16 +578,14 @@ async function connectToHub(agentName: string): Promise<void> {
     },
     {
       transportConfig: { url: config.hubUrl, token: config.hubToken },
-      cognitive: CognitivePipeline.standard({
-        telemetry: {
-          sink: (event: TelemetryEvent) => {
-            try {
-              log(`[OpencodePluginTelemetry] ${JSON.stringify(event)}`);
-            } catch {
-              /* never disturb the tool-call loop */
-            }
-          },
-        },
+      // truthretr0: the kernel owns the middleware set AND the bypass.
+      // This adapter supplies a telemetry sink and nothing else.
+      cognitive: createStandardCognitivePipeline((event: TelemetryEvent) => {
+        try {
+          log(`[OpencodePluginTelemetry] ${JSON.stringify(event)}`);
+        } catch {
+          /* never disturb the tool-call loop */
+        }
       }),
     },
   );

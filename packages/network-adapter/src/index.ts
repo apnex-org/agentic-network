@@ -261,6 +261,7 @@ export type {
 
 export {
   CognitivePipeline,
+  createStandardCognitivePipeline,
   CognitiveTelemetry,
   CircuitBreaker,
   HubUnavailableError,

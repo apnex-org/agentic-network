@@ -18,7 +18,11 @@ import type {
   ToolErrorContext,
   ToolErrorTerminal,
 } from "./contract.js";
-import { CognitiveTelemetry, type CognitiveTelemetryConfig } from "./middlewares/telemetry.js";
+import {
+  CognitiveTelemetry,
+  type CognitiveTelemetryConfig,
+  type TelemetryEvent,
+} from "./middlewares/telemetry.js";
 import { CircuitBreaker, type CircuitBreakerConfig } from "./middlewares/circuit-breaker.js";
 import { WriteCallDedup, type WriteCallDedupConfig } from "./middlewares/write-call-dedup.js";
 import { ToolResultCache, type ToolResultCacheConfig } from "./middlewares/tool-result-cache.js";
@@ -138,4 +142,39 @@ export class CognitivePipeline {
     pipeline.use(new ErrorNormalizer(config.errorNormalizer ?? {}));
     return pipeline;
   }
+}
+
+// ── truthretr0 — the ONE construction site ────────────────────────────
+/**
+ * THE single place the standard pipeline is constructed, and THE single
+ * place `OIS_COGNITIVE_BYPASS` is honoured.
+ *
+ * Director ruling (truthretr0): *"delete the duplicated `.standard()`
+ * construction from all three shims; the kernel owns the decision and the
+ * bypass; adapters supply ONLY the telemetry sink."*
+ *
+ * BEFORE: three adapters each called `CognitivePipeline.standard({...})`
+ * independently, and exactly ONE of them (claude) read the bypass env var.
+ * An operator setting `OIS_COGNITIVE_BYPASS=1` fleet-wide got a bypassed
+ * claude seat and two silently-unaffected seats — a divergence that reads
+ * as a code difference between adapters rather than as an ignored flag.
+ *
+ * AFTER: all three call this. The bypass is honoured identically because
+ * there is only one implementation of it. Adapters cannot diverge on the
+ * middleware set or the bypass without deleting this call.
+ *
+ * Returns `undefined` when bypassed — the McpAgentClient contract for
+ * "no cognitive pipeline, legacy passthrough".
+ *
+ * `env` is injectable so the bypass can be tested without mutating
+ * process-global state.
+ */
+export function createStandardCognitivePipeline(
+  telemetrySink?: (event: TelemetryEvent) => void,
+  env: Record<string, string | undefined> = process.env,
+): CognitivePipeline | undefined {
+  if (env.OIS_COGNITIVE_BYPASS === "1") return undefined;
+  return CognitivePipeline.standard(
+    telemetrySink ? { telemetry: { sink: telemetrySink } } : {},
+  );
 }

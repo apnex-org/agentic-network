@@ -43,7 +43,7 @@ import {
   createFileLogger,
   appendNotification,
   buildPendingTaskNotification,
-  CognitivePipeline,
+  createStandardCognitivePipeline,
   LivenessWatchdog,
   emitLivenessLostSignal,
   isEagerWarmupEnabled,
@@ -447,16 +447,14 @@ async function connectAndSeed(
     },
     {
       transportConfig: { url: config.hubUrl, token: config.hubToken },
-      cognitive: CognitivePipeline.standard({
-        telemetry: {
-          sink: (event: TelemetryEvent) => {
-            try {
-              log(`[PiPluginTelemetry] ${JSON.stringify(event)}`);
-            } catch {
-              /* never disturb the tool-call loop */
-            }
-          },
-        },
+      // truthretr0: the kernel owns the middleware set AND the bypass.
+      // This adapter supplies a telemetry sink and nothing else.
+      cognitive: createStandardCognitivePipeline((event: TelemetryEvent) => {
+        try {
+          log(`[PiPluginTelemetry] ${JSON.stringify(event)}`);
+        } catch {
+          /* never disturb the tool-call loop */
+        }
       }),
     },
   );

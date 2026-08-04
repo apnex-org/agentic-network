@@ -526,11 +526,21 @@ describe("claude-plugin shim — cognitive layer integration", () => {
     const raw = await eng.agent.call("list_ideas", {});
     const result = typeof raw === "string" ? JSON.parse(raw) : raw;
 
-    // Summarizer should have added _ois_pagination and truncated ideas
+    // Summarizer should have added _ois_pagination and truncated ideas.
+    // truthretr0: this assertion previously pinned the DEFECT — it required
+    // the hint to say "offset=3" for a call with no declared paging
+    // parameter, i.e. it enforced the fabricated affordance. Now it pins the
+    // honest disclosure instead.
     expect(result._ois_pagination).toBeDefined();
-    expect(result._ois_pagination.hint).toContain("offset=3");
+    expect(result._ois_pagination.truncated).toBe(true);
+    expect(result._ois_pagination.field).toBe("ideas");
+    expect(result._ois_pagination.next_offset).toBeNull();
+    expect(result._ois_pagination.hint).not.toMatch(/offset=\d/);
     expect(result._ois_pagination.count).toBe(3);
     expect(result._ois_pagination.total).toBeGreaterThan(3);
+    expect(result._ois_pagination.omitted).toBe(
+      result._ois_pagination.total - 3,
+    );
     expect(Array.isArray(result.ideas)).toBe(true);
     expect(result.ideas).toHaveLength(3);
 
