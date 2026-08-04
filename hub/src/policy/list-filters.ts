@@ -22,6 +22,73 @@ export const LIST_PAGINATION_SCHEMA = {
     .describe("Skip the first N entries for pagination (default 0)."),
 };
 
+/**
+ * work-640 (Director ruling: "Cap at 10 and disclose"): the SMALL default for
+ * surfaces whose realistic result set can destroy a caller's context.
+ * `list_messages` had NO cap at all (~10,108 rows, ~16MB, ~4M tokens measured);
+ * `list_work` defaulted to 100.
+ */
+export const DEFAULT_SMALL_LIST_LIMIT = 10;
+
+/** Pagination schema whose DESCRIBE states the tool's ACTUAL default.
+ *  The shared LIST_PAGINATION_SCHEMA hard-codes "default 100"; a surface with a
+ *  different default must not advertise that number (bug-391: deployed tool
+ *  descriptions contradicting their implementations). */
+export function listPaginationSchema(defaultLimit: number) {
+  return {
+    limit: z.number().int().positive().max(MAX_LIST_LIMIT).optional()
+      .describe(`Cap the result set size (max ${MAX_LIST_LIMIT}, default ${defaultLimit}). An explicit higher value IS honoured up to the max.`),
+    offset: z.number().int().nonnegative().optional()
+      .describe("Skip the first N entries for pagination (default 0)."),
+  };
+}
+
+/**
+ * PAGE-LEVEL truncation disclosure — deliberately DISTINCT from a capped SCAN.
+ *
+ * `truncated` on these surfaces means "the substrate scan hit its row cap, so
+ * matches may exist that we never saw". THIS says something different and
+ * narrower: "of the matches we DID see, your page does not contain all of them".
+ *
+ * Both can be true at once and they are not interchangeable. Conflating them is
+ * how a cap becomes silent: a caller told `truncated:false` while holding 10 of
+ * 50 rows has been misled by a technically-true flag.
+ *
+ * `pageTruncated:false` is emitted EXPLICITLY rather than omitted, so a complete
+ * result is machine-checkable as complete and "always report truncated" cannot
+ * pass a negative control.
+ */
+export interface PageDisclosure {
+  /** Always present, both ways — a complete result must be machine-checkable as complete. */
+  pageTruncated: boolean;
+  /** Present ONLY when pageTruncated — absent, never 0, when the result is whole. */
+  omitted?: number;
+  nextOffset?: number;
+  pageTruncationNote?: string;
+}
+
+export function pageDisclosure(page: {
+  count: number;
+  total: number;
+  offset: number;
+  limit: number;
+}): PageDisclosure {
+  const seen = page.offset + page.count;
+  if (seen >= page.total) return { pageTruncated: false };
+  return {
+    pageTruncated: true,
+    omitted: page.total - seen,
+    nextOffset: seen,
+    // The note must not attribute the limit to a "default" it cannot know was
+    // defaulted, and must not advise raising a limit already at the ceiling.
+    pageTruncationNote:
+      `showing ${page.count} of ${page.total} matched rows (limit ${page.limit}); ` +
+      `re-call with offset=${seen}` +
+      (page.limit < MAX_LIST_LIMIT ? `, or raise limit (max ${MAX_LIST_LIMIT}),` : ``) +
+      ` to retrieve the rest.`,
+  };
+}
+
 /** Compact-projection flag — spread into a `list_*` registration whose handler maps
  *  each item through a per-entity compact projection. bug-196: fat list payloads pushed
  *  agents to many per-item get_* calls (steve surveying the ledger), overrunning the

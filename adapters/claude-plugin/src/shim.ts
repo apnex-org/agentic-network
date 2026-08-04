@@ -38,7 +38,7 @@ import {
   type TelemetryEvent,
   type ILogger,
   type LogFields,
-  CognitivePipeline,
+  createStandardCognitivePipeline,
 } from "@apnex/network-adapter";
 import { readFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -89,12 +89,9 @@ const MANIFEST = loadHarnessManifest(resolve(__shimDir, "..", "agent-adapter.man
 const PROXY_BUILD_INFO = EMBEDDED_BUILD_INFO;
 const SDK_BUILD_INFO = EMBEDDED_BUILD_INFO;
 
-// OIS_COGNITIVE_BYPASS=1 → pass cognitive=undefined to McpAgentClient.
-// Operator-facing kill-switch for the cognitive pipeline; mcp-agent-client
-// takes the legacy passthrough (rawCall directly) when cognitive is unset.
-// Diagnostic surface for cognitive-layer triage; per-middleware opt-out
-// follow-on tracked separately.
-const COGNITIVE_BYPASS = process.env.OIS_COGNITIVE_BYPASS === "1";
+// work-639: the OIS_COGNITIVE_BYPASS const is GONE. The kernel no longer
+// reads that var (its sole reason, the ResponseSummarizer, was removed), so a
+// banner sourced from it would have reported a bypass that does not happen.
 
 // ── Telemetry sinks (stderr + file + ndjson events) ─────────────────
 //
@@ -200,7 +197,7 @@ async function main(): Promise<void> {
   log(`Notifications log: ${LOG_FILE}`);
   log(`Shim text log: ${SHIM_LOG_FILE}`);
   log(`Shim events log: ${SHIM_EVENTS_FILE}`);
-  log(`Cognitive: ${COGNITIVE_BYPASS ? "BYPASS (OIS_COGNITIVE_BYPASS=1; legacy passthrough)" : "ON (standard pipeline)"}`);
+  log(`Cognitive: ON (standard pipeline, summariser removed per work-639)`);
   // mission-66 commit 4: canonical event taxonomy v1 (ADR-031 §1; per
   // docs/specs/shim-observability-events.md §4.6 shim.lifecycle.shim_started).
   // Renames Phase 1 ad-hoc `shim.startup` to canonical name; required fields
@@ -214,7 +211,7 @@ async function main(): Promise<void> {
     sdkVersion: SDK_VERSION,
     hubUrl: config.hubUrl,
     role: config.role,
-    cognitiveBypass: COGNITIVE_BYPASS,
+    cognitiveBypass: false, // work-639: the bypass no longer exists; always false
     eagerWarmup: isEagerWarmupEnabled(process.env),
     // M-Build-Identity-AdvisoryTag (idea-256): build-identity in startup tele
     proxyCommitSha: PROXY_BUILD_INFO.commitSha,
@@ -435,26 +432,22 @@ async function main(): Promise<void> {
         url: config.hubUrl,
         token: config.hubToken,
       },
-      cognitive: COGNITIVE_BYPASS
-        ? undefined
-        : CognitivePipeline.standard({
-            telemetry: {
-              sink: (event: TelemetryEvent) => {
-                try {
-                  // Mirror to text log (existing behaviour) + structured
-                  // events file (Phase 1 obs; richer than the rendered
-                  // string for downstream telemetry pipelines).
-                  log(`[ClaudePluginTelemetry] ${JSON.stringify(event)}`);
-                  appendEvent(
-                    "cognitive.telemetry",
-                    event as unknown as LogFields,
-                  );
-                } catch {
-                  /* never disturb the tool-call loop */
-                }
-              },
-            },
-          }),
+      // truthretr0: the kernel owns the middleware set AND the bypass.
+      // The local COGNITIVE_BYPASS ternary is GONE - it was the only one of
+      // three adapters honouring the env var, which made a fleet-wide bypass
+      // silently claude-only. createStandardCognitivePipeline reads the same
+      // var for every adapter and returns undefined when set.
+      cognitive: createStandardCognitivePipeline((event: TelemetryEvent) => {
+        try {
+          // Mirror to text log (existing behaviour) + structured
+          // events file (Phase 1 obs; richer than the rendered
+          // string for downstream telemetry pipelines).
+          log(`[ClaudePluginTelemetry] ${JSON.stringify(event)}`);
+          appendEvent("cognitive.telemetry", event as unknown as LogFields);
+        } catch {
+          /* never disturb the tool-call loop */
+        }
+      }),
     },
   );
 

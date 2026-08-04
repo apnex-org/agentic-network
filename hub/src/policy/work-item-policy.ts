@@ -35,7 +35,15 @@ import type { PrWorkGraphBindingProof } from "./pr-review-workitem-event-contrac
 import { emitWorkTransition, emitDependencyUnblocks, emitWorkUpdated } from "./work-item-events.js";
 import { projectPendingFailedSealNotices } from "./failed-gate-notice-projector.js";
 import { projectPendingRecallNotices } from "./recall-notice-projector.js";
-import { DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT, LIST_PAGINATION_SCHEMA, paginate } from "./list-filters.js";
+import {
+  DEFAULT_LIST_LIMIT,
+  MAX_LIST_LIMIT,
+  DEFAULT_SMALL_LIST_LIMIT,
+  LIST_PAGINATION_SCHEMA,
+  listPaginationSchema,
+  pageDisclosure,
+  paginate,
+} from "./list-filters.js";
 import {
   TransitionRejected,
   ClaimRejected,
@@ -1573,7 +1581,16 @@ async function listWork(args: Record<string, unknown>, ctx: IPolicyContext): Pro
   // bug-371's transitional projection was REMOVED here (mission-141 residue): the stored phase IS
   // the terminal phase now, so the value this filter selected on and the value the caller sees are
   // the same value — which was the point of storing it rather than deriving it.
-  const page = paginate(items, args);
+  // work-640: default 10, not 100. DIFFERENT starting point from list_messages —
+  // list_work was already BOUNDED (500 scan cap, default 100); what it lacked was
+  // page-level disclosure. `truncated` here means the SCAN was capped, which is a
+  // narrower claim than "your page is incomplete": with default 10 over 50 matches
+  // the old shape returned truncated:false while withholding 40 rows. Technically
+  // true, and exactly the silent cap this arc exists to remove.
+  const page = paginate(items, {
+    ...args,
+    limit: (args.limit as number | undefined) ?? DEFAULT_SMALL_LIST_LIMIT,
+  });
   // truncation-HONEST (A4): `truncated` = the 500-row substrate scan was capped (there
   // may be MORE matches we never saw) — distinct from pagination (limit/offset over what we DID see).
   const truncationNote = truncated
@@ -1586,7 +1603,7 @@ async function listWork(args: Record<string, unknown>, ctx: IPolicyContext): Pro
         ...(page.total === 0 ? { emptyReason: "safe_default_no_ready_items" } : {}),
       }
     : { defaultScopeApplied: false };
-  return ok({ ...page, truncated, ...truncationNote, ...defaultScope });
+  return ok({ ...page, truncated, ...pageDisclosure(page), ...truncationNote, ...defaultScope });
 }
 
 // ── Schemas ─────────────────────────────────────────────────────────────────
@@ -1843,7 +1860,7 @@ export function registerWorkItemPolicy(router: PolicyRouter): void {
       role: z.string().optional().describe("Filter by role-eligibility ($contains membership; empty-eligibility 'any-role' items won't match a specific role)"),
       holder: z.string().optional().describe("Filter by current lease holder (agentId) — items this agent holds a lease on"),
       scope: z.enum(["safe", "all"]).optional().describe("Default/safe = zero-arg calls are bounded to status=ready + caller role. Use scope='all' to explicitly request the broad all-status/all-role org-state snapshot."),
-      ...LIST_PAGINATION_SCHEMA,
+      ...listPaginationSchema(DEFAULT_SMALL_LIST_LIMIT),
     },
     listWork,
   );

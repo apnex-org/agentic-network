@@ -18,7 +18,11 @@ import type {
   ToolErrorContext,
   ToolErrorTerminal,
 } from "./contract.js";
-import { CognitiveTelemetry, type CognitiveTelemetryConfig } from "./middlewares/telemetry.js";
+import {
+  CognitiveTelemetry,
+  type CognitiveTelemetryConfig,
+  type TelemetryEvent,
+} from "./middlewares/telemetry.js";
 import { CircuitBreaker, type CircuitBreakerConfig } from "./middlewares/circuit-breaker.js";
 import { WriteCallDedup, type WriteCallDedupConfig } from "./middlewares/write-call-dedup.js";
 import { ToolResultCache, type ToolResultCacheConfig } from "./middlewares/tool-result-cache.js";
@@ -30,10 +34,6 @@ import {
   ErrorNormalizer,
   type ErrorNormalizerConfig,
 } from "./middlewares/error-normalizer.js";
-import {
-  ResponseSummarizer,
-  type ResponseSummarizerConfig,
-} from "./middlewares/response-summarizer.js";
 
 export interface StandardPipelineConfig {
   /** CognitiveTelemetry options. */
@@ -48,8 +48,6 @@ export interface StandardPipelineConfig {
   toolDescriptionEnricher?: ToolDescriptionEnricherConfig;
   /** ErrorNormalizer options. */
   errorNormalizer?: ErrorNormalizerConfig;
-  /** ResponseSummarizer options (Phase 2a). */
-  responseSummarizer?: ResponseSummarizerConfig;
 }
 
 export class CognitivePipeline {
@@ -130,12 +128,43 @@ export class CognitivePipeline {
     pipeline.use(new CircuitBreaker(config.circuitBreaker ?? {}));
     pipeline.use(new WriteCallDedup(config.writeCallDedup ?? {}));
     pipeline.use(new ToolResultCache(config.toolResultCache ?? {}));
-    // ResponseSummarizer (Phase 2a) sits AFTER cache so cached results
-    // are already summarized — cache-hits deliver the trimmed payload
-    // without re-running the summarization step.
-    pipeline.use(new ResponseSummarizer(config.responseSummarizer ?? {}));
+    // truthretr0/work-639: ResponseSummarizer REMOVED. Director ruling —
+    // oversize is a QUERY-LAYER problem (filters, defaults, real pagination,
+    // Hub-side); a middleware that silently chops arrays is a DEFECT, not a
+    // mitigation. Nothing downstream depended on its position or output shape.
     pipeline.use(new ToolDescriptionEnricher(config.toolDescriptionEnricher ?? {}));
     pipeline.use(new ErrorNormalizer(config.errorNormalizer ?? {}));
     return pipeline;
   }
+}
+
+// ── truthretr0 — the ONE construction site ────────────────────────────
+/**
+ * THE single place the standard pipeline is constructed.
+ *
+ * Director ruling (truthretr0): the kernel owns the decision; adapters supply
+ * ONLY the telemetry sink. Three adapters previously each called
+ * `CognitivePipeline.standard()` independently.
+ *
+ * work-639: OIS_COGNITIVE_BYPASS IS NO LONGER READ HERE, AND THAT IS THE POINT.
+ * Its sole documented reason (config/harnesses/claude.json `_envWhy`) was the
+ * ResponseSummarizer silently truncating read results. That middleware is now
+ * REMOVED, so the stopgap is discharged rather than made fleet-uniform.
+ *
+ * This matters concretely: the var is `1` in the live environ of all three pi
+ * seats, and pi historically did NOT read it. Honouring it fleet-wide would
+ * have disabled all seven middlewares — taking WriteCallDedup (the double-write
+ * guard) and the cache down as collateral, which that same config comment calls
+ * "temporary". Removing the summariser instead means the guard and the cache
+ * simply keep running.
+ *
+ * The env var should now be deleted from the harness config; that is a fleet-
+ * config act, not an adapter change, and is deliberately not done here.
+ */
+export function createStandardCognitivePipeline(
+  telemetrySink?: (event: TelemetryEvent) => void,
+): CognitivePipeline {
+  return CognitivePipeline.standard(
+    telemetrySink ? { telemetry: { sink: telemetrySink } } : {},
+  );
 }
