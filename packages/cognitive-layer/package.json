@@ -1,7 +1,7 @@
 {
   "name": "@apnex/cognitive-layer",
-  "version": "0.1.4",
-  "description": "Sovereign cognitive-middleware layer for OIS agents — pluggable chain-of-responsibility augments for tool-call interception, caching, dedup, description enrichment, error normalization, and telemetry. Consumed by @apnex/network-adapter via opt-in config. See ADR-018.",
+  "version": "0.2.0",
+  "description": "Sovereign cognitive-middleware layer for OIS agents \u2014 pluggable chain-of-responsibility augments for tool-call interception, caching, dedup, description enrichment, error normalization, and telemetry. Consumed by @apnex/network-adapter via opt-in config. See ADR-018.",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
