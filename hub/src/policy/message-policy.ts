@@ -28,6 +28,10 @@
  */
 
 import { z } from "zod";
+/** Mirrors LIST_PREFETCH_CAP in message-repository-substrate.ts — the scan bound
+ *  this surface must be honest about. */
+const MESSAGE_SCAN_CAP = 500;
+
 import {
   DEFAULT_SMALL_LIST_LIMIT,
   listPaginationSchema,
@@ -102,6 +106,19 @@ async function listMessages(
     // context destruction) and it does not make Hub-side memory any worse than
     // today. Pushing the limit into the store is the deeper fix and is NOT done
     // here; it is stated in the evidence rather than silently skipped.
+    // work-642, found by OBSERVING the live cap rather than trusting the tests:
+    // the store caps its scan at LIST_PREFETCH_CAP (500,
+    // message-repository-substrate.ts:60) and returns a bare Message[] with NO
+    // truncation flag. So `total` is a FLOOR, not a count — the live surface
+    // reported "10 of 500" against a real population of ~10,108.
+    //
+    // That is this arc's own target defect one layer down: a number that reads
+    // complete and is not. list_work already discloses BOTH levels (scan cap via
+    // `truncated`, page cap via pageDisclosure); list_messages disclosed only one.
+    //
+    // Saturation is INFERRED from length === cap, which is why the note says the
+    // total is a floor rather than asserting a figure the store never gave us.
+    const scanSaturated = projectedMessages.length >= MESSAGE_SCAN_CAP;
     const page = paginate(projectedMessages, {
       ...args,
       limit: (args.limit as number | undefined) ?? DEFAULT_SMALL_LIST_LIMIT,
@@ -118,6 +135,14 @@ async function listMessages(
               offset: page.offset,
               limit: page.limit,
               ...pageDisclosure(page),
+              ...(scanSaturated
+                ? {
+                    truncated: true,
+                    truncationNote:
+                      `the message scan hit the ${MESSAGE_SCAN_CAP}-row cap — \`total\` is a FLOOR, not an exact count, ` +
+                      `and matches may exist beyond it; narrow with threadId/targetRole/authorAgentId/since.`,
+                  }
+                : { truncated: false }),
             },
             null,
             2,

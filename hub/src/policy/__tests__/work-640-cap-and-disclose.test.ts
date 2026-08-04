@@ -114,3 +114,36 @@ describe("work-640 — schema honesty", () => {
     expect(d).toContain("honoured");
   });
 });
+
+/**
+ * work-642 — found by OBSERVING the live cap, not by testing it.
+ * The store caps its scan at 500 and reports no flag, so `total` is a FLOOR.
+ * Saying "10 of 500" against ~10,108 real rows is this arc's target defect.
+ */
+describe("work-642 — scan-cap honesty is SEPARATE from page-cap honesty", () => {
+  const MESSAGE_SCAN_CAP = 500;
+  const surface = (scanned: number) => {
+    const page = paginate(rows(scanned), { limit: DEFAULT_SMALL_LIST_LIMIT });
+    const saturated = scanned >= MESSAGE_SCAN_CAP;
+    return { ...page, ...pageDisclosure(page), truncated: saturated };
+  };
+
+  it("🔴 a SATURATED scan is flagged — total is a floor, not a count", () => {
+    const r = surface(500);
+    expect(r.truncated).toBe(true);
+    expect(r.pageTruncated).toBe(true); // both true at once, independently
+  });
+
+  it("🔴 NEGATIVE CONTROL: an unsaturated scan is NOT flagged, even when the PAGE is capped", () => {
+    const r = surface(50);
+    expect(r.truncated).toBe(false); // scan saw everything
+    expect(r.pageTruncated).toBe(true); // page still withheld 40
+    expect(r.omitted).toBe(40);
+  });
+
+  it("the two flags are genuinely independent, not one renamed", () => {
+    const small = surface(4);
+    expect(small.truncated).toBe(false);
+    expect(small.pageTruncated).toBe(false);
+  });
+});
