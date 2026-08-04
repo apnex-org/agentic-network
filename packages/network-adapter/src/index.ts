@@ -273,7 +273,7 @@ export {
   NormalizedError,
   ResponseSummarizer,
   summarizeResult,
-  buildPaginationHint,
+  buildTruncationDisclosure,
 } from "@apnex/cognitive-layer";
 export type {
   CognitiveMiddleware,

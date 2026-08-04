@@ -71,6 +71,9 @@ export type {
 export {
   ResponseSummarizer,
   summarizeResult,
-  buildPaginationHint,
+  buildTruncationDisclosure,
 } from "./middlewares/response-summarizer.js";
-export type { ResponseSummarizerConfig } from "./middlewares/response-summarizer.js";
+export type {
+  ResponseSummarizerConfig,
+  TruncationDisclosure,
+} from "./middlewares/response-summarizer.js";

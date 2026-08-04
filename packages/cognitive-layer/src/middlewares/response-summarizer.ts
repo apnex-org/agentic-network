@@ -1,9 +1,27 @@
 /**
  * ResponseSummarizer middleware (ADR-018 Phase 2a — thread-160 ratified).
  *
- * Intercepts oversized tool-call results and truncates large arrays with
- * an architect-ratified pagination-hint structure, teaching the LLM
- * that (a) its view is partial and (b) how to fetch more.
+ * Intercepts oversized tool-call results and truncates large arrays,
+ * disclosing the truncation IN-BAND so the caller can distinguish a
+ * partial view from a complete one.
+ *
+ * truthretr0 (bug-263 / bug-339 / bug-476 / bug-232): the pre-fix
+ * envelope was DISHONEST IN TWO WAYS.
+ *   1. It never said WHICH array was truncated. For an object result the
+ *      caller saw total/count but had to GUESS the field — which is how
+ *      bug-476 came to be filed against `get_bug` when the truncation is
+ *      performed here, by this middleware, on whichever array is longest.
+ *   2. It emitted `"Use offset=N to retrieve more results"` UNCONDITIONALLY,
+ *      fabricating a paging affordance for tools that have none.
+ *      `list_documents` accepts `prefix` + `category` ONLY — there is no
+ *      offset to use, so the hint sent callers after data they could not
+ *      reach by that route.
+ *
+ * A hint now names a paging parameter ONLY when one has been explicitly
+ * declared for that tool via `perToolPagingParam`. Absent a declaration,
+ * the disclosure says plainly that the omitted items are NOT reachable by
+ * re-calling with an offset. The fabrication is unrepresentable rather
+ * than discouraged: there is no code path that can invent a parameter name.
  *
  * Positioned AFTER ToolResultCache in the standard pipeline — cached
  * results are stored in their summarized form, so a cache hit
@@ -21,20 +39,28 @@
  *   Input:  [item1, item2, ..., item150]  (top-level array)
  *   Output: {
  *     "_ois_pagination": {
+ *       "truncated": true,
+ *       "field": "items",
  *       "total": 150,
  *       "count": 10,
- *       "next_offset": 10,
- *       "hint": "Use offset=10 to retrieve more results"
+ *       "omitted": 140,
+ *       "reason": "client-side summarisation by cognitive-layer response-summarizer",
+ *       "next_offset": null,
+ *       "hint": "<no paging parameter declared for this tool> ..."
  *     },
  *     "items": [item1, ..., item10]
  *   }
  *
  *   Input:  { ideas: [150 items], status: "ok" }
  *   Output: {
- *     "_ois_pagination": { ... },
+ *     "_ois_pagination": { ..., "field": "ideas" },
  *     "ideas": [first 10 items],
  *     "status": "ok"
  *   }
+ *
+ * A COMPLETE result is returned reference-equal and carries NO
+ * `_ois_pagination` key at all — absence of the envelope is the
+ * negative control.
  *
  * Tags `ctx.tags.virtualTokensSaved` with the delta between raw and
  * summarized payload token-approximations. Consumed by
@@ -64,6 +90,16 @@ export interface ResponseSummarizerConfig {
    * tool. Useful for tools with small but high-signal results.
    */
   perToolMaxItems?: Record<string, number | null>;
+  /**
+   * truthretr0: tool name -> the name of the paging parameter that tool
+   * ACTUALLY accepts (e.g. { list_bugs: "offset" }).
+   *
+   * A truncation disclosure names a parameter ONLY if it is declared here.
+   * Undeclared tools get an explicit "no paging parameter" statement rather
+   * than a fabricated one. This is the anti-fabrication mechanism: the
+   * middleware cannot invent an affordance it was never told about.
+   */
+  perToolPagingParam?: Record<string, string>;
   /**
    * Summarization predicate override. Receives tool name + raw result;
    * returns true if summarization should be applied. Default heuristic
@@ -108,21 +144,46 @@ function defaultShouldSummarize(
   return false;
 }
 
-export function buildPaginationHint(
-  total: number,
-  count: number,
-  nextOffset: number,
-): {
+export interface TruncationDisclosure {
+  /** Explicit, machine-checkable. Absent envelope == complete result. */
+  truncated: true;
+  /** WHICH array was truncated. Prevents the bug-476 mis-attribution class. */
+  field: string;
   total: number;
   count: number;
-  next_offset: number;
+  omitted: number;
+  /** Names the layer responsible, so the defect is not attributed to the tool. */
+  reason: string;
+  /** Non-null ONLY when the tool has a declared paging parameter. */
+  next_offset: number | null;
   hint: string;
-} {
+}
+
+/**
+ * truthretr0: build an HONEST truncation disclosure.
+ *
+ * `pagingParam` is the name of a paging parameter the tool genuinely
+ * accepts. When it is absent the disclosure states that the omitted items
+ * are NOT retrievable by re-calling — it does NOT guess a parameter name.
+ */
+export function buildTruncationDisclosure(
+  field: string,
+  total: number,
+  count: number,
+  pagingParam?: string,
+): TruncationDisclosure {
   return {
+    truncated: true,
+    field,
     total,
     count,
-    next_offset: nextOffset,
-    hint: `Use offset=${nextOffset} to retrieve more results`,
+    omitted: total - count,
+    reason:
+      "client-side summarisation by cognitive-layer response-summarizer (not the tool)",
+    next_offset: pagingParam ? count : null,
+    hint: pagingParam
+      ? `Re-call with ${pagingParam}=${count} to retrieve the next page.`
+      : `${total - count} of ${total} items in "${field}" were omitted by client-side summarisation. This tool has NO declared paging parameter, so the omitted items are NOT retrievable by re-calling with an offset — narrow the query, or use a compact/bulk projection if the surface offers one.`,
   };
 }
 
@@ -135,12 +196,18 @@ export function buildPaginationHint(
 export function summarizeResult(
   result: unknown,
   maxItems: number,
+  pagingParam?: string,
 ): unknown {
   // Top-level array
   if (Array.isArray(result)) {
     if (result.length <= maxItems) return result;
     return {
-      _ois_pagination: buildPaginationHint(result.length, maxItems, maxItems),
+      _ois_pagination: buildTruncationDisclosure(
+        "items",
+        result.length,
+        maxItems,
+        pagingParam,
+      ),
       items: result.slice(0, maxItems),
     };
   }
@@ -159,7 +226,14 @@ export function summarizeResult(
 
     if (largestKey && largestLen > maxItems) {
       const truncated: Record<string, unknown> = {
-        _ois_pagination: buildPaginationHint(largestLen, maxItems, maxItems),
+        // truthretr0: name the field. Without this the caller cannot tell
+        // WHICH array was cut and mis-attributes the defect to the tool.
+        _ois_pagination: buildTruncationDisclosure(
+          largestKey,
+          largestLen,
+          maxItems,
+          pagingParam,
+        ),
       };
       for (const [k, v] of Object.entries(obj)) {
         if (k === largestKey) {
@@ -181,12 +255,14 @@ export class ResponseSummarizer implements CognitiveMiddleware {
   private readonly maxItems: number;
   private readonly maxBytes: number;
   private readonly perToolMaxItems: Record<string, number | null>;
+  private readonly perToolPagingParam: Record<string, string>;
   private readonly shouldSummarize: (tool: string, result: unknown) => boolean;
 
   constructor(config: ResponseSummarizerConfig = {}) {
     this.maxItems = config.maxItems ?? DEFAULT_MAX_ITEMS;
     this.maxBytes = config.maxBytes ?? DEFAULT_MAX_BYTES;
     this.perToolMaxItems = { ...(config.perToolMaxItems ?? {}) };
+    this.perToolPagingParam = { ...(config.perToolPagingParam ?? {}) };
     this.shouldSummarize =
       config.shouldSummarize ??
       ((tool, result) => defaultShouldSummarize(tool, result, this.maxBytes, this.maxItems));
@@ -232,7 +308,12 @@ export class ResponseSummarizer implements CognitiveMiddleware {
 
     if (!this.shouldSummarize(ctx.tool, result)) return result;
 
-    const summarized = summarizeResult(result, effectiveMaxItems);
+    // truthretr0: a paging parameter is named ONLY if declared for this tool.
+    const summarized = summarizeResult(
+      result,
+      effectiveMaxItems,
+      this.perToolPagingParam[ctx.tool],
+    );
 
     // Virtual Tokens Saved — the Phase 2 primary KPI (thread-160).
     // Records the delta between raw and summarized token-approximation
