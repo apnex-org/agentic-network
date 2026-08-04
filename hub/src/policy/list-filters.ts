@@ -58,12 +58,21 @@ export function listPaginationSchema(defaultLimit: number) {
  * result is machine-checkable as complete and "always report truncated" cannot
  * pass a negative control.
  */
+export interface PageDisclosure {
+  /** Always present, both ways — a complete result must be machine-checkable as complete. */
+  pageTruncated: boolean;
+  /** Present ONLY when pageTruncated — absent, never 0, when the result is whole. */
+  omitted?: number;
+  nextOffset?: number;
+  pageTruncationNote?: string;
+}
+
 export function pageDisclosure(page: {
   count: number;
   total: number;
   offset: number;
   limit: number;
-}): Record<string, unknown> {
+}): PageDisclosure {
   const seen = page.offset + page.count;
   if (seen >= page.total) return { pageTruncated: false };
   return {
