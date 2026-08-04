@@ -105,7 +105,14 @@ jq -e '.harness == "claude" and (.exec | index("claude") == 0) and ((.exec // []
 # This deployable surface must co-ship the repo-side harness config into live OIS /config,
 # because bin/ois reads $HOME/.config/apnex-agents/config at runtime.
 [[ -f "$PI_HARNESS_CONFIG_SRC" ]] || { echo "error: missing repo pi harness config at $PI_HARNESS_CONFIG_SRC — refusing to deploy pi settings/models renderer without its config source" >&2; exit 1; }
-jq -e '.piSettings.theme == "dark" and .piSettings.defaultProvider == "openai-codex" and (.piSettings.defaultModel == "gpt-5.5" or .piSettings.defaultModel == "gpt-5.6-sol") and .piSettings.defaultThinkingLevel == "xhigh" and .piSettings.terminal.showTerminalProgress == true and ((.piSettings.packages // []) | index("npm:pi-tool-display")) != null and ((.piSettings.packages // []) | index("npm:pi-web-access")) != null and .piSettings.compaction.enabled == true and (.piSettings.compaction.reserveTokens | type == "number") and (.piSettings.compaction.keepRecentTokens | type == "number") and ((.piModels.providers["openai-codex"].modelOverrides["gpt-5.5"].contextWindow == 400000) or (.piModels.providers["openai-codex"].modelOverrides["gpt-5.6-sol"].contextWindow == 400000))' "$PI_HARNESS_CONFIG_SRC" >/dev/null || { echo "error: repo pi harness config lacks required piSettings/piModels fleet policy — refusing to deploy" >&2; exit 1; }
+# The provider/model half of this guard was REMOVED, not relaxed. It was the third
+# independent restatement of "the fleet runs openai-codex/gpt-5.x" (with bin/ois's two
+# validators) — so adding a provider meant editing three files that could disagree, and the
+# guard enforced the duplicate rather than the agreement. Provider/model now live once in
+# fleet.json .providers and are selected per cell; what this surface must still assert is the
+# harness-wide UI/compaction baseline it co-ships, PLUS the anti-duplication invariant that
+# the harness config does not restate a provider or model at all.
+jq -e '.piSettings.theme == "dark" and .piSettings.defaultThinkingLevel == "xhigh" and .piSettings.terminal.showTerminalProgress == true and ((.piSettings.packages // []) | index("npm:pi-tool-display")) != null and ((.piSettings.packages // []) | index("npm:pi-web-access")) != null and .piSettings.compaction.enabled == true and (.piSettings.compaction.reserveTokens | type == "number") and (.piSettings.compaction.keepRecentTokens | type == "number") and (.piSettings.defaultProvider == null) and (.piSettings.defaultModel == null) and (.piModels == null)' "$PI_HARNESS_CONFIG_SRC" >/dev/null || { echo "error: repo pi harness config lacks the required pi UI/compaction baseline, or still restates a provider/model (piModels or piSettings.default{Provider,Model}) that must now come from fleet.json .providers — refusing to deploy" >&2; exit 1; }
 # bug-247 co-deploy guard: if THIS ois sources the resolver, its lib + table MUST co-ship.
 # The new ois moved the dev-channels-banner handler (which seat-launch depends on) out of a
 # hardcoded branch and INTO the table — so shipping the ois without them would silently hang
