@@ -1,6 +1,6 @@
 {
   "harness": "pi",
-  "_why": "pi harness: hub plugin loaded ephemerally from npm each launch, pinned via piPluginSpec (the -e flag overrides any package pin in settings). Per-seat PI_CODING_AGENT_DIR/settings.json and models.json are rendered from this OIS config source; do not rely on ~/.pi/agent or workspace .pi fallback for seat-critical Pi policy.",
+  "_why": "pi harness: hub plugin loaded ephemerally from npm each launch, pinned via piPluginSpec (the -e flag overrides any package pin in settings). Per-seat PI_CODING_AGENT_DIR/settings.json and models.json are rendered from this OIS config source; do not rely on ~/.pi/agent or workspace .pi fallback for seat-critical Pi policy. WHICH provider/model a seat runs is NOT declared here — it is the cell's piProvider/piModel resolved against the fleet.json .providers catalog. This file holds only harness-wide UI/compaction baseline that is true of every pi seat regardless of model.",
   "exec": [
     "pi",
     "-e",
@@ -22,10 +22,9 @@
     "adapter-config"
   ],
   "configDirTemplate": "~/.config/apnex-agents/{agent}.pi",
+  "_piSettingsWhy": "defaultProvider/defaultModel are deliberately ABSENT: render_pi_settings derives them from the cell's piProvider/piModel — the same pair that builds the exec flags — so the rendered seat file cannot disagree with the model the seat actually runs. Restating them here is what allowed that drift, and it stayed invisible while every cell was codex.",
   "piSettings": {
     "theme": "dark",
-    "defaultProvider": "openai-codex",
-    "defaultModel": "gpt-5.6-sol",
     "defaultThinkingLevel": "xhigh",
     "terminal": {
       "showTerminalProgress": true
@@ -41,15 +40,5 @@
       "npm:pi-web-access"
     ]
   },
-  "piModels": {
-    "providers": {
-      "openai-codex": {
-        "modelOverrides": {
-          "gpt-5.6-sol": {
-            "contextWindow": 400000
-          }
-        }
-      }
-    }
-  }
+  "_piModelsWhy": "The piModels block was REMOVED, not emptied. Model windows and provider endpoints now live once in fleet.json .providers and render_pi_models derives the seat's models.json from the cell's selected entry. A harness-level model table could only ever describe one provider, which is why adding a second endpoint needed an ois edit before."
 }

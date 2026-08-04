@@ -78,6 +78,10 @@ cell_json() {
                + (if $ag.gitIdentity.githubLogin then {"ois.io/github/login": $ag.gitIdentity.githubLogin} else {} end)),
       fleetHub: .[0].hub,
       fleetCredentials: (.[0].credentials // {}),
+      # Canonical provider catalog (fleet.json .providers), carried onto every cell so
+      # renders/validators/credential-scoping all resolve from ONE declaration instead of
+      # re-stating the provider per layer. Cells select by name via piProvider/piModel.
+      fleetProviders: (.[0].providers // {}),
       cellAgent: $a,
       cellHarness: $h,
       secretEnv: ((($d.secretEnv // {}) | with_entries(.value |= gsub("\\{agent\\}"; $a))) * ($ag.secretEnv // {}))
@@ -156,11 +160,26 @@ render_pi_settings() { # cell-json arg -> per-seat pi settings.json on stdout
   # ~/.pi/agent/settings.json or workspace .pi/settings.json. The source of truth is the
   # merged cell's .piSettings (declared under config/, currently config/harnesses/pi.json).
   # Per-cell compaction fields remain authoritative when present.
+  #
+  # defaultProvider/defaultModel are DERIVED from the same piProvider/piModel that build the
+  # exec flags, never restated in .piSettings. Stating them twice let the rendered seat file
+  # disagree with the model the seat actually runs, and the old validator enforced the
+  # duplicate literal rather than the agreement — so the drift was invisible precisely while
+  # every cell happened to match. Derivation makes disagreement unrepresentable.
+  #
+  # Reserve precedence, unchanged for existing cells: explicit piReserveTokens wins; else an
+  # optional piReserveFraction scales off the catalog contextWindow (for 1M-window models,
+  # where a hand-tuned constant does not travel); else the .piSettings baseline stands.
   jq -e -n --argjson c "$1" '
     ($c.piSettings) as $s |
+    ($c.fleetProviders[$c.piProvider].models[$c.piModel].contextWindow) as $ctx |
+    (if $c.piReserveTokens then $c.piReserveTokens
+     elif ($c.piReserveFraction and $ctx) then (($ctx * $c.piReserveFraction) | floor)
+     else null end) as $reserve |
     $s
-    * (if $c.piReserveTokens
-       then {compaction: (($s.compaction // {}) * {enabled: true, reserveTokens: $c.piReserveTokens, keepRecentTokens: ($c.piKeepRecentTokens // 24000)})}
+    * {defaultProvider: $c.piProvider, defaultModel: $c.piModel}
+    * (if $reserve
+       then {compaction: (($s.compaction // {}) * {enabled: true, reserveTokens: $reserve, keepRecentTokens: ($c.piKeepRecentTokens // 24000)})}
        else {} end)'
 }
 
@@ -233,13 +252,27 @@ env_lines() {
   if [[ "$mode" == raw ]]; then val=$(cat "$SEC/$ref"); else val="sha256:$(sha12 < "$SEC/$ref")"; fi
   echo "OIS_HUB_TOKEN=$val"
   # litellm credential — injection-scoped: only cells whose resolved provider
-  # rides the LiteLLM proxy get the key (opencode model litellm-*/..., pi
-  # provider litellm-*). Harness configs hold env references, never the value.
-  if jq -e '((.model // "") | startswith("litellm-")) or ((.piProvider // "") | startswith("litellm"))' <<<"$c" >/dev/null; then
-    local lref lname
-    lref=$(jq -r '.fleetCredentials.litellm.secretRef // empty' <<<"$c")
-    lname=$(jq -r '.fleetCredentials.litellm.injectAs // "LITELLM_API_KEY"' <<<"$c")
-    [[ -n "$lref" && -f "$SEC/$lref" ]] || fatal "litellm credential missing (secretRef=$lref)"
+  # rides the proxy gets the key. Which key is CATALOG-RESOLVED: the cell's provider
+  # names its own credential (fleet.json .providers[<p>].credential), so two LiteLLM
+  # endpoints cannot cross-inject. The old rule matched the prefix `litellm` and always
+  # resolved credentials.litellm — correct only while exactly one proxy existed; with a
+  # second endpoint it silently hands a seat the WRONG proxy's key, and LiteLLM answers a
+  # wrong key with `No connected db` (400), which reads as a server outage, not an auth
+  # failure. Legacy opencode cells still resolve by model prefix until opencode moves onto
+  # the catalog; pi resolves only through the catalog.
+  local credname="" lref lname
+  local cellprov; cellprov=$(jq -r '.piProvider // empty' <<<"$c")
+  if [[ -n "$cellprov" ]]; then
+    credname=$(jq -r --arg p "$cellprov" '.fleetProviders[$p].credential // empty' <<<"$c")
+  fi
+  if [[ -z "$credname" ]] && jq -e '((.model // "") | startswith("litellm-"))' <<<"$c" >/dev/null; then
+    credname=litellm
+  fi
+  if [[ -n "$credname" ]]; then
+    lref=$(jq -r --arg k "$credname" '.fleetCredentials[$k].secretRef // empty' <<<"$c")
+    lname=$(jq -r --arg k "$credname" '.fleetCredentials[$k].injectAs // empty' <<<"$c")
+    [[ -n "$lref" && -n "$lname" ]] || fatal "provider credential '$credname' is not declared in config/fleet.json .credentials (needs secretRef + injectAs)"
+    [[ -f "$SEC/$lref" ]] || fatal "credential '$credname' -> missing secret $lref"
     if [[ "$mode" == raw ]]; then val=$(cat "$SEC/$lref"); else val="sha256:$(sha12 < "$SEC/$lref")"; fi
     echo "$lname=$val"
   fi
@@ -507,8 +540,26 @@ pi_auth_bridge() { # <agent> <per-seat-cdir>
   echo "  seeding : pi auth bridge linked ($dst -> $src)"
 }
 
-pi_models_400k_valid() { # <models.json>
-  jq -e '(.providers["openai-codex"].modelOverrides["gpt-5.5"].contextWindow == 400000) or (.providers["openai-codex"].modelOverrides["gpt-5.6-sol"].contextWindow == 400000)' "$1" >/dev/null 2>&1
+pi_models_valid() { # <models.json> <provider> <model>
+  # STRUCTURAL, not enumerative. The predecessor (pi_models_400k_valid) asserted the literal
+  # `openai-codex.modelOverrides[gpt-5.5|gpt-5.6-sol].contextWindow == 400000` — a vendor name
+  # and a magic constant standing in for "the selected model declares a usable window". That
+  # made every new provider or model an ois edit, and it could not express a second provider
+  # at all. This asserts the property instead: the cell's provider is present, the cell's
+  # model is declared under it exactly once, its contextWindow is a positive number, and a
+  # full registration (one carrying baseUrl) is complete enough for pi to call.
+  jq -e --arg p "$2" --arg m "$3" '
+    .providers[$p] as $pv |
+    ($pv != null)
+    and ( ( ($pv.modelOverrides // {})[$m].contextWindow
+            // ( ($pv.models // []) | map(select(.id == $m)) | .[0].contextWindow ) )
+          | (type == "number" and . > 0) )
+    and ( ($pv.models // []) | map(select(.id == $m)) | length <= 1 )
+    and (if $pv.baseUrl
+         then ($pv.api != null and $pv.apiKey != null
+               and (($pv.models // []) | map(select(.id == $m)) | length == 1))
+         else true end)
+  ' "$1" >/dev/null 2>&1
 }
 
 pi_json_equiv() { # <json-a> <json-b> — canonical semantic equality
@@ -516,19 +567,55 @@ pi_json_equiv() { # <json-a> <json-b> — canonical semantic equality
 }
 
 render_pi_models() { # cell-json arg -> per-seat pi models.json on stdout
-  # bug-271: the 400k gpt-5.5 model policy is part of the OIS fleet declaration/render
-  # contract, not an implicit inheritance from ~/.pi/agent or a workspace .pi fallback, and
-  # not a default embedded in this command script. The source of truth is the merged cell's
-  # .piModels config (declared under config/, currently config/harnesses/pi.json).
-  jq -e -n --argjson c "$1" '$c.piModels'
+  # bug-271: pi model policy is part of the OIS fleet declaration/render contract, not an
+  # implicit inheritance from ~/.pi/agent or a workspace .pi fallback, and not a default
+  # embedded in this command script. The source of truth is now fleet.json .providers —
+  # derived here rather than restated per harness.
+  #
+  # ONLY the cell's selected provider is emitted. That is deliberate on two counts: it keeps
+  # a codex seat's rendered file byte-for-byte what it was before the catalog existed, and it
+  # keeps one endpoint's apiKey out of a seat that rides a different endpoint.
+  #
+  # An entry WITHOUT baseUrl is a harness built-in -> pi modelOverrides (window hints only;
+  # auth comes from pi's own auth bridge). An entry WITH baseUrl is a full pi provider
+  # registration -> baseUrl/api/apiKey/models[]. The apiKey is emitted as a ${VAR} REFERENCE
+  # resolved by pi at read time from the launch env; the secret value is never rendered to
+  # disk (same contract as the hub token).
+  local p; p=$(jq -r '.piProvider // empty' <<<"$1")
+  [[ -n "$p" ]] || fatal "pi cell declares no piProvider"
+  jq -e -n --argjson c "$1" --arg p "$p" '
+    ($c.fleetProviders[$p]) as $pv |
+    if $pv == null then error("unknown provider \"" + $p + "\" — declare it in config/fleet.json .providers (known: " + (($c.fleetProviders // {}) | keys | join(", ")) + ")") else . end |
+    ($c.fleetCredentials[$pv.credential // ""].injectAs) as $credEnv |
+    if ($pv.baseUrl != null) and ($credEnv == null) then
+      error("provider \"" + $p + "\" declares baseUrl but its credential \"" + ($pv.credential // "(none)") + "\" has no injectAs in config/fleet.json .credentials")
+    else . end |
+    { providers: {
+        ($p): (if $pv.baseUrl
+               then { baseUrl: $pv.baseUrl, api: $pv.api, apiKey: ("${" + $credEnv + "}") }
+                    + (if $pv.compat then {compat: $pv.compat} else {} end)
+                    + { models: ($pv.models | to_entries | map({id: .key} + .value)) }
+               else { modelOverrides: $pv.models }
+               end)
+      } }'
 }
 
-pi_settings_valid() { # <settings.json>
-  jq -e '
+pi_settings_valid() { # <settings.json> [<provider>] [<model>]
+  # STRUCTURAL + CONSISTENCY, not a vendor whitelist. Previously this pinned
+  # `.defaultProvider == "openai-codex"` and enumerated gpt-5.x, which made any non-codex
+  # provider fail closed at seed and forced an ois edit per model. Now: the file must DECLARE
+  # a provider and model, and when the caller supplies the cell's selection (seed does) they
+  # must AGREE with it. Agreement is the property that was actually wanted; the literal was
+  # only ever a proxy for it that happened to hold while the fleet was single-provider.
+  # Called with one arg it checks shape alone — that is the symlink/predecessor-state path,
+  # which has no cell to compare against.
+  jq -e --arg p "${2-}" --arg m "${3-}" '
     type == "object" and
     .theme == "dark" and
-    .defaultProvider == "openai-codex" and
-    (.defaultModel == "gpt-5.5" or .defaultModel == "gpt-5.6-sol") and
+    ((.defaultProvider // "") | type == "string" and length > 0) and
+    ((.defaultModel // "") | type == "string" and length > 0) and
+    (($p == "") or (.defaultProvider == $p)) and
+    (($m == "") or (.defaultModel == $m)) and
     .defaultThinkingLevel == "xhigh" and
     .terminal.showTerminalProgress == true and
     ((.packages // []) | index("npm:pi-tool-display")) != null and
@@ -552,10 +639,12 @@ pi_settings_seed() { # <agent> <per-seat-cdir> <cell-json>
   local a="$1" cdir="$2" c="$3" dst content tmp old_umask
   dst="$cdir/settings.json"
   [[ -n "$cdir" ]] || fatal "pi settings seed called without a per-seat config dir"
-  content=$(render_pi_settings "$c") || fatal "pi settings config missing for '$a': merged cell lacks .piSettings (declare it under config/harnesses/pi.json)"
+  content=$(render_pi_settings "$c") || fatal "pi settings config missing for '$a': merged cell lacks .piSettings (UI/compaction baseline; declare it under config/harnesses/pi.json)"
   tmp=$(mktemp)
   printf '%s\n' "$content" > "$tmp"
-  [[ -s "$tmp" ]] && pi_settings_valid "$tmp" || { rm -f "$tmp"; fatal "rendered pi settings policy for '$a' lacks required dark/openai-codex/gpt-5.5/UI/compaction baseline"; }
+  local pv pm; pv=$(jq -r '.piProvider // empty' <<<"$c"); pm=$(jq -r '.piModel // empty' <<<"$c")
+  [[ -n "$pv" && -n "$pm" ]] || fatal "pi settings seed for '$a': cell declares no piProvider/piModel to derive defaults from"
+  [[ -s "$tmp" ]] && pi_settings_valid "$tmp" "$pv" "$pm" || { rm -f "$tmp"; fatal "rendered pi settings policy for '$a' lacks the required UI/compaction baseline, or its defaults disagree with the cell's $pv/$pm"; }
 
   mkdir -p "$cdir" && chmod 700 "$cdir"
   if [[ -L "$dst" ]]; then
@@ -578,7 +667,7 @@ pi_settings_seed() { # <agent> <per-seat-cdir> <cell-json>
   mv "$tmp" "$dst"
   chmod 600 "$dst"
   umask "$old_umask"
-  echo "  seeding : pi settings policy rendered ($dst; theme=dark, provider=openai-codex, model=$(jq -r '.defaultModel' "$dst" 2>/dev/null))"
+  echo "  seeding : pi settings policy rendered ($dst; theme=dark, provider=$(jq -r '.defaultProvider' "$dst" 2>/dev/null), model=$(jq -r '.defaultModel' "$dst" 2>/dev/null))"
 }
 
 # pi_models_seed — bug-271: per-seat PI_CODING_AGENT_DIR must receive an explicit,
@@ -589,14 +678,16 @@ pi_models_seed() { # <agent> <per-seat-cdir> <cell-json>
   local a="$1" cdir="$2" c="$3" dst content tmp
   dst="$cdir/models.json"
   [[ -n "$cdir" ]] || fatal "pi models seed called without a per-seat config dir"
-  content=$(render_pi_models "$c") || fatal "pi models config missing for '$a': merged cell lacks .piModels (declare it under config/harnesses/pi.json)"
+  content=$(render_pi_models "$c") || fatal "pi models render failed for '$a': the cell's piProvider is absent or not declared in config/fleet.json .providers"
   tmp=$(mktemp)
   printf '%s\n' "$content" > "$tmp"
-  [[ -s "$tmp" ]] && pi_models_400k_valid "$tmp" || { rm -f "$tmp"; fatal "rendered pi models policy for '$a' lacks providers.openai-codex.modelOverrides.gpt-5.5.contextWindow == 400000"; }
+  local pv pm; pv=$(jq -r '.piProvider // empty' <<<"$c"); pm=$(jq -r '.piModel // empty' <<<"$c")
+  [[ -n "$pv" && -n "$pm" ]] || fatal "pi models seed for '$a': cell declares no piProvider/piModel"
+  [[ -s "$tmp" ]] && pi_models_valid "$tmp" "$pv" "$pm" || { rm -f "$tmp"; fatal "rendered pi models policy for '$a' does not declare $pv/$pm with a positive contextWindow (check config/fleet.json .providers)"; }
 
   mkdir -p "$cdir" && chmod 700 "$cdir"
   if [[ -L "$dst" ]]; then
-    pi_models_400k_valid "$dst" || { rm -f "$tmp"; fatal "pi models symlink for '$a' does not resolve to required gpt-5.5 400k policy: $dst"; }
+    pi_models_valid "$dst" "$pv" "$pm" || { rm -f "$tmp"; fatal "pi models symlink for '$a' does not resolve to a policy declaring $pv/$pm: $dst"; }
     rm -f "$dst"
   elif [[ -e "$dst" ]]; then
     if [[ -f "$dst" && ! -s "$dst" ]]; then
@@ -614,7 +705,7 @@ pi_models_seed() { # <agent> <per-seat-cdir> <cell-json>
   mv "$tmp" "$dst"
   chmod 600 "$dst"
   umask "$old_umask"
-  echo "  seeding : pi models policy rendered ($dst; openai-codex/gpt-5.5 contextWindow=400000)"
+  echo "  seeding : pi models policy rendered ($dst; $pv/$pm contextWindow=$(jq -r --arg p "$pv" --arg m "$pm" '(.providers[$p].modelOverrides[$m].contextWindow) // ((.providers[$p].models // []) | map(select(.id==$m)) | .[0].contextWindow)' "$dst" 2>/dev/null))"
 }
 
 # pi_seed — mirror of claude_seed's HCAP skills-consumer tail for the pi harness. Same
