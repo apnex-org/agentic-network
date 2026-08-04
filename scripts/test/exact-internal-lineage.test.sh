@@ -27,8 +27,8 @@ const exact = /^\d+\.\d+\.\d+$/;
 const assert = (condition, message) => { if (!condition) throw new Error(message); };
 
 assert(network.name === "@apnex/network-adapter", "packed network name");
-assert(network.version === "0.1.15", "packed network version");
-assert(network.dependencies["@apnex/cognitive-layer"] === "0.1.4", "packed network→cognitive exact version");
+assert(network.version === "0.1.16", "packed network version");
+assert(network.dependencies["@apnex/cognitive-layer"] === "0.2.0", "packed network→cognitive exact version");
 assert(network.dependencies["@apnex/message-router"] === "0.1.3", "packed network→message-router exact version");
 assert(claude.name === "@apnex/claude-plugin", "packed Claude name");
 assert(claude.version === "0.1.21", "packed Claude candidate version");
@@ -44,8 +44,8 @@ for (const pkg of [network, claude]) {
 
 const networkLock = lock.packages["packages/network-adapter"];
 const claudeLock = lock.packages["adapters/claude-plugin"];
-assert(networkLock.version === "0.1.15", "network workspace lock version");
-assert(networkLock.dependencies["@apnex/cognitive-layer"] === "0.1.4", "lock network→cognitive exact version");
+assert(networkLock.version === "0.1.16", "network workspace lock version");
+assert(networkLock.dependencies["@apnex/cognitive-layer"] === "0.2.0", "lock network→cognitive exact version");
 assert(networkLock.dependencies["@apnex/message-router"] === "0.1.3", "lock network→message-router exact version");
 assert(claudeLock.version === "0.1.21", "Claude workspace lock candidate version");
 assert(Object.keys(claudeLock.dependencies ?? {}).length === 0, "lock records the dependency-free Claude candidate");
