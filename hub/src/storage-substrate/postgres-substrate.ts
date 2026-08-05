@@ -862,6 +862,31 @@ function translateFilterClause(
       return { sql: `${jsonbFieldJson(field)} @> $${paramIndex}::jsonb`, nextParamIndex: paramIndex + 1 };
     }
 
+    // $prefix (bug-487): STRING-PREFIX match, emitted as starts_with(), NOT as a range.
+    // 🔴 WHY NOT A RANGE: measured on two ephemeral postgres instances differing only in
+    // initdb --locale, `>= 'docs/audits/' AND < 'docs/audits0'` returned the correct 2
+    // rows under lc_collate=C and ZERO ROWS under en_US.UTF-8 — a FALSE ZERO on data that
+    // exists, which is bug-487's own defect class.
+    // 🔴 WHY starts_with AND NOT `LIKE $n || '%'`: a prefix containing LIKE metacharacters
+    // OVER-MATCHES. Measured on prefix 'docs/100%_report/' (truth: 2 rows), naive LIKE
+    // returned 3. starts_with() has no wildcard semantics and needs no escaping.
+    // Index use is IDENTICAL to LIKE (Index Only Scan on the byte-wise ~>=~/~<~ pattern
+    // operators) when a text_pattern_ops index exists; without one the predicate is still
+    // CORRECT and degrades to a filtered scan.
+    if ("$prefix" in v && typeof v.$prefix === "string") {
+      params.push(v.$prefix);
+      // 🔴 THE CANONICAL-COLUMN SHORTCUT IS SCOPED TO $prefix ALONE, DELIBERATELY.
+      // A blanket `field === "id" ? "id" : jsonbField(field)` in this function — which
+      // is what the sort path does — CHANGES SEMANTICS FOR EVERY EXISTING id FILTER on
+      // every kind. Measured: it breaks substrate-translate-w2's W2.4, which pins that
+      // an unmoved top-level key passes through the bare data->>'id' path for Message.
+      // $prefix is a NEW operator with no existing contract and is the only case that
+      // needs the canonical column (a text_pattern_ops index cannot serve a JSONB
+      // extract). So the shortcut lives HERE, not at the top of the function.
+      const prefixTarget = field === "id" ? "id" : fieldSql;
+      return { sql: `starts_with(${prefixTarget}, $${paramIndex})`, nextParamIndex: paramIndex + 1 };
+    }
+
     // Range operators — all may co-exist on same field (e.g. {$gt: 5, $lt: 10})
     const parts: string[] = [];
     let p = paramIndex;
@@ -981,3 +1006,12 @@ function numericCmp(x: unknown): number {
   }
   return NaN;
 }
+
+/**
+ * bug-487 TEST SEAM. `translateFilterClause` is module-private and the
+ * collation-independence invariant lives in the SQL it emits, so the shape must be
+ * assertable without a database. Exported for tests ONLY — no production caller.
+ * The invariant guarded: $prefix emits starts_with(), never a range (a range is
+ * collation-dependent and was MEASURED returning a false zero under en_US.UTF-8).
+ */
+export const translateFilterClauseForTest = translateFilterClause;

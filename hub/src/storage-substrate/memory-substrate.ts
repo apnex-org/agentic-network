@@ -641,6 +641,13 @@ function matchesFilter(entity: Record<string, unknown>, filter: Filter, translat
       if ("$contains" in op && op.$contains !== undefined) {
         if (!Array.isArray(v) || !v.includes(op.$contains)) return false;
       }
+      // $prefix (bug-487): string-prefix match. Parity with the SQL path's
+      // starts_with() — both are BYTE-WISE and collation-independent, which is the
+      // property the whole prefix-pushdown design rests on. A non-string stored value
+      // never matches (no coercion), mirroring starts_with()'s text signature.
+      if ("$prefix" in op && typeof op.$prefix === "string") {
+        if (typeof v !== "string" || !v.startsWith(op.$prefix)) return false;
+      }
       // bug-104: range comparison — numeric when both sides coerce to a finite
       // number (numbers + ISO-dates), else lexical string comparison. This
       // mirrors postgres `data->>'field' > $param` text semantics, and is
