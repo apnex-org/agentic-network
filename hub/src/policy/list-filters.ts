@@ -89,6 +89,119 @@ export function pageDisclosure(page: {
   };
 }
 
+/* ═══════════════════════════════════════════════════════════════════════════
+ * THE READ-ENVELOPE KERNEL  (work-644/work-645, docs/design/read-envelope-honesty-primitive.md)
+ *
+ * ONE entry point — `paginated()`. A verb handler expresses its pagination in a
+ * single call and merges one result. Adding verb 35 is that call and nothing else.
+ *
+ * 🔴 THERE ARE THREE INDEPENDENT BOUNDARIES AND THEY ARE NOT INTERCHANGEABLE.
+ * Satisfying one NEVER implies the others. Read this before touching a field:
+ *
+ *   SCAN  — did the STORE stop before seeing everything?   `truncated` / `truncationNote`
+ *           The rows it never saw are invisible to EVERY downstream count,
+ *           including `total`. offset/limit CANNOT reach them.
+ *   PAGE  — did limit/offset exclude rows the scan DID see? `pageTruncated` / `pageTruncationNote`
+ *           These rows ARE retrievable — `nextOffset` reaches them.
+ *
+ * A caller told "your page is incomplete" and NOT told "the scan was capped"
+ * has been misled by a true statement. That was bug-484.
+ *
+ * 🔴 `complete` IS THE PRIMITIVE; the notes are explanation, not competing claims.
+ * It DEFAULTS FALSE and is earned only when every boundary is known to have
+ * excluded nothing — so a handler wired by someone who has read none of this
+ * still cannot claim completeness it does not have.
+ * ═══════════════════════════════════════════════════════════════════════════ */
+
+export interface ReadEnvelope<T> {
+  items: T[];
+  count: number;
+  /** 🔴 The TRUE match count, or NULL when the scan was capped and the real count
+   *  is unknowable without the full read the cap exists to prevent. NEVER a
+   *  known-partial number: a scan floor in `total` is exactly bug-484. */
+  total: number | null;
+  offset: number;
+  limit: number;
+  /** THE primitive: is this the whole answer? False unless every boundary is clear. */
+  complete: boolean;
+  /** How many rows the store actually saw — present only when that is NOT `total`. */
+  scanned?: number;
+  // ── SCAN boundary ──
+  truncated: boolean;
+  truncationNote?: string;
+  // ── PAGE boundary ──
+  pageTruncated: boolean;
+  omitted?: number;
+  nextOffset?: number;
+  pageTruncationNote?: string;
+}
+
+export interface PaginateOptions {
+  /** This surface's default page size when the caller supplies none. */
+  defaultLimit?: number;
+  /** Did the STORE cap its scan? Omitted ⇒ false ⇒ `total` is trusted as exact. */
+  scanCapped?: boolean;
+  /** The store's scan cap, for the note. */
+  scanCap?: number;
+  /** Filters to suggest when the scan is capped (offset cannot help there). */
+  narrowBy?: string;
+}
+
+/**
+ * THE KERNEL. Defaulting, clamping, page assembly and BOTH boundary disclosures.
+ * Handlers call this and merge the result; they re-implement nothing.
+ */
+export function paginated<T>(
+  rows: T[],
+  args: Record<string, unknown>,
+  opts: PaginateOptions = {},
+): ReadEnvelope<T> {
+  const { defaultLimit = DEFAULT_LIST_LIMIT, scanCapped = false, scanCap, narrowBy } = opts;
+  const page = paginate(rows, { ...args, limit: (args.limit as number | undefined) ?? defaultLimit });
+  const disclosure = pageDisclosure(page);
+  const seen = page.offset + page.count;
+
+  // 🔴 A capped scan makes the true count UNKNOWABLE. `rows.length` is a floor,
+  // and a floor in `total` is the defect this kernel exists to make impossible.
+  const total = scanCapped ? null : page.total;
+
+  // Earned, never assumed: both boundaries must be clear.
+  const complete = !scanCapped && seen >= page.total;
+
+  return {
+    items: page.items,
+    count: page.count,
+    total,
+    offset: page.offset,
+    limit: page.limit,
+    complete,
+    ...(scanCapped ? { scanned: page.total } : {}),
+    truncated: scanCapped,
+    ...(scanCapped
+      ? {
+          truncationNote:
+            `the scan hit the ${scanCap ?? page.total}-row cap — result is INCOMPLETE and ` +
+            `\`total\` is UNKNOWN (null), not ${page.total}; rows beyond the cap were never seen and ` +
+            `🔴 PAGING WITH offset CANNOT REACH THEM` +
+            (narrowBy ? `; narrow with ${narrowBy} to bring them inside the scan.` : `.`),
+        }
+      : {}),
+    pageTruncated: disclosure.pageTruncated,
+    ...(disclosure.pageTruncated
+      ? {
+          omitted: disclosure.omitted,
+          nextOffset: disclosure.nextOffset,
+          // 🔴 Must be correct at BOTH boundaries at once. When the scan is capped,
+          // offset retrieves the rest OF WHAT WAS SEEN — never "the rest".
+          pageTruncationNote: scanCapped
+            ? `showing ${page.count} of the ${page.total} SCANNED rows (limit ${page.limit}); ` +
+              `offset=${seen} retrieves more OF THE SCANNED SET ONLY — it is NOT the rest of the collection.`
+            : disclosure.pageTruncationNote,
+        }
+      : {}),
+  };
+}
+
 /** Compact-projection flag — spread into a `list_*` registration whose handler maps
  *  each item through a per-entity compact projection. bug-196: fat list payloads pushed
  *  agents to many per-item get_* calls (steve surveying the ledger), overrunning the

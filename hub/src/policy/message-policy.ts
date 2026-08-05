@@ -35,8 +35,7 @@ const MESSAGE_SCAN_CAP = 500;
 import {
   DEFAULT_SMALL_LIST_LIMIT,
   listPaginationSchema,
-  pageDisclosure,
-  paginate,
+  paginated,
 } from "./list-filters.js";
 
 import type { PolicyRouter } from "./router.js";
@@ -95,55 +94,24 @@ async function listMessages(
         agentId: targetAgentId ?? callerAgentId,
       },
     );
-    // work-640: list_messages previously returned EVERY matching row with no cap
-    // at any layer (measured: 10,108 rows / ~16MB / ~4M tokens on an unfiltered
-    // call). The cognitive-layer summariser was the only thing bounding it, and
-    // that has been removed — so the bound has to be real and it has to be
-    // DISCLOSED. A silent cap of 10 is the same defect one layer down.
-    //
-    // The cap is applied AFTER the store read, so this bounds what crosses the
-    // WIRE, not what the Hub reads. That is the harm actually measured (caller
-    // context destruction) and it does not make Hub-side memory any worse than
-    // today. Pushing the limit into the store is the deeper fix and is NOT done
-    // here; it is stated in the evidence rather than silently skipped.
-    // work-642, found by OBSERVING the live cap rather than trusting the tests:
-    // the store caps its scan at LIST_PREFETCH_CAP (500,
-    // message-repository-substrate.ts:60) and returns a bare Message[] with NO
-    // truncation flag. So `total` is a FLOOR, not a count — the live surface
-    // reported "10 of 500" against a real population of ~10,108.
-    //
-    // That is this arc's own target defect one layer down: a number that reads
-    // complete and is not. list_work already discloses BOTH levels (scan cap via
-    // `truncated`, page cap via pageDisclosure); list_messages disclosed only one.
-    //
-    // Saturation is INFERRED from length === cap, which is why the note says the
-    // total is a floor rather than asserting a figure the store never gave us.
-    const scanSaturated = projectedMessages.length >= MESSAGE_SCAN_CAP;
-    const page = paginate(projectedMessages, {
-      ...args,
-      limit: (args.limit as number | undefined) ?? DEFAULT_SMALL_LIST_LIMIT,
+    // ONE KERNEL CALL — defaulting, clamping, page assembly and BOTH boundary
+    // disclosures live in paginated(). This handler re-implements nothing.
+    // scanCapped is INFERRED from length>=cap; a false-positive "incomplete" is
+    // the safe direction (ruling §3.1: doubt is free, certainty must be earned).
+    const envelope = paginated(projectedMessages, args, {
+      defaultLimit: DEFAULT_SMALL_LIST_LIMIT,
+      scanCapped: projectedMessages.length >= MESSAGE_SCAN_CAP,
+      scanCap: MESSAGE_SCAN_CAP,
+      narrowBy: "threadId/targetRole/authorAgentId/since",
     });
+    // this surface names its rows `messages`, not `items`
+    const { items, ...rest } = envelope;
     return {
       content: [
         {
           type: "text" as const,
           text: JSON.stringify(
-            {
-              messages: page.items,
-              count: page.count,
-              total: page.total,
-              offset: page.offset,
-              limit: page.limit,
-              ...pageDisclosure(page),
-              ...(scanSaturated
-                ? {
-                    truncated: true,
-                    truncationNote:
-                      `the message scan hit the ${MESSAGE_SCAN_CAP}-row cap — \`total\` is a FLOOR, not an exact count, ` +
-                      `and matches may exist beyond it; narrow with threadId/targetRole/authorAgentId/since.`,
-                  }
-                : { truncated: false }),
-            },
+            { messages: items, ...rest },
             null,
             2,
           ),
