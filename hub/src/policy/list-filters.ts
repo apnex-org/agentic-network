@@ -490,6 +490,11 @@ function matchField<T>(
   if ("$contains" in p) {
     if (!Array.isArray(value) || !(value as unknown[]).includes(p.$contains)) return false;
   }
+  // $prefix (bug-487): string-prefix match — THIRD matcher kept in parity with the
+  // postgres starts_with() and the memory startsWith(). Byte-wise, collation-independent.
+  if ("$prefix" in p) {
+    if (typeof value !== "string" || typeof p.$prefix !== "string" || !value.startsWith(p.$prefix)) return false;
+  }
   if ("$gt" in p) {
     if (!(comparable(value) && comparable(p.$gt) && (value as any) > (p.$gt as any))) return false;
   }

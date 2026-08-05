@@ -1,0 +1,39 @@
+-- bug-487 migration 006: text_pattern_ops index on entities(kind, id)
+--
+-- WHY: docenum1 pushes prefix enumeration into the storage layer as
+-- `starts_with(id, $n)`. That predicate is CORRECT WITHOUT THIS INDEX — correctness
+-- comes from starts_with()'s byte-wise semantics, not from any index — but without
+-- the index the planner degrades to a filtered scan.
+--
+-- MEASURED (two ephemeral postgres:15 instances differing only in initdb --locale):
+--   without text_pattern_ops : BOTH collations -> Bitmap Heap Scan + Filter
+--   with    text_pattern_ops : BOTH collations -> Index Only Scan,
+--                              Index Cond: ((id ~>=~ 'p') AND (id ~<~ 'p<next>'))
+-- The ~>=~ / ~<~ operators are the PATTERN operators — byte-wise by definition — which
+-- is why the plan is identical under lc_collate=C and en_US.UTF-8. INDEX USE DEPENDS
+-- ON THE OPCLASS, NOT ON THE DATABASE COLLATION.
+--
+-- 🔴 THE DEFAULT entities_pkey CANNOT SERVE THIS. Its `id` column uses the database's
+-- default collation, so under a non-C collation a pattern predicate cannot use it.
+-- text_pattern_ops is the opclass that makes the pattern range indexable regardless.
+--
+-- CONCURRENTLY IS DELIBERATELY NOT USED, AND THE REASON IS NOT THE OBVIOUS ONE.
+-- An earlier draft of this comment claimed the migration runner wraps each file in a
+-- transaction, so CONCURRENTLY could not run. THAT WAS FALSE AND UNVERIFIED: the
+-- runner (`applyMigrations`) issues one autocommit `client.query(sql)` per file with
+-- no BEGIN/COMMIT anywhere, so CONCURRENTLY WOULD in fact be permitted here.
+--
+-- The real reason is failure semantics, and it is the safer trade at present scale:
+-- CREATE INDEX CONCURRENTLY can fail part-way (deploy timeout, conflicting lock) and
+-- LEAVE AN INVALID INDEX BEHIND. `IF NOT EXISTS` would then SKIP it on every
+-- subsequent boot — the index exists, is unusable, and is never rebuilt. That turns a
+-- loud, one-time boot failure into a permanent silent one, on the exact axis this
+-- whole arc is about. The non-concurrent form either succeeds or throws at boot.
+--
+-- Migrations run on EVERY boot, so this must stay idempotent (`IF NOT EXISTS`).
+-- If the table grows to where the brief ACCESS EXCLUSIVE lock is unacceptable, move
+-- this to the reconciler's CONCURRENTLY path WITH an invalid-index check — do not
+-- simply add CONCURRENTLY here.
+
+CREATE INDEX IF NOT EXISTS entities_kind_id_pattern_idx
+  ON entities (kind, id text_pattern_ops);

@@ -145,6 +145,7 @@ export type FilterValue =
   | string | number | boolean
   | { $in: Array<string | number | boolean> }
   | { $contains: string | number | boolean }
+  | { $prefix: string }
   | { $gt?: number | string; $lt?: number | string; $gte?: number | string; $lte?: number | string };
 
 export type Filter = Record<string, FilterValue>;
@@ -154,7 +155,16 @@ export type Filter = Record<string, FilterValue>;
  * TRUTH — every matcher (postgres SQL translateFilterClause, the postgres + memory
  * watch matchesFilter, the policy matchField) keys off this set.
  */
-export const KNOWN_FILTER_OPERATORS = ["$in", "$contains", "$gt", "$lt", "$gte", "$lte"] as const;
+// bug-487: `$prefix` is string-prefix matching, added for storage-pushed prefix
+// enumeration on list_documents. 🔴 IT IS DELIBERATELY NOT A RANGE. A range
+// (>= p AND < p-with-last-byte-incremented) is COLLATION-DEPENDENT FOR CORRECTNESS:
+// MEASURED on two ephemeral postgres instances differing only in initdb --locale,
+// the range returned the correct 2 rows under lc_collate=C and 🔴 ZERO ROWS under
+// en_US.UTF-8 for data that exists and is readable by exact key — a FALSE ZERO, which
+// is bug-487's own defect class. starts_with()/LIKE are collation-INDEPENDENT for
+// correctness (byte-wise ~>=~/~<~ pattern semantics); only INDEX USE depends on the
+// opclass (text_pattern_ops), and that works identically under both collations.
+export const KNOWN_FILTER_OPERATORS = ["$in", "$contains", "$prefix", "$gt", "$lt", "$gte", "$lte"] as const;
 
 /**
  * Security-rejected operators (ReDoS / arbitrary-code-exec / unbounded logical

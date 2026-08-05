@@ -100,11 +100,17 @@ async function listDocs(args: Record<string, unknown>, ctx: IPolicyContext): Pro
     };
   }
   try {
-    // Substrate-side filter by category if provided; client-side prefix-filter
-    // on returned items (substrate doesn't have prefix-on-id query primitive)
-    const docs = await ctx.stores.document.list(category ? { category } : undefined);
-    const filtered = prefix ? docs.filter(d => d.id.startsWith(prefix)) : docs;
-    const summary = filtered.map(d => ({
+    // bug-487: BOTH axes are now substrate-pushed. The prefix was previously applied
+    // HERE, in memory, over whatever window the substrate happened to return — so a
+    // document outside that window came back as `count: 0` with no signal, a FALSE
+    // ZERO on data that exists and is readable by exact path. It is now a $prefix
+    // predicate on the canonical `id` column (starts_with() in SQL), so the scan cap
+    // applies to MATCHING rows rather than to an arbitrary prefix of the collection.
+    const docs = await ctx.stores.document.list({
+      ...(category ? { category } : {}),
+      ...(prefix ? { prefix } : {}),
+    });
+    const summary = docs.map(d => ({
       path: d.id,
       size: d.content?.length ?? 0,
       category: d.category,

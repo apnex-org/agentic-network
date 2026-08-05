@@ -31,7 +31,11 @@ export const SUBSTRATE_FILTERABLE_KEYS: Record<string, string[]> = {
   PendingAction: ["state", "naturalKey", "targetAgentId", "dispatchType", "entityRef"],
   Proposal: ["status", "sourceThreadId", "sourceActionId"],
   Thread: ["status", "cascadePending", "currentTurn", "currentTurnAgentId", "recipientAgentId"],
-  Document: ["category"],
+  // bug-487: `id` is now a FILTER key on Document, not only the primary key. The
+  // prefix predicate is pushed to storage as starts_with(id, $n) against the canonical
+  // column, replacing an in-memory filter that ran AFTER a capped scan and produced
+  // false zeros. Sorted by id for a stable total order.
+  Document: ["category", "id"],
   ReviewHistoryEntry: ["taskId"],
   ThreadHistoryEntry: ["threadId"],
   Notification: ["recipientAgentId"],
@@ -130,6 +134,13 @@ export interface AnnotatedFilterSite {
 }
 
 export const ANNOTATED_FILTER_SITES: AnnotatedFilterSite[] = [
+  {
+    file: "new-repositories.ts",
+    kind: "Document",
+    reason: "spread",
+    keys: ["category", "id"],
+    note: "bug-487: DocumentRepository.list builds its filter object CONDITIONALLY (category and/or an id $prefix predicate), so the scanner cannot enumerate the keys from an inline literal. Both keys are pinned in SUBSTRATE_FILTERABLE_KEYS above. The id predicate is $prefix -> starts_with(), deliberately NOT a range: a range is collation-dependent and was measured returning a FALSE ZERO under en_US.UTF-8.",
+  },
   {
     file: "work-revision-storage-v4.ts",
     kind: null,

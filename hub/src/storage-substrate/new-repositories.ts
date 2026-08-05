@@ -95,9 +95,20 @@ export class DocumentRepository implements IDocumentStore {
     return this.substrate.delete("Document", id);
   }
 
-  async list(opts: { category?: string } = {}): Promise<Document[]> {
-    const filter = opts.category ? { category: opts.category } : undefined;
-    const { items } = await this.substrate.list<Document>("Document", filter ? { filter } : undefined);
+  // bug-487: `prefix` is now PUSHED DOWN as a $prefix predicate on the canonical `id`
+  // column instead of being applied in memory by the policy AFTER a capped scan. The
+  // in-memory form was the false-zero mechanism: the substrate returned its first N
+  // rows and the prefix filtered THAT WINDOW, so a document outside the window was
+  // reported as non-existent. Pushing it down means the cap applies to MATCHING rows.
+  // Sorted by `id` for a stable total order (entities_pkey; bug-343's reserved-id path).
+  async list(opts: { category?: string; prefix?: string } = {}): Promise<Document[]> {
+    const filter: Record<string, unknown> = {};
+    if (opts.category) filter.category = opts.category;
+    if (opts.prefix) filter.id = { $prefix: opts.prefix };
+    const { items } = await this.substrate.list<Document>("Document", {
+      ...(Object.keys(filter).length > 0 ? { filter: filter as never } : {}),
+      sort: [{ field: "id", order: "asc" }],
+    });
     return items.map(decodeDocument);
   }
 }
