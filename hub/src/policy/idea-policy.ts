@@ -31,6 +31,13 @@ import { dispatchIdeaSubmitted } from "./dispatch-helpers.js";
 import { resolveCreatedBy } from "./caller-identity.js";
 import { phaseFromEntity } from "../entities/shape-helpers.js";
 
+// bug-494: the substrate scan cap that IdeaRepositorySubstrate.listIdeas() passes
+// (limit: 500). Both readers of a capped scan — list_ideas and get_backlog_health —
+// derive truncation from this ONE constant. Previously get_backlog_health declared
+// its own local copy while list_ideas had no cap-awareness at all; a single surface
+// with two notions of the cap is how the halves drift apart.
+const LIST_CAP = 500;
+
 // ── FSM Declaration ─────────────────────────────────────────────────
 
 export const IDEA_FSM: FsmTransitionTable = [
@@ -131,6 +138,12 @@ function projectIdeaCompact(i: Idea) {
 async function listIdeas(args: Record<string, unknown>, ctx: IPolicyContext): Promise<PolicyResult> {
   let ideas = await ctx.stores.idea.listIdeas();
   const totalPreFilter = ideas.length;
+  // bug-494 (ports bug-200's cap-awareness): listIdeas() hard-caps the substrate
+  // scan at LIST_CAP. A scan that comes back AT the cap may have left rows unseen,
+  // so `total` is a FLOOR, not the collection count. Detected exactly as the
+  // sibling get_backlog_health handler in this file already detects it
+  // (length >= LIST_CAP) rather than by a second mechanism.
+  const truncated = totalPreFilter >= LIST_CAP;
 
   // Legacy tag match-any filter (pre-QueryShape; preserved).
   ideas = applyTagFilter(ideas, args.tags as string[] | undefined);
@@ -153,7 +166,13 @@ async function listIdeas(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   const postFilterCount = ideas.length;
   const page = paginate(ideas, args);
 
-  const queryUnmatched = hasFilter && postFilterCount === 0 && totalPreFilter > 0;
+  // bug-494 (bug-200's steve-#410 clause, ported): _ois_query_unmatched asserts
+  // "valid filter, DEFINITIVELY zero matches in the collection." But the filter is
+  // applied CLIENT-SIDE over the (possibly truncated) scan window — if the scan hit
+  // the cap, a zero-result is NOT definitive (matches may exist beyond the window).
+  // Suppress the sentinel when truncated to avoid false certainty; the `truncated`
+  // flag stays in the response so the caller knows the answer is incomplete.
+  const queryUnmatched = hasFilter && postFilterCount === 0 && totalPreFilter > 0 && !truncated;
 
   return {
     content: [{
@@ -165,6 +184,18 @@ async function listIdeas(args: Record<string, unknown>, ctx: IPolicyContext): Pr
         offset: page.offset,
         limit: page.limit,
         ...(args.compact === true ? { compact: true } : {}),
+        // bug-494: never a silent under-report — flag a scan that hit the cap so
+        // `total` is read as a floor, not the truth (mirrors listBugs / list_ready_work).
+        // 🔴 offset CANNOT cross this boundary: the cap is applied at the substrate scan
+        // and paginate() pages the returned window, so rows beyond it are unreachable by
+        // any limit/offset combination — narrowing is the only remedy.
+        ...(truncated
+          ? {
+              truncated: true,
+              truncationNote:
+                "the idea scan hit the 500-row cap — `total` is a FLOOR, not exact, and rows beyond the cap were never seen. 🔴 PAGING WITH offset CANNOT REACH THEM; narrow with filter/tags to bring the set inside the scan.",
+            }
+          : {}),
         ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
       }, null, 2),
     }],
@@ -374,7 +405,6 @@ async function getBacklogHealth(args: Record<string, unknown>, ctx: IPolicyConte
 
   // Truncation-honesty (the R2 lesson): listIdeas hard-caps at 500 per status;
   // a bucket returning exactly the cap may be truncated → flag it.
-  const LIST_CAP = 500;
   const truncatedStatuses: string[] = [];
   if (open.length >= LIST_CAP) truncatedStatuses.push("open");
   if (triaged.length >= LIST_CAP) truncatedStatuses.push("triaged");
