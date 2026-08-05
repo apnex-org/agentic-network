@@ -17,10 +17,23 @@
 -- default collation, so under a non-C collation a pattern predicate cannot use it.
 -- text_pattern_ops is the opclass that makes the pattern range indexable regardless.
 --
--- CONCURRENTLY is deliberately NOT used: the migration runner executes inside a
--- transaction and CREATE INDEX CONCURRENTLY cannot run there. This table is small
--- enough at present scale that a brief lock is acceptable; if that stops being true,
--- move this to the reconciler's CONCURRENTLY path rather than relaxing it here.
+-- CONCURRENTLY IS DELIBERATELY NOT USED, AND THE REASON IS NOT THE OBVIOUS ONE.
+-- An earlier draft of this comment claimed the migration runner wraps each file in a
+-- transaction, so CONCURRENTLY could not run. THAT WAS FALSE AND UNVERIFIED: the
+-- runner (`applyMigrations`) issues one autocommit `client.query(sql)` per file with
+-- no BEGIN/COMMIT anywhere, so CONCURRENTLY WOULD in fact be permitted here.
+--
+-- The real reason is failure semantics, and it is the safer trade at present scale:
+-- CREATE INDEX CONCURRENTLY can fail part-way (deploy timeout, conflicting lock) and
+-- LEAVE AN INVALID INDEX BEHIND. `IF NOT EXISTS` would then SKIP it on every
+-- subsequent boot — the index exists, is unusable, and is never rebuilt. That turns a
+-- loud, one-time boot failure into a permanent silent one, on the exact axis this
+-- whole arc is about. The non-concurrent form either succeeds or throws at boot.
+--
+-- Migrations run on EVERY boot, so this must stay idempotent (`IF NOT EXISTS`).
+-- If the table grows to where the brief ACCESS EXCLUSIVE lock is unacceptable, move
+-- this to the reconciler's CONCURRENTLY path WITH an invalid-index check — do not
+-- simply add CONCURRENTLY here.
 
 CREATE INDEX IF NOT EXISTS entities_kind_id_pattern_idx
   ON entities (kind, id text_pattern_ops);
