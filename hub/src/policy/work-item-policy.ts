@@ -41,7 +41,7 @@ import {
   DEFAULT_SMALL_LIST_LIMIT,
   LIST_PAGINATION_SCHEMA,
   listPaginationSchema,
-  pageDisclosure,
+  paginated,
   paginate,
 } from "./list-filters.js";
 import {
@@ -1581,29 +1581,23 @@ async function listWork(args: Record<string, unknown>, ctx: IPolicyContext): Pro
   // bug-371's transitional projection was REMOVED here (mission-141 residue): the stored phase IS
   // the terminal phase now, so the value this filter selected on and the value the caller sees are
   // the same value — which was the point of storing it rather than deriving it.
-  // work-640: default 10, not 100. DIFFERENT starting point from list_messages —
-  // list_work was already BOUNDED (500 scan cap, default 100); what it lacked was
-  // page-level disclosure. `truncated` here means the SCAN was capped, which is a
-  // narrower claim than "your page is incomplete": with default 10 over 50 matches
-  // the old shape returned truncated:false while withholding 40 rows. Technically
-  // true, and exactly the silent cap this arc exists to remove.
-  const page = paginate(items, {
-    ...args,
-    limit: (args.limit as number | undefined) ?? DEFAULT_SMALL_LIST_LIMIT,
+  // ONE KERNEL CALL — identical entry point to list_messages. The SCAN boundary
+  // (store hit its row cap) and the PAGE boundary (limit/offset) are disclosed
+  // separately by the kernel; see list-filters.ts for why they must never merge.
+  const envelope = paginated(items, args, {
+    defaultLimit: DEFAULT_SMALL_LIST_LIMIT,
+    scanCapped: truncated,
+    scanCap: MAX_LIST_LIMIT,
+    narrowBy: "status/role/holder",
   });
-  // truncation-HONEST (A4): `truncated` = the 500-row substrate scan was capped (there
-  // may be MORE matches we never saw) — distinct from pagination (limit/offset over what we DID see).
-  const truncationNote = truncated
-    ? { truncationNote: `the WorkItem scan hit the ${MAX_LIST_LIMIT}-row cap — result is INCOMPLETE; narrow by status/role/holder (or treat as a backlog-pressure signal)` }
-    : {};
   const defaultScope = safeDefaultApplied
     ? {
         defaultScopeApplied: true,
         defaultScopeMessage: `list_work defaults to status=ready and role=${caller.role}; pass explicit filters or scope:"all" for broad org-state/history.`,
-        ...(page.total === 0 ? { emptyReason: "safe_default_no_ready_items" } : {}),
+        ...(envelope.total === 0 ? { emptyReason: "safe_default_no_ready_items" } : {}),
       }
     : { defaultScopeApplied: false };
-  return ok({ ...page, truncated, ...pageDisclosure(page), ...truncationNote, ...defaultScope });
+  return ok({ ...envelope, ...defaultScope });
 }
 
 // ── Schemas ─────────────────────────────────────────────────────────────────
