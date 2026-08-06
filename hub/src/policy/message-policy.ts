@@ -102,7 +102,16 @@ async function listMessages(
       defaultLimit: DEFAULT_SMALL_LIST_LIMIT,
       scanCapped: projectedMessages.length >= MESSAGE_SCAN_CAP,
       scanCap: MESSAGE_SCAN_CAP,
-      narrowBy: "threadId/targetRole/authorAgentId/since",
+      // 🔴 bug-518: this string previously read "threadId/targetRole/authorAgentId/since"
+      // and MEASURED, three of those do not do what it promises. `since` is pushed to
+      // the substrate and genuinely narrows the SCAN; `targetRole` and `authorAgentId`
+      // filter AFTER the cap (verified: targetRole=verifier, a low-traffic seat, still
+      // returned scanned:500 / complete:false / total:null). A caller following the old
+      // advice does work that CANNOT rescue a capped result. bug-497's family: a shipped
+      // remedy that does not work. Naming only what is measured — under-claiming costs a
+      // wasted filter attempt, over-claiming costs a caller who trusts it.
+      // ⚠️ `threadId` is UNTESTED and is therefore NOT claimed either way.
+      narrowBy: "since=<ULID or any leading prefix of one, e.g. 01KZAX> — the ONLY filter measured to narrow the SCAN itself; targetRole/authorAgentId apply AFTER the cap and cannot rescue a capped result",
     });
     // this surface names its rows `messages`, not `items`
     const { items, ...rest } = envelope;

@@ -8,6 +8,7 @@
  */
 
 import { z } from "zod";
+import { LIST_PREFETCH_CAP } from "../entities/thread-repository-substrate.js";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import type { ThreadAuthor, ThreadIntent, StagedAction, StagedActionOp, Thread, ThreadRoutingMode, ThreadContext } from "../state.js";
@@ -25,6 +26,7 @@ import {
   applyQuerySort,
   type QueryableFieldSpec,
   type FieldAccessors,
+  paginated,
 } from "./list-filters.js";
 import { runCascade } from "./cascade.js";
 import { resolveRecipient } from "../entities/recipient-resolver.js";
@@ -936,19 +938,27 @@ async function listThreads(args: Record<string, unknown>, ctx: IPolicyContext): 
     createdAt: t.createdAt,
     updatedAt: t.updatedAt,
   }));
-  const page = paginate(summaries, args);
+  // kernel0: ONE KERNEL CALL. Previously this reported `total: page.total` as an
+  // EXACT count while the underlying scan had silently stopped at LIST_PREFETCH_CAP
+  // — a FLOOR presented as a CERTAINTY, which is precisely the lie paginated() exists
+  // to make unrepresentable. scanCapped is inferred from the PRE-filter length: the
+  // SCAN is what was capped, and filtering afterwards cannot un-cap it.
+  const envelope = paginated(summaries, args, {
+    scanCapped: totalPreFilter >= LIST_PREFETCH_CAP,
+    scanCap: LIST_PREFETCH_CAP,
+    narrowBy: "recipientAgentId/currentTurnAgentId (the only filters pushed to the substrate; every other filter applies AFTER the cap)",
+  });
 
   const queryUnmatched = hasFilter && postFilterCount === 0 && totalPreFilter > 0;
 
+  // this surface names its rows `threads`, not `items`
+  const { items, ...rest } = envelope;
   return {
     content: [{
       type: "text" as const,
       text: JSON.stringify({
-        threads: page.items,
-        count: page.count,
-        total: page.total,
-        offset: page.offset,
-        limit: page.limit,
+        threads: items,
+        ...rest,
         ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
       }, null, 2),
     }],

@@ -18,6 +18,7 @@ import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import { resolveCreatedBy } from "./caller-identity.js";
+import { paginated } from "./list-filters.js";
 import { emitAndPush } from "./message-policy.js";
 import type {
   Decision,
@@ -150,7 +151,16 @@ async function listDecisions(args: Record<string, unknown>, ctx: IPolicyContext)
     class: args.class as string | undefined,
     routedTarget: args.routedTarget as string | undefined,
   });
-  return ok({ decisions: items, count: items.length, truncated });
+  // kernel0: the repository ALREADY computed `truncated` (items.length >= LIST_CAP)
+  // and this handler forwarded that one flag while discarding everything else —
+  // no `total`, no `complete`, no offset/limit, and NO note telling the caller what
+  // to do about it. The scan-capped signal was present and under-used; the kernel
+  // turns it into a full disclosure. Note `total` becomes null when capped: that is
+  // the point — a floor must not masquerade as a count.
+  const envelope = paginated(items, args, { scanCapped: truncated, scanCap: 500 });
+  // this surface names its rows `decisions`, not `items`
+  const { items: pageItems, ...rest } = envelope;
+  return ok({ decisions: pageItems, ...rest });
 }
 
 function transitionHandler(

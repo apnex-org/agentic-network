@@ -26,6 +26,11 @@
  */
 
 import type { HubStorageSubstrate } from "../storage-substrate/index.js";
+
+// kernel0: the scan cap was an INLINE literal at two call sites and was invisible
+// to the policy layer, so list_missions reported a FLOOR as an EXACT `total`.
+// Exported so the policy infers `scanCapped` from THE SAME constant the scan uses.
+export const MISSION_LIST_CAP = 500;
 import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 import type { EntityProvenance } from "../state.js";
 import type { IIdeaStore, CascadeBacklink } from "./idea.js";
@@ -163,8 +168,8 @@ export class MissionRepositorySubstrate implements IMissionStore {
     // status.phase directly; the legacy bare-`status` UNION + dedupe (the
     // dual-shape data window) is retired — W6 proved all rows envelope.
     const { items } = statusFilter
-      ? await this.substrate.list<Mission>(KIND, { filter: { "status.phase": statusFilter }, limit: 500 })
-      : await this.substrate.list<Mission>(KIND, { limit: 500 });
+      ? await this.substrate.list<Mission>(KIND, { filter: { "status.phase": statusFilter }, limit: MISSION_LIST_CAP })
+      : await this.substrate.list<Mission>(KIND, { limit: MISSION_LIST_CAP });
     return Promise.all(items.map((m) => this.hydrate(m)));
   }
 
