@@ -186,15 +186,29 @@ async function listDecisions(args: Record<string, unknown>, ctx: IPolicyContext)
     // so a filter that pushes down and one that post-filters return byte-identical
     // results. The `truncated` flag on this surface has, on that evidence, never fired.
     //
-    // ⇒ So the choice is between naming an UNVERIFIABLE filter and omitting a possibly-
-    // true one. Naming it OVER-licenses: a caller does work that may not help, and the
-    // cost is whatever the false confidence prevents. Omitting it UNDER-licenses: the
-    // caller runs one extra query. Errors toward more constraint are self-limiting;
-    // errors toward less are not. Omit.
+    // ⭐ THE ARCHITECT AND THE ENGINEER BOTH FRAMED THIS AS BINARY — NAME IT (over-license,
+    // unbounded) vs OMIT IT (under-license, bounded) — argued opposite sides, and MISSED
+    // THE THIRD OPTION THAT DOMINATES BOTH, WHICH IS THIS ARC'S OWN CHARTER WORD FOR WORD:
+    // A QUERY STATES WHAT IT DOES NOT KNOW.
     //
-    // REVIVAL: if decisions ever approach 500, measure it — that single observation
-    // would also be the first bucket-prefixed pushdown measurement in the repo.
-    narrowBy: "status/class (registry-verified and drift-gated — these two ARE pushed to the substrate and genuinely narrow the scan)",
+    // Naming a filter WITH ITS UNCERTAINTY DISCLOSED does not over-license, because a
+    // caller told "may, unverified" who then finds the scan unchanged HAS NOT BEEN MISLED.
+    // ONLY AN UNQUALIFIED PRESCRIPTION OVER-LICENSES. And it does not under-license either,
+    // because a possibly-true filter is no longer withheld.
+    //
+    // 🔴 WHY BOTH OF US MISSED IT: we inherited bug-518's frame, where the defect was an
+    // UNQUALIFIED FALSE remedy — so we argued about WHETHER to prescribe and never about
+    // HOW. A DEFECT'S REMEDY CARRIES THE DEFECT'S FRAME, AND THE FRAME OUTLIVES THE FIX.
+    //
+    // ⚠️ The ergonomic objection (a truncation note is read by someone in trouble; this is
+    // 100 chars of epistemics) was MEASURED rather than assumed: the note renders ONLY when
+    // scanCapped is true, and this collection is 36 rows against a cap of 500 — so it has
+    // rendered ZERO times. Verbosity cost to date: nil. Honesty gain: permanent.
+    //
+    // REVIVAL: if decisions ever approach the cap, measure it — one observation would be
+    // the first bucket-prefixed pushdown measurement in the repo and would let this string
+    // drop its qualifier in EITHER direction.
+    narrowBy: "status/class — registry-verified and drift-gated, both genuinely pushed to the substrate scan (routedTarget MAY also narrow but is UNVERIFIED: it is bucket-prefixed, outside the conformance registry, and unmeasurable while the collection sits below the cap)",
   });
   // this surface names its rows `decisions`, not `items`
   const { items: pageItems, ...rest } = envelope;
