@@ -32,7 +32,12 @@ import { SubstrateCounter } from "./substrate-counter.js";
 import { decodeEnvelopeToFlat } from "./shape-helpers.js";
 
 const KIND = "Decision";
-const LIST_CAP = 500;
+// kernel0 §9c: EXPORTED for the same reason the thread and mission caps are —
+// a policy-side copy of `500` is a check on a literal, and the decision handler
+// was the ONE of the three adoptions that hardcoded it. Found only because the
+// engineer named the parallel-implementation-divergence class; the author of
+// three implementations of one spec cannot see their divergence.
+export const LIST_CAP = 500;
 const MAX_CAS_RETRIES = 50;
 
 /** Thrown on any illegal transition, identity failure, or fence rejection. */

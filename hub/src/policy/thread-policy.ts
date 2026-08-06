@@ -8,6 +8,7 @@
  */
 
 import { z } from "zod";
+import { LIST_PREFETCH_CAP } from "../entities/thread-repository-substrate.js";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import type { ThreadAuthor, ThreadIntent, StagedAction, StagedActionOp, Thread, ThreadRoutingMode, ThreadContext } from "../state.js";
@@ -25,6 +26,7 @@ import {
   applyQuerySort,
   type QueryableFieldSpec,
   type FieldAccessors,
+  paginated,
 } from "./list-filters.js";
 import { runCascade } from "./cascade.js";
 import { resolveRecipient } from "../entities/recipient-resolver.js";
@@ -936,19 +938,43 @@ async function listThreads(args: Record<string, unknown>, ctx: IPolicyContext): 
     createdAt: t.createdAt,
     updatedAt: t.updatedAt,
   }));
-  const page = paginate(summaries, args);
+  // kernel0: ONE KERNEL CALL. Previously this reported `total: page.total` as an
+  // EXACT count while the underlying scan had silently stopped at LIST_PREFETCH_CAP
+  // — a FLOOR presented as a CERTAINTY, which is precisely the lie paginated() exists
+  // to make unrepresentable. scanCapped is inferred from the PRE-filter length: the
+  // SCAN is what was capped, and filtering afterwards cannot un-cap it.
+  const envelope = paginated(summaries, args, {
+    scanCapped: totalPreFilter >= LIST_PREFETCH_CAP,
+    scanCap: LIST_PREFETCH_CAP,
+    // BASIS FOR THIS ADVICE, recorded because "run the remedy you write" is this arc's
+    // bar and a COMMENT claiming pushdown is exactly what bug-518 was made of:
+    //   1. IMPLEMENTATION, not comment — thread-repository-substrate.ts:420-422 passes
+    //      the pushed filter into `substrate.list({ filter, limit })`, so the LIMIT
+    //      applies to the FILTERED set, not to an arbitrary window filtered afterwards.
+    //   2. REGISTRY — both keys are in filterable-keys.ts:41 (Thread), and :205-206
+    //      names THIS call site by hand: "listThreads spreads ...(equalityFilter);
+    //      directed discovery supplies recipient/currentTurnAgentId".
+    //   3. ⇒ Being REGISTERED means Gate A WATCHES THEM for translation drift. Contrast
+    //      list_decisions' `routedTarget`, which maps to a BUCKET-PREFIXED path the
+    //      registry excludes and Gate A explicitly skips (bug-511) — that one is omitted
+    //      from its note for precisely this reason.
+    // ⚠️ WHAT THIS IS NOT: a live over-cap measurement. Registry membership proves the
+    // key stays translatable; the implementation read proves the filter reaches the
+    // query. Neither is a behavioural observation of a reduced scan. Stronger than a
+    // comment, weaker than a measurement, and labelled as such rather than rounded up.
+    narrowBy: "recipientAgentId/currentTurnAgentId (the only filters pushed to the substrate; every other filter applies AFTER the cap)",
+  });
 
   const queryUnmatched = hasFilter && postFilterCount === 0 && totalPreFilter > 0;
 
+  // this surface names its rows `threads`, not `items`
+  const { items, ...rest } = envelope;
   return {
     content: [{
       type: "text" as const,
       text: JSON.stringify({
-        threads: page.items,
-        count: page.count,
-        total: page.total,
-        offset: page.offset,
-        limit: page.limit,
+        threads: items,
+        ...rest,
         ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
       }, null, 2),
     }],

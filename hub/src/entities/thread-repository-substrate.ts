@@ -70,7 +70,10 @@ import { assertDecodedFlat } from "../storage-substrate/bare-envelope-error.js";
 
 const KIND = "Thread";
 const MAX_CAS_RETRIES = 50;
-const LIST_PREFETCH_CAP = 500;
+// kernel0: EXPORTED so the policy layer infers `scanCapped` from THE SAME
+// constant the scan uses. A policy-side copy of `500` is a check on a literal:
+// it holds until someone changes one of the two, then goes wrong SILENTLY.
+export const LIST_PREFETCH_CAP = 500;
 
 /** Normalise on-read: full envelope→legacy-flat DECODE + fill legacy defaults.
  *  Ported from ThreadRepository (which ports from gcs-state.ts). */

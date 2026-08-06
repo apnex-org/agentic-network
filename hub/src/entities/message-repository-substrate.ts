@@ -271,9 +271,25 @@ export class MessageRepositorySubstrate implements IMessageStore {
     // an unordered LIST_PREFETCH_CAP window then filtered client-side — once a
     // kind exceeds the cap that answered over an arbitrary ~cap-row slice (a
     // role-targeted `status:new` query could miss the bulk of its matches).
+    // 🔴 kernel0 / bug-442: THE SCAN WINDOW WAS THE DEFECT, NOT THE OUTPUT ORDER.
+    // This scanned id-ASCENDING with a LIST_PREFETCH_CAP limit, so once a filtered
+    // set exceeded the cap the substrate returned THE OLDEST 500 — and a caller
+    // asking for recent activity got four-month-old rows while hundreds of newer
+    // ones were never looked at. `paginated()` cannot fix this: it pages the array
+    // it is HANDED, and the wrong 500 rows were already chosen upstream.
+    //
+    // ⚠️ THE SAME DEFECT IS DESCRIBED VERBATIM IN THIS FILE, in hasAuthoredSince's
+    // doc-comment — "ascending + LIST_PREFETCH_CAP-capped and so returns the newest
+    // of the OLDEST 500 (bug-117 / idea-292 first-N-cap class)". The knowledge was
+    // present and only the sibling method got the fix.
+    //
+    // SCAN DESCENDING so the cap retains the NEWEST rows, then RETURN ASCENDING so
+    // the wire contract is byte-identical for every existing consumer. Asserting the
+    // property that matters (the window holds the most RECENT rows) without touching
+    // the property consumers depend on (ascending output).
     const { items } = await this.substrate.list<Message>(KIND, {
       filter: messageQueryToFilter(query),
-      sort: [{ field: "id", order: "asc" }],
+      sort: [{ field: "id", order: "desc" }],
       limit: LIST_PREFETCH_CAP,
     });
     return items.map((m) => decodeMessage(m)).sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));

@@ -18,6 +18,8 @@ import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import { resolveCreatedBy } from "./caller-identity.js";
+import { paginated } from "./list-filters.js";
+import { LIST_CAP as DECISION_LIST_CAP } from "../entities/decision-repository-substrate.js";
 import { emitAndPush } from "./message-policy.js";
 import type {
   Decision,
@@ -150,7 +152,53 @@ async function listDecisions(args: Record<string, unknown>, ctx: IPolicyContext)
     class: args.class as string | undefined,
     routedTarget: args.routedTarget as string | undefined,
   });
-  return ok({ decisions: items, count: items.length, truncated });
+  // kernel0: the repository ALREADY computed `truncated` (items.length >= LIST_CAP)
+  // and this handler forwarded that one flag while discarding everything else —
+  // no `total`, no `complete`, no offset/limit, and NO note telling the caller what
+  // to do about it. The scan-capped signal was present and under-used; the kernel
+  // turns it into a full disclosure. Note `total` becomes null when capped: that is
+  // the point — a floor must not masquerade as a count.
+  // 🔴 §9c DIVERGENCE FIX — found only because the engineer named the class, NOT by
+  // review of my own work: the author of N parallel implementations of ONE spec is
+  // structurally unable to see their divergence, because one mental model produced
+  // all of them. Three adoptions, three differences, and I had described one of them
+  // as a virtue. This handler hardcoded `scanCap: 500` in the SAME COMMIT that
+  // exported the other two caps precisely to avoid a duplicated literal; and it
+  // passed NO `narrowBy` while this repository genuinely DOES push
+  // status/class/routedTarget to the substrate — so the note withheld advice that is
+  // TRUE here, which is bug-518's defect running in the opposite direction.
+  const envelope = paginated(items, args, {
+    // the repository computes this directly (items.length >= LIST_CAP) — it needs no
+    // pre-filter length comparison, and THAT divergence from the other two is correct.
+    scanCapped: truncated,
+    scanCap: DECISION_LIST_CAP,
+    // 🔴 `routedTarget` IS DELIBERATELY OMITTED FROM THIS ADVICE, AND THE REASON IS NOT
+    // THAT IT FAILS — IT IS THAT NOTHING IN THIS REPO CAN TELL YOU WHETHER IT WORKS.
+    // The repository pushes three fields; two of them (`status`, `class`) are in the
+    // filterable-keys registry and are watched by Gate A. The third maps to the
+    // BUCKET-PREFIXED path `status.routedTo.target`, which the registry EXCLUDES by
+    // design and which Gate A (filterable-keys-drift-gate.test.ts:49-52) explicitly
+    // SKIPS — deferring, in its own inline comment, to a round-trip oracle that does
+    // not exist. That is bug-511.
+    //
+    // ⚠⚠ AND THE OBVIOUS REMEDY IS UNAVAILABLE, NOT MERELY UNRUN: measuring pushdown
+    // requires a scan that HITS THE CAP. There are 36 decisions against a cap of 500,
+    // so a filter that pushes down and one that post-filters return byte-identical
+    // results. The `truncated` flag on this surface has, on that evidence, never fired.
+    //
+    // ⇒ So the choice is between naming an UNVERIFIABLE filter and omitting a possibly-
+    // true one. Naming it OVER-licenses: a caller does work that may not help, and the
+    // cost is whatever the false confidence prevents. Omitting it UNDER-licenses: the
+    // caller runs one extra query. Errors toward more constraint are self-limiting;
+    // errors toward less are not. Omit.
+    //
+    // REVIVAL: if decisions ever approach 500, measure it — that single observation
+    // would also be the first bucket-prefixed pushdown measurement in the repo.
+    narrowBy: "status/class (registry-verified and drift-gated — these two ARE pushed to the substrate and genuinely narrow the scan)",
+  });
+  // this surface names its rows `decisions`, not `items`
+  const { items: pageItems, ...rest } = envelope;
+  return ok({ decisions: pageItems, ...rest });
 }
 
 function transitionHandler(

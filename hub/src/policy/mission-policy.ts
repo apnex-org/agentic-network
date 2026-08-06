@@ -6,6 +6,7 @@
  */
 
 import { z } from "zod";
+import { MISSION_LIST_CAP } from "../entities/mission-repository-substrate.js";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import { isValidTransition } from "./types.js";
@@ -39,6 +40,7 @@ import {
   applyQuerySort,
   type QueryableFieldSpec,
   type FieldAccessors,
+  paginated,
 } from "./list-filters.js";
 import { dispatchMissionCreated, dispatchMissionActivated } from "./dispatch-helpers.js";
 import { resolveCreatedBy } from "./caller-identity.js";
@@ -529,19 +531,31 @@ async function listMissions(args: Record<string, unknown>, ctx: IPolicyContext):
   missions = applyQuerySort(missions, sortArg, MISSION_ACCESSORS);
 
   const postFilterCount = missions.length;
-  const page = paginate(missions, args);
+  // kernel0: this surface emitted NO `truncated` at all and reported `total` as
+  // EXACT, while the repository scan stopped at MISSION_LIST_CAP. A caller had no
+  // way to learn the answer was partial. scanCapped comes from the PRE-filter
+  // length against the SAME constant the scan uses.
+  const envelope = paginated(missions, args, {
+    scanCapped: totalPreFilter >= MISSION_LIST_CAP,
+    scanCap: MISSION_LIST_CAP,
+    // ⚠️ NO `narrowBy`, DELIBERATELY — and this comment exists so the ABSENCE reads as a
+    // MEASUREMENT rather than an oversight, because the sibling adoptions both have one.
+    // `listMissions()` is called here with no argument and EVERY filter is applied
+    // client-side afterwards, so there is no filter a caller could supply that would
+    // narrow the SCAN. Naming one would be bug-518's exact defect — advice that cannot
+    // work — which is the thing this arc exists to remove.
+  });
 
   const queryUnmatched = hasFilter && postFilterCount === 0 && totalPreFilter > 0;
 
+  // this surface names its rows `missions`, not `items`
+  const { items, ...rest } = envelope;
   return {
     content: [{
       type: "text" as const,
       text: JSON.stringify({
-        missions: args.compact === true ? page.items.map(projectMissionCompact) : page.items,
-        count: page.count,
-        total: page.total,
-        offset: page.offset,
-        limit: page.limit,
+        missions: args.compact === true ? items.map(projectMissionCompact) : items,
+        ...rest,
         ...(args.compact === true ? { compact: true } : {}),
         ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
       }, null, 2),
