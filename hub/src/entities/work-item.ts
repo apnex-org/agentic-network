@@ -46,17 +46,39 @@ export type WorkItemPriority = "critical" | "high" | "normal" | "low";
  * than by a derivation someone has to keep in step. `effectiveDisposition` still supplies the
  * REASON; the phase supplies terminality.
  */
-export type WorkItemPhase =
-  | "ready" | "claimed" | "in_progress" | "blocked" | "paused" | "review" | "done" | "abandoned"
-  | "failed_sealed";
+/**
+ * fsmintent0 — THE phase list, as a VALUE. The type is DERIVED from it, so the two cannot
+ * disagree: there is one place to add a phase and it is enumerable at runtime.
+ *
+ * Why a value and not just a type: a type cannot be compared against the storage-layer enum
+ * (`storage-substrate/schemas/all-schemas.ts`, WorkItem `status`), which is a hand-maintained
+ * string array. Before this, the two lists agreed only by luck — a new phase had to be added in
+ * TWO places and neither knew about the other (fsmintent0 design D6). A conformance cell now
+ * asserts they match, and it can only do that against a value.
+ */
+export const WORK_ITEM_PHASES = [
+  "ready", "claimed", "in_progress", "blocked", "paused", "review", "done", "abandoned",
+  "failed_sealed",
+] as const;
+
+export type WorkItemPhase = (typeof WORK_ITEM_PHASES)[number];
 
 /**
- * bug-371 — THE single terminal-phase set. It exists because there is NO exhaustive `switch` on
- * `WorkItemPhase` and no `Record<WorkItemPhase, …>` anywhere in this codebase, so adding a variant
- * is NOT compiler-checked: every `status === "literal"` comparison is a silent fall-through site.
- * Two hardcoded terminal sets were already wrong the moment `failed_sealed` existed. Centralising
- * the set does not restore exhaustiveness — nothing can, short of a real discriminated union — but
- * it gives the next variant ONE place to be added instead of N places to be missed.
+ * bug-371 — THE single terminal-phase set.
+ *
+ * 🔴 fsmintent0 UPDATE, AND THE ORIGINAL RATIONALE IS RETAINED BELOW BECAUSE IT WAS RIGHT WHEN
+ * WRITTEN AND IS NOW PARTLY SUPERSEDED. `classifyGateChild` IS now an exhaustive
+ * `Record<WorkItemPhase, GateChildResolution>` (work-item-repository-substrate.ts), so the single
+ * most load-bearing phase-reading site DOES fail to compile when a variant is added. That is one
+ * site, not all of them: the bare `status === "literal"` comparisons elsewhere remain silent
+ * fall-throughs, and the sentence below still describes them accurately.
+ *
+ * ORIGINAL (bug-371): It exists because there is NO exhaustive `switch` on `WorkItemPhase` and no
+ * `Record<WorkItemPhase, …>` anywhere in this codebase, so adding a variant is NOT compiler-checked:
+ * every `status === "literal"` comparison is a silent fall-through site. Two hardcoded terminal sets
+ * were already wrong the moment `failed_sealed` existed. Centralising the set does not restore
+ * exhaustiveness — nothing can, short of a real discriminated union — but it gives the next variant
+ * ONE place to be added instead of N places to be missed.
  */
 export const TERMINAL_WORK_PHASES: ReadonlySet<WorkItemPhase> = new Set<WorkItemPhase>([
   "done",
