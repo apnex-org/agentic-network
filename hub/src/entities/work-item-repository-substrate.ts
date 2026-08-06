@@ -410,12 +410,46 @@ export function classifyGateChild(
   // is the seam it would surface through).
   if (!child) return "missing";
   if (child.status === "missing") return "missing";
-  if (child.status === "done") return "satisfied";
-  if (child.status === "abandoned") return "dropped_abandoned";
-  // Everything else — ready|claimed|in_progress|blocked|paused|review|failed_sealed —
-  // is PENDING and BLOCKING.
-  return "pending";
+  // 🔴 fsmintent0: EXHAUSTIVE BY CONSTRUCTION. This was a catch-all `return "pending"` whose
+  // comment enumerated a closed set of seven phases the CODE treated as open — so a new phase
+  // compiled clean, deployed, and was silently swallowed as `pending`, blocking every dependent
+  // FOREVER with no error anywhere. MEASURED before this change: adding a terminal phase to
+  // WorkItemPhase left `tsc` GREEN (falsifier CELL 1, docs/planning/fsmintent0-falsifier-run.md).
+  //
+  // A `Record<WorkItemPhase, …>` makes the omission a COMPILE ERROR instead of a runtime silence.
+  // ⚠️ AND THE LIMIT, STATED SO IT IS NOT OVERREAD: this forces the author of a new phase to
+  // CLASSIFY it. It cannot force them to classify it CORRECTLY. The act becomes unskippable; the
+  // judgement stays judgement.
+  return GATE_CHILD_RESOLUTION_BY_PHASE[child.status];
 }
+
+/**
+ * The phase → gate-resolution table. Behaviour is IDENTICAL to the predicate chain it replaces —
+ * this is a structural change, not a semantic one, and the mutation matrix asserts the mapping
+ * per phase rather than trusting that claim.
+ *
+ * The two DELIBERATE arms carry Director-ruled rationale documented at classifyGateChild's call
+ * site above; do not re-derive them from TERMINAL_WORK_PHASES, which contains `failed_sealed` and
+ * would invert the ruling.
+ */
+const GATE_CHILD_RESOLUTION_BY_PHASE: Record<WorkItemPhase, GateChildResolution> = {
+  // the work FINISHED — the ONLY value that releases a dependsOn edge
+  done: "satisfied",
+  // a DELIBERATE termination: a decision already taken by someone with authority. Fail-closed is
+  // the right posture toward the UNKNOWN and the wrong posture toward the DECIDED.
+  abandoned: "dropped_abandoned",
+  // 🔴 a gate that drops its own failures is not a gate — failed_sealed BLOCKS, deliberately.
+  failed_sealed: "pending",
+  // still live, or never started: pending and blocking.
+  ready: "pending",
+  claimed: "pending",
+  in_progress: "pending",
+  blocked: "pending",
+  review: "pending",
+  // ⚠️ VESTIGIAL as a status value (fsmintent0 correction 2: zero live writers since idea-640 made
+  // suspension an attribute) — LEGACY rows may still carry it, so the arm stays.
+  paused: "pending",
+};
 
 /** Phases from which release_work / abandon_work are legal (FSM §3.1). review is
  *  excluded — a review item advances only via complete_work or the lease-expiry
