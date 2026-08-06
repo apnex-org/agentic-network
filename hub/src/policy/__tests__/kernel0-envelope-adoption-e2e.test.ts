@@ -320,6 +320,16 @@ describe("kernel0 — 🔴 a truncationNote is read ONLY when capped, so it must
     assertNoUncappedClaim(env.truncationNote as string, "list_missions");
   });
 
+  // ⚠️ SCOPE OF THIS LEG (greg, reviewing #747 — state it or the next person adds a
+  // RENDERABLE surface here and feels covered):
+  //   THE STATIC LEG EXISTS ONLY BECAUSE list_decisions CANNOT BE RENDERED — the
+  //   harness wires no decision store. It is a FALLBACK FOR UN-RENDERABLE SURFACES,
+  //   NOT a second opinion on renderable ones.
+  // ⇒ Adding a renderable surface here puts a WEAKER check where a STRONGER one is
+  //   available, and the weak green is indistinguishable from the strong green.
+  //   list_bugs belongs in the RENDERED set below for exactly this reason: its note is
+  //   built by string concatenation, which the regex cannot match, so listing it here
+  //   would have registered as coverage while covering ZERO (bug-464, one level up).
   it("🔴 ALL THREE narrowBy literals, INCLUDING list_decisions — the surface the first version missed", () => {
     // list_decisions cannot be rendered here (no decision store in createTestContext),
     // and that absence is EXACTLY why the first version of this guard did not cover
