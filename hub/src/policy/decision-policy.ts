@@ -200,10 +200,21 @@ async function listDecisions(args: Record<string, unknown>, ctx: IPolicyContext)
     // UNQUALIFIED FALSE remedy — so we argued about WHETHER to prescribe and never about
     // HOW. A DEFECT'S REMEDY CARRIES THE DEFECT'S FRAME, AND THE FRAME OUTLIVES THE FIX.
     //
-    // ⚠️ The ergonomic objection (a truncation note is read by someone in trouble; this is
-    // 100 chars of epistemics) was MEASURED rather than assumed: the note renders ONLY when
-    // scanCapped is true, and this collection is 36 rows against a cap of 500 — so it has
-    // rendered ZERO times. Verbosity cost to date: nil. Honesty gain: permanent.
+    // ⚠️ THE ERGONOMIC OBJECTION (a truncation note is read by someone in trouble; this is
+    // 100 chars of epistemics) IS ANSWERED BY A RATIO AT THE MOMENT OF RENDER, NOT BY A
+    // RENDER COUNT. A caller reading this note is ALREADY IN TROUBLE and already about to
+    // spend a query; 100 characters of disclosed uncertainty against the cost of ACTING ON
+    // A FALSE REMEDY is not close — and bug-518 is the measured price of the other side: a
+    // filter that read entirely plausible, did not push down, and bought a wrong belief.
+    //
+    // 🔴 THE ARGUMENT I FIRST WROTE HERE WAS "it has rendered ZERO times, so the verbosity
+    // is free" — TRUE AND IRRELEVANT. Zero renders means the verbosity cost is zero AND THE
+    // HONESTY GAIN IS ZERO, in lockstep; the ratio, which is the whole question, is
+    // untouched by the count. Worse, it would INVERT the moment this collection passed the
+    // cap — exactly when the note starts mattering. AN ARGUMENT THAT FAILS PRECISELY WHEN
+    // ITS SUBJECT BECOMES RELEVANT IS WORSE THAN NO ARGUMENT. (Caught by the engineer; it
+    // is his own "zero consumers" error in my hands — a true measurement cited for a
+    // conclusion it does not bear on, same shape, opposite seat, four hours apart.)
     //
     // REVIVAL: if decisions ever approach the cap, measure it — one observation would be
     // the first bucket-prefixed pushdown measurement in the repo and would let this string
