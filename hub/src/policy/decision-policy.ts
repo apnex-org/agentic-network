@@ -19,6 +19,7 @@ import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
 import { resolveCreatedBy } from "./caller-identity.js";
 import { paginated } from "./list-filters.js";
+import { LIST_CAP as DECISION_LIST_CAP } from "../entities/decision-repository-substrate.js";
 import { emitAndPush } from "./message-policy.js";
 import type {
   Decision,
@@ -157,7 +158,22 @@ async function listDecisions(args: Record<string, unknown>, ctx: IPolicyContext)
   // to do about it. The scan-capped signal was present and under-used; the kernel
   // turns it into a full disclosure. Note `total` becomes null when capped: that is
   // the point — a floor must not masquerade as a count.
-  const envelope = paginated(items, args, { scanCapped: truncated, scanCap: 500 });
+  // 🔴 §9c DIVERGENCE FIX — found only because the engineer named the class, NOT by
+  // review of my own work: the author of N parallel implementations of ONE spec is
+  // structurally unable to see their divergence, because one mental model produced
+  // all of them. Three adoptions, three differences, and I had described one of them
+  // as a virtue. This handler hardcoded `scanCap: 500` in the SAME COMMIT that
+  // exported the other two caps precisely to avoid a duplicated literal; and it
+  // passed NO `narrowBy` while this repository genuinely DOES push
+  // status/class/routedTarget to the substrate — so the note withheld advice that is
+  // TRUE here, which is bug-518's defect running in the opposite direction.
+  const envelope = paginated(items, args, {
+    // the repository computes this directly (items.length >= LIST_CAP) — it needs no
+    // pre-filter length comparison, and THAT divergence from the other two is correct.
+    scanCapped: truncated,
+    scanCap: DECISION_LIST_CAP,
+    narrowBy: "status/class/routedTarget (these three ARE pushed to the substrate and genuinely narrow the scan)",
+  });
   // this surface names its rows `decisions`, not `items`
   const { items: pageItems, ...rest } = envelope;
   return ok({ decisions: pageItems, ...rest });

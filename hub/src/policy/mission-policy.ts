@@ -538,6 +538,12 @@ async function listMissions(args: Record<string, unknown>, ctx: IPolicyContext):
   const envelope = paginated(missions, args, {
     scanCapped: totalPreFilter >= MISSION_LIST_CAP,
     scanCap: MISSION_LIST_CAP,
+    // ⚠️ NO `narrowBy`, DELIBERATELY — and this comment exists so the ABSENCE reads as a
+    // MEASUREMENT rather than an oversight, because the sibling adoptions both have one.
+    // `listMissions()` is called here with no argument and EVERY filter is applied
+    // client-side afterwards, so there is no filter a caller could supply that would
+    // narrow the SCAN. Naming one would be bug-518's exact defect — advice that cannot
+    // work — which is the thing this arc exists to remove.
   });
 
   const queryUnmatched = hasFilter && postFilterCount === 0 && totalPreFilter > 0;
