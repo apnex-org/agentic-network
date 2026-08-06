@@ -171,11 +171,11 @@ const CLAIM_LOCK_TIMEOUT_MS = 5000;
  *  still owns the work), so excluding them would let an agent hoard blocked/review
  *  items and claim past the cap. (Supersedes the construction-design §3.2 narrower
  *  claimed+in_progress draft — Steve's threat-model resolved the question.) */
-const WIP_PHASES: readonly WorkItemPhase[] = ["claimed", "in_progress", "blocked", "review"];
+export const WIP_PHASES: readonly WorkItemPhase[] = ["claimed", "in_progress", "blocked", "review"];
 
 /** Phases in which the agent holds an active lease (lease object non-null; renew /
  *  heartbeat legal). Mirrors WIP_PHASES — the lease is held until a terminal/ready edge. */
-const LEASE_HELD_PHASES: readonly WorkItemPhase[] = ["claimed", "in_progress", "blocked", "review"];
+export const LEASE_HELD_PHASES: readonly WorkItemPhase[] = ["claimed", "in_progress", "blocked", "review"];
 
 /**
  * idea-640 / nodefix0 — IS THIS ROW WITHDRAWN FROM EXECUTION?
@@ -454,7 +454,7 @@ const GATE_CHILD_RESOLUTION_BY_PHASE: Record<WorkItemPhase, GateChildResolution>
 /** Phases from which release_work / abandon_work are legal (FSM §3.1). review is
  *  excluded — a review item advances only via complete_work or the lease-expiry
  *  sweeper (sub-PR-4); review-edge finalization lands with complete_work (3a-ii). */
-const RELEASABLE_PHASES: readonly WorkItemPhase[] = ["claimed", "in_progress", "blocked"];
+export const RELEASABLE_PHASES: readonly WorkItemPhase[] = ["claimed", "in_progress", "blocked"];
 
 /** Phases whose lease-expiry accrues per-ITEM poison (audit-4103 #3): ONLY the
  *  claim-and-crash phases. A review/blocked item that lapses (e.g. a parked, evidenced
