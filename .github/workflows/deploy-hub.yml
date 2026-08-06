@@ -181,8 +181,22 @@ jobs:
 
           _Auto-filed because the roll alarm previously had no route (bug-107)._"
 
-          existing=$(gh issue list --state open --search "\"${MARKER}\" in:title" \
-                       --json number --jq '.[0].number' 2>/dev/null || true)
+          # bug-439's shape, caught in review by greg: `2>/dev/null || true` makes
+          # "the query FAILED" and "nothing was FOUND" the same empty value. On an auth
+          # blip / rate-limit / 5xx we would fall through to the else branch and open a
+          # NEW issue -- failing toward the exact flood the one-issue-at-a-time design
+          # exists to prevent. Separate the two conditions so a degraded lookup SAYS SO
+          # instead of looking like a clean zero.
+          if ! existing=$(gh issue list --state open --search "\"${MARKER}\" in:title" \
+                            --json number --jq '.[0].number'); then
+            echo "::error title=ALARM ROUTING DEGRADED::could not query existing issues; opening a new one may duplicate. The deploy failure at ${RUN_URL} is REAL."
+            existing=""
+          fi
+          # KNOWN LIMIT (greg, review of #744): GitHub code search is eventually
+          # consistent, so a lookup may not see an issue created seconds earlier and
+          # two rapid failures could both create. Accepted: deploys are not that fast,
+          # and it is inherent to search-by-title. A label-based key would index
+          # differently if this ever bites.
           routed=no
           if [ -n "${existing:-}" ] && [ "${existing}" != "null" ]; then
             gh issue comment "${existing}" --body "${BODY}" \
