@@ -129,24 +129,27 @@ describe("legible0 — the loud guard on the envelope invariant", () => {
    * stays green — which is the definition of a guard that is actually enforced.
    */
   /**
-   * 🔴 THIS GUARD IS NOT REACHABLE THROUGH THE SUBSTRATE WRITE PATH, AND THAT IS
-   * RECORDED RATHER THAN FAKED. `substrate.put` runs every write through the
-   * v2-envelope write-encoder, which ENVELOPES whatever it is given — so a flat row
-   * CANNOT BE CREATED through the sanctioned path. Attempting it here produced
-   * `[Idea.migrateOne] input must be object` from the encoder, not a flat row.
+   * 🔴 THE GUARD WAS REWRITTEN AFTER ARCHITECT REVIEW, AND ITS RED DIRECTION IS NOW PROVEN.
    *
-   * ⚠️ SO WHAT DOES THE GUARD DEFEND? Rows that never went through this encoder:
-   * a pre-W6 row missed by the re-migration, or direct database access. Neither is
-   * constructible from a test that uses the substrate, BY CONSTRUCTION.
+   * V1 tested `!i.createdAt` on the DECODED entity. The review asked a question I could
+   * not settle: would a FLAT row (createdAt at top level) still DECODE with `createdAt`
+   * populated? If so the guard is silent exactly when the sort is broken — a guard that
+   * fires only on a row malformed in BOTH shapes.
    *
-   * 🔴 I AM NOT SHIPPING A HELPER TEST TO CLAIM COVERAGE HERE. My own work-498
-   * finding was that a guard which cannot execute is not defence-in-depth — it is a
-   * CLAIM that something is handled. The honest position: the guard is cheap, it is
-   * correct if the state ever occurs, and ITS RED DIRECTION IS UNPROVEN BY TEST.
-   * Stated in the delivery evidence as an admitted gap, not as coverage.
+   * I could not answer it cheaply (the memory substrate has encodeForWrite and NO
+   * decode-on-read; no sanctioned path can create a flat row at all — substrate.put
+   * envelopes every write). SO THE DEPENDENCY WAS REMOVED RATHER THAN THE QUESTION
+   * ANSWERED: V2 asserts THE PROPERTY THE SORT IS SUPPOSED TO DELIVER — that the window
+   * is non-increasing in createdAt.
    *
-   * What IS pinned below: the guard does NOT fire on healthy data — so it cannot
-   * become a permanent alarm that trains readers to ignore it (bug-437's shape).
+   * ⭐ MEASURING THE EFFECT BEATS MEASURING A HYPOTHESISED CAUSE. V2 detects a broken
+   * newest-first window from ANY cause — flat row, translation failure, dropped ORDER BY,
+   * a substrate that ignores `sort` — and CANNOT be silent while the window is wrong,
+   * because the window being wrong is what it tests.
+   *
+   * ✅ RED DIRECTION, MUTATION-VERIFIED (mutant existence confirmed before trusting the
+   * verdict): flipping the scan to `metadata.createdAt ASC` FIRES the guard. V1's red
+   * direction was UNPROVEN BY TEST and admitted as such; V2's is proven.
    */
   it("✅ a healthy collection emits NO breach — the guard is not a permanent alarm", async () => {
     const { ctx, router } = ideaRouter();

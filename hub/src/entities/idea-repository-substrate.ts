@@ -151,16 +151,43 @@ export class IdeaRepositorySubstrate implements IIdeaStore {
     // the fix exists to kill. So it must be impossible for one to pass through quietly.
     // Non-fatal by design: this is a READ path, and taking list_ideas down over a
     // single malformed row would be a worse failure than the one being reported.
-    const undated = decoded.filter((i) => !i.createdAt).length;
-    if (undated > 0) {
+    // 🔴 THIS GUARD MEASURES THE EFFECT, NOT A PROXY — REWRITTEN AFTER ARCHITECT REVIEW.
+    // The first version tested `!i.createdAt` on the DECODED entity. The review asked a
+    // question I could not settle: would a FLAT row (createdAt at top level) still decode
+    // with `createdAt` populated? If yes, the guard is silent exactly when the sort broke.
+    //
+    // I could not answer it cheaply — the memory substrate has an encodeForWrite and NO
+    // decode-on-read, and no sanctioned path can even create a flat row (substrate.put
+    // envelopes every write). SO THE DEPENDENCY WAS REMOVED RATHER THAN THE QUESTION
+    // ANSWERED: assert the PROPERTY THE SORT IS SUPPOSED TO DELIVER.
+    //
+    // ⭐ WHY THIS IS STRICTLY BETTER: it detects a broken newest-first window from ANY
+    // cause — a flat row, a translation failure, a dropped ORDER BY, a substrate that
+    // ignores `sort` — instead of one hypothesised cause. It cannot be silent while the
+    // window is wrong, because the window being wrong IS what it tests.
+    // Non-fatal by design: this is a READ path, and taking list_ideas down over a
+    // malformed row would be a worse failure than the one being reported.
+    let outOfOrder = 0;
+    let undated = 0;
+    for (let i = 0; i < decoded.length; i++) {
+      if (!decoded[i].createdAt) undated++;
+      if (i > 0) {
+        const prev = decoded[i - 1].createdAt;
+        const cur = decoded[i].createdAt;
+        if (prev && cur && cur > prev) outOfOrder++;
+      }
+    }
+    if (outOfOrder > 0 || undated > 0) {
       console.error(
-        `[IdeaRepositorySubstrate] 🔴 INVARIANT BREACH: ${undated} of ${decoded.length} Idea rows ` +
-          `have NO createdAt after decode. Storage is documented ENVELOPE-ONLY (mission-90 W8), and ` +
-          `the newest-first scan order sorts on metadata.createdAt — so these rows sorted as NULL and ` +
-          `their position in the 500-row window is ARBITRARY. Results may silently omit rows. ` +
-          `This is the flat-row case the envelope invariant says cannot exist.`,
+        `[IdeaRepositorySubstrate] 🔴 INVARIANT BREACH: the newest-first scan window is NOT ` +
+          `newest-first — ${outOfOrder} of ${decoded.length} rows are out of createdAt order and ` +
+          `${undated} have no createdAt at all. The scan sorts on metadata.createdAt, which is ` +
+          `correct ONLY IF every row is envelope-shaped (storage is documented ENVELOPE-ONLY, ` +
+          `mission-90 W8). Rows that sort as NULL land at an arbitrary position, so the 500-row ` +
+          `window may SILENTLY OMIT the newest ideas — the exact defect this ordering exists to fix.`,
       );
     }
+
     return decoded;
   }
 

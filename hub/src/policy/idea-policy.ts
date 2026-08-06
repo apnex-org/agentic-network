@@ -143,12 +143,26 @@ async function listIdeas(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   // so `total` is a FLOOR, not the collection count. Detected exactly as the
   // sibling get_backlog_health handler in this file already detects it
   // (length >= LIST_CAP) rather than by a second mechanism.
-  // 🔴 STILL LOAD-BEARING AFTER PUSH-DOWN, AND THE REASON CHANGED. Pre-fix this said
-  // "the collection is bigger than the window". Post-fix the scan is FILTERED and
-  // ORDERED, so hitting the cap now means "MORE ROWS MATCH YOUR FILTER than fit" —
-  // still incomplete, still a FLOOR, but narrowing is now a REAL remedy rather than
-  // the impossible advice bug-497 records. The flag must not be dropped just because
-  // the common case stopped tripping it.
+  // 🔴 CORRECTED AFTER ARCHITECT REVIEW — AND THE TRUTH IS WORSE THAN THE REVIEW FOUND.
+  // An earlier draft of this comment claimed the scan is now "FILTERED and ORDERED", so
+  // narrowing had become a real remedy. THE REVIEW CAUGHT IT: the general filter
+  // push-down was measured, broke the dotted-path filters, and was REVERTED. The review
+  // scoped the surviving claim to `status`.
+  //
+  // 🔴 IT IS NOT EVEN TRUE FOR `status`. `listIdeas()` ONE LINE ABOVE IS CALLED WITH NO
+  // ARGUMENT, so its `statusFilter` is undefined, `substrateFilter` is empty, and the
+  // substrate receives `filter: undefined`. NOTHING pushes down on this path. Every
+  // filter — status, createdAt, createdBy.*, tags — runs IN MEMORY, AFTER the cap.
+  //
+  // ⇒ `truncated` means exactly what it meant before: THE COLLECTION IS BIGGER THAN THE
+  //   WINDOW. Narrowing does NOT shrink the scan (that is bug-497, still open, and
+  //   pending bug-507's read-side key translation).
+  // ⇒ WHAT legible0 CHANGED IS *WHICH* ROWS ARE IN THE WINDOW — the newest 500 rather
+  //   than an arbitrary 500. That is what makes recent ideas reachable. It does not make
+  //   the window bigger and it does not make narrowing work.
+  //
+  // ⚠️ WRITING "narrowing is now a real remedy" WOULD HAVE SHIPPED bug-497'S EXACT DEFECT
+  // — a disclosure prescribing a remedy that cannot work — INSIDE THE FIX FOR ITS FAMILY.
   const truncated = totalPreFilter >= LIST_CAP;
 
   // Legacy tag match-any filter (pre-QueryShape; preserved).
@@ -215,7 +229,7 @@ async function listIdeas(args: Record<string, unknown>, ctx: IPolicyContext): Pr
           ? {
               truncated: true,
               truncationNote:
-                "the idea scan hit the 500-row cap — `total` is a FLOOR, not exact, and rows beyond the cap were never seen. 🔴 PAGING WITH offset CANNOT REACH THEM; narrow with filter/tags to bring the set inside the scan.",
+                "the idea scan hit the 500-row cap — `total` is a FLOOR, not exact, and rows beyond the cap were never seen. 🔴 PAGING WITH offset CANNOT REACH THEM, AND NEITHER CAN NARROWING: every filter on this surface is applied IN MEMORY, AFTER the cap, so a narrower query scans exactly the same 500 rows (bug-497 / bug-507). ✅ WHAT YOU CAN RELY ON: the window is ordered NEWEST-FIRST, so the rows you did get are the most recent ones — an absence here means old, not missing.",
             }
           : {}),
         ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
