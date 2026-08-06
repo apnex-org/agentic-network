@@ -143,6 +143,12 @@ async function listIdeas(args: Record<string, unknown>, ctx: IPolicyContext): Pr
   // so `total` is a FLOOR, not the collection count. Detected exactly as the
   // sibling get_backlog_health handler in this file already detects it
   // (length >= LIST_CAP) rather than by a second mechanism.
+  // 🔴 STILL LOAD-BEARING AFTER PUSH-DOWN, AND THE REASON CHANGED. Pre-fix this said
+  // "the collection is bigger than the window". Post-fix the scan is FILTERED and
+  // ORDERED, so hitting the cap now means "MORE ROWS MATCH YOUR FILTER than fit" —
+  // still incomplete, still a FLOOR, but narrowing is now a REAL remedy rather than
+  // the impossible advice bug-497 records. The flag must not be dropped just because
+  // the common case stopped tripping it.
   const truncated = totalPreFilter >= LIST_CAP;
 
   // Legacy tag match-any filter (pre-QueryShape; preserved).
@@ -180,7 +186,23 @@ async function listIdeas(args: Record<string, unknown>, ctx: IPolicyContext): Pr
       text: JSON.stringify({
         ideas: args.compact === true ? page.items.map(projectIdeaCompact) : page.items,
         count: page.count,
-        total: page.total,
+        // 🔴 legible0 item 3 (steve's ruling): `total` is an EXACT COUNT or it is NULL.
+        // It must never be a bare integer beside `truncated: true` — measured tonight,
+        // list_ideas emitted `total: 2, truncated: true` WITH a note saying total is a
+        // floor. The field and the prose contradicted each other in one envelope, and a
+        // reader takes the integer.
+        //
+        // ⭐ THIS RULE IS NOT NEW AND THE CODE FOR IT ALREADY EXISTS: list-filters.ts's
+        // `paginated()` kernel does `const total = scanCapped ? null : page.total` with
+        // the comment "a floor in `total` is the defect this kernel exists to make
+        // impossible". list_work and list_ready_work call it and are already correct;
+        // list_ideas never adopted it. THE LIBRARY WAS THE FIX AND ADOPTION WAS THE GAP.
+        //
+        // ⚠️ NOT ADOPTING THE WHOLE KERNEL HERE, DELIBERATELY: `paginated()` returns a
+        // different envelope (items/complete/scanned) and swapping it would be a WIRE
+        // SHAPE CHANGE on a live surface — outside this cut. Full adoption is the real
+        // fix and is named for the architect rather than taken unilaterally.
+        total: truncated ? null : page.total,
         offset: page.offset,
         limit: page.limit,
         ...(args.compact === true ? { compact: true } : {}),

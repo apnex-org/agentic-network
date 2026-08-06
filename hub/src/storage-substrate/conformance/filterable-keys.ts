@@ -25,7 +25,15 @@ export const SUBSTRATE_FILTERABLE_KEYS: Record<string, string[]> = {
   Agent: ["fingerprint", "currentSessionId", "registeredSessions"],
   Audit: ["actor"],
   Bug: ["status", "severity", "class", "sourceThreadId", "sourceActionId", "sourceIdeaId"],
-  Idea: ["status", "missionId", "sourceThreadId", "sourceActionId"],
+  // legible0: `id` joins as a SORT key — the deterministic tie-break under the
+  // newest-first scan order. It is RESERVED_TOP_LEVEL, so it needs no renameMap
+  // entry and resolves to the canonical column.
+  // 🔴 NOTE WHAT IS *NOT* HERE: `createdAt`. The scan sorts on `metadata.createdAt`,
+  // an ALREADY-BUCKETED path — isReservedOrBucketKey passes it through untranslated,
+  // so the governor correctly does not demand a renameMap entry for it. A bare
+  // `createdAt` WOULD appear here and WOULD be a defect: unmapped on a partitioned
+  // kind, it throws in production and passes in tests (the oracle arms only in prod).
+  Idea: ["status", "missionId", "sourceThreadId", "sourceActionId", "id"],
   Message: ["kind", "status", "threadId", "migrationSourceId", "authorAgentId", "delivery", "scheduledState", "target.role", "target.agentId", "id"],
   Mission: ["status", "sourceThreadId", "sourceActionId"],
   PendingAction: ["state", "naturalKey", "targetAgentId", "dispatchType", "entityRef"],
