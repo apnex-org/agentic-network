@@ -946,6 +946,22 @@ async function listThreads(args: Record<string, unknown>, ctx: IPolicyContext): 
   const envelope = paginated(summaries, args, {
     scanCapped: totalPreFilter >= LIST_PREFETCH_CAP,
     scanCap: LIST_PREFETCH_CAP,
+    // BASIS FOR THIS ADVICE, recorded because "run the remedy you write" is this arc's
+    // bar and a COMMENT claiming pushdown is exactly what bug-518 was made of:
+    //   1. IMPLEMENTATION, not comment — thread-repository-substrate.ts:420-422 passes
+    //      the pushed filter into `substrate.list({ filter, limit })`, so the LIMIT
+    //      applies to the FILTERED set, not to an arbitrary window filtered afterwards.
+    //   2. REGISTRY — both keys are in filterable-keys.ts:41 (Thread), and :205-206
+    //      names THIS call site by hand: "listThreads spreads ...(equalityFilter);
+    //      directed discovery supplies recipient/currentTurnAgentId".
+    //   3. ⇒ Being REGISTERED means Gate A WATCHES THEM for translation drift. Contrast
+    //      list_decisions' `routedTarget`, which maps to a BUCKET-PREFIXED path the
+    //      registry excludes and Gate A explicitly skips (bug-511) — that one is omitted
+    //      from its note for precisely this reason.
+    // ⚠️ WHAT THIS IS NOT: a live over-cap measurement. Registry membership proves the
+    // key stays translatable; the implementation read proves the filter reaches the
+    // query. Neither is a behavioural observation of a reduced scan. Stronger than a
+    // comment, weaker than a measurement, and labelled as such rather than rounded up.
     narrowBy: "recipientAgentId/currentTurnAgentId (the only filters pushed to the substrate; every other filter applies AFTER the cap)",
   });
 

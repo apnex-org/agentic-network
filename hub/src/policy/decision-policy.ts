@@ -172,7 +172,29 @@ async function listDecisions(args: Record<string, unknown>, ctx: IPolicyContext)
     // pre-filter length comparison, and THAT divergence from the other two is correct.
     scanCapped: truncated,
     scanCap: DECISION_LIST_CAP,
-    narrowBy: "status/class/routedTarget (these three ARE pushed to the substrate and genuinely narrow the scan)",
+    // 🔴 `routedTarget` IS DELIBERATELY OMITTED FROM THIS ADVICE, AND THE REASON IS NOT
+    // THAT IT FAILS — IT IS THAT NOTHING IN THIS REPO CAN TELL YOU WHETHER IT WORKS.
+    // The repository pushes three fields; two of them (`status`, `class`) are in the
+    // filterable-keys registry and are watched by Gate A. The third maps to the
+    // BUCKET-PREFIXED path `status.routedTo.target`, which the registry EXCLUDES by
+    // design and which Gate A (filterable-keys-drift-gate.test.ts:49-52) explicitly
+    // SKIPS — deferring, in its own inline comment, to a round-trip oracle that does
+    // not exist. That is bug-511.
+    //
+    // ⚠⚠ AND THE OBVIOUS REMEDY IS UNAVAILABLE, NOT MERELY UNRUN: measuring pushdown
+    // requires a scan that HITS THE CAP. There are 36 decisions against a cap of 500,
+    // so a filter that pushes down and one that post-filters return byte-identical
+    // results. The `truncated` flag on this surface has, on that evidence, never fired.
+    //
+    // ⇒ So the choice is between naming an UNVERIFIABLE filter and omitting a possibly-
+    // true one. Naming it OVER-licenses: a caller does work that may not help, and the
+    // cost is whatever the false confidence prevents. Omitting it UNDER-licenses: the
+    // caller runs one extra query. Errors toward more constraint are self-limiting;
+    // errors toward less are not. Omit.
+    //
+    // REVIVAL: if decisions ever approach 500, measure it — that single observation
+    // would also be the first bucket-prefixed pushdown measurement in the repo.
+    narrowBy: "status/class (registry-verified and drift-gated — these two ARE pushed to the substrate and genuinely narrow the scan)",
   });
   // this surface names its rows `decisions`, not `items`
   const { items: pageItems, ...rest } = envelope;
