@@ -30,21 +30,43 @@
 
 ## §2 — THE NINE PHASES
 
-| PHASE | ✅ live writers | ✅ dependent effect | ✅ WIP | ✅ lease-held | ✅ releasable | ✅ terminal | 📝 `suspended` reachable? | 📝 `effectiveDisposition` |
-|---|---|---|---|---|---|---|---|---|
-| PHASE:`ready` | 7 | `pending` | – | – | – | – | **YES — and it is the DEFAULT dormant appearance** | `null` |
-| PHASE:`claimed` | 2 | `pending` | ✔ | ✔ | ✔ | – | yes | `null` |
-| PHASE:`in_progress` | 4 | `pending` | ✔ | ✔ | ✔ | – | yes | `null` |
-| PHASE:`blocked` | 2 | `pending` | ✔ | ✔ | ✔ | – | yes | `null` |
-| PHASE:**`paused`** | **0** 🔴 | `pending` | – | – | – | – | **n/a — legacy rows only** | `null` |
-| PHASE:`review` | 3 | `pending` | ✔ | ✔ | ✗ | – | unmeasured | `null` |
-| PHASE:`done` | 3 | **`satisfied`** | – | – | – | ✔ | no | `null` |
-| PHASE:`abandoned` | 6 | **`dropped_abandoned`** | – | – | – | ✔ | cleared on abandon (`:3933`) | `null` |
-| PHASE:`failed_sealed` | 3 | `pending` 🔴 | – | – | – | ✔ | no | **`"failed_sealed"`** |
+### ✅ DERIVABLE — GENERATED FROM THE CODE. This block is an OUTPUT, not a description.
 
-**`done` is the ONLY phase that satisfies a `dependsOn` edge.** `abandoned` DROPS OUT (Director ruling, 2026-07-29: *"fail-closed is the right posture toward the UNKNOWN; it is the wrong posture toward the DECIDED"*). **`failed_sealed` BLOCKS, deliberately** — *"a gate that drops its own failures is not a gate."*
+🔴 **Do not hand-edit. `fsm-table-generator.ts` emits it and the conformance test requires a BYTE-FOR-BYTE match, so drift surfaces as a diff in a PR.** *This is to a document what #748's D6 fix was to the storage enum: asserting leaves two artifacts someone must keep in step; **generating leaves one**.*
 
----
+<!-- BEGIN GENERATED: derived from code. Do not hand-edit. -->
+
+| phase | dependent effect | counts as WIP | holds a lease | releasable | terminal |
+|---|---|---|---|---|---|
+| `ready` | pending | – | – | – | – |
+| `claimed` | pending | yes | yes | yes | – |
+| `in_progress` | pending | yes | yes | yes | – |
+| `blocked` | pending | yes | yes | yes | – |
+| `paused` | pending | – | – | – | – |
+| `review` | pending | yes | yes | – | – |
+| `done` | satisfied | – | – | – | yes |
+| `abandoned` | dropped_abandoned | – | – | – | yes |
+| `failed_sealed` | pending | – | – | – | yes |
+
+<!-- END GENERATED -->
+
+**`done` is the ONLY phase that satisfies a `dependsOn` edge.** `abandoned` DROPS OUT (Director, 2026-07-29: *"fail-closed is the right posture toward the UNKNOWN; it is the wrong posture toward the DECIDED"*). **`failed_sealed` BLOCKS, deliberately** — *"a gate that drops its own failures is not a gate."*
+
+### 📝 PROSE — NOT MACHINE-CHECKED. Treat with the scepticism the ✅ half does not need.
+
+| phase | live assignment sites | `suspended` reachable here? | `effectiveDisposition` |
+|---|---|---|---|
+| `ready` | 7 | **YES — and it is the DEFAULT dormant appearance** | `null` |
+| `claimed` | 2 | yes | `null` |
+| `in_progress` | 4 | yes | `null` |
+| `blocked` | 2 | yes | `null` |
+| `paused` | **0** 🔴 | n/a — legacy rows only | `null` |
+| `review` | 3 | unmeasured | `null` |
+| `done` | 3 | no | `null` |
+| `abandoned` | 6 | cleared on abandon (`:3933`) | `null` |
+| `failed_sealed` | 3 | no | **`"failed_sealed"`** |
+
+⚠️ **Counts are assignment sites with comment lines excluded, two-sidedly controlled (`paused` must be 0 — it is; `review` must be non-zero — it is 3). They are a FLOOR on assignment sites, NOT a live-vs-migration split.**
 
 ## §3 — 🔴 `paused` IS VESTIGIAL
 
