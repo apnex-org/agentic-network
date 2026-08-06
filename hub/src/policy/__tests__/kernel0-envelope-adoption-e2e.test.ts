@@ -240,3 +240,86 @@ describe("kernel0 — 🔴 list_messages scans the NEWEST rows, not the oldest (
     expect(got).toEqual([...got].sort());
   });
 });
+
+// ── A NOTE MUST NOT ASSERT SOMETHING FALSE IN THE STATE THAT RENDERS IT ──────
+
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+describe("kernel0 — 🔴 a truncationNote is read ONLY when capped, so it must not describe the UNCAPPED state", () => {
+  /**
+   * THE DEFECT, caught in review by greg and fixed by subtraction: `list_decisions`'
+   * narrowBy once ended "...unmeasurable while the collection sits BELOW the cap".
+   * But truncationNote is emitted IFF scanCapped, and scanCapped is
+   * `items.length >= LIST_CAP` — so a reader meets that sentence ONLY when the
+   * collection is AT OR ABOVE the cap. Invisible at 36 rows. WRONG THE FIRST TIME IT
+   * IS EVER READ. bug-497's family, fifth instance, inside the fix for the fourth.
+   *
+   * ⭐ WHY A TEST AND NOT A RESOLUTION TO BE CAREFUL: the same commit that shipped
+   * that clause ALSO contained a paragraph correctly reasoning that an argument
+   * "would INVERT the moment this collection passed the cap". THE IDENTICAL TEMPORAL
+   * ERROR, CAUGHT IN THE PROSE AND MISSED IN THE STRING, SAME AUTHOR, ONE COMMIT.
+   *
+   * 🔴 AND THIS BLOCK IS ITSELF A CORRECTION. Its first version ran ONLY against
+   * list_threads — while the defect it was written for lived in decision-policy.ts.
+   * A GUARD THAT DOES NOT COVER THE SURFACE THAT HAD THE BUG. greg caught that too.
+   * It now runs BOTH e2e (every surface this harness can render) AND statically over
+   * the narrowBy literals of ALL THREE surfaces, which is the only way to reach
+   * list_decisions — createTestContext wires no decision store.
+   */
+
+  // ⚠️ HONEST LABEL, CORRECTED: this is a DENYLIST of five phrasings, NOT an assertion
+  // of the property. I first described it as "asserts the property, not the phrase" —
+  // FALSE. A denylist is structurally blind to any wording it does not enumerate
+  // (bug-359's class, in a test). It catches the KNOWN shape and its near neighbours.
+  // The property — "no claim in this note is scoped to a state that cannot render it" —
+  // is not mechanically expressible here, and saying so is better than implying it is.
+  const BELOW_CAP_CLAIMS = [
+    "below the cap",
+    "under the cap",
+    "beneath the cap",
+    "not yet capped",
+    "sits below",
+  ];
+
+  const assertNoUncappedClaim = (note: string, where: string) => {
+    const lower = note.toLowerCase();
+    for (const claim of BELOW_CAP_CLAIMS) {
+      expect(`${where}: ${lower}`).not.toContain(claim);
+    }
+  };
+
+  it("list_threads: the RENDERED note carries no below-the-cap claim", async () => {
+    const { ctx, router } = await seedThreads(LIST_PREFETCH_CAP + 5);
+    const env = await call(router, ctx, "list_threads", { limit: 1 });
+    // positive control — we are genuinely capped, so a note MUST exist, or this
+    // passes vacuously by never rendering anything (bug-464's class).
+    expect(env.truncated).toBe(true);
+    expect(typeof env.truncationNote).toBe("string");
+    assertNoUncappedClaim(env.truncationNote as string, "list_threads");
+  });
+
+  it("list_missions: the RENDERED note carries no below-the-cap claim", async () => {
+    const { ctx, router } = await seedMissions(MISSION_LIST_CAP + 5);
+    const env = await call(router, ctx, "list_missions", { limit: 1 });
+    expect(env.truncated).toBe(true);
+    expect(typeof env.truncationNote).toBe("string");
+    assertNoUncappedClaim(env.truncationNote as string, "list_missions");
+  });
+
+  it("🔴 ALL THREE narrowBy literals, INCLUDING list_decisions — the surface the first version missed", () => {
+    // list_decisions cannot be rendered here (no decision store in createTestContext),
+    // and that absence is EXACTLY why the first version of this guard did not cover
+    // the surface its own defect was on. Reading the literal is weaker than rendering
+    // it — stated, not glossed — but it reaches the file that had the bug.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const policyDir = join(here, "..");
+    for (const f of ["thread-policy.ts", "mission-policy.ts", "decision-policy.ts"]) {
+      const src = readFileSync(join(policyDir, f), "utf8");
+      for (const m of src.matchAll(/narrowBy:\s*"([^"]*)"/g)) {
+        assertNoUncappedClaim(m[1], f);
+      }
+    }
+  });
+});

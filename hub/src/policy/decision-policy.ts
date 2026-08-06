@@ -186,15 +186,53 @@ async function listDecisions(args: Record<string, unknown>, ctx: IPolicyContext)
     // so a filter that pushes down and one that post-filters return byte-identical
     // results. The `truncated` flag on this surface has, on that evidence, never fired.
     //
-    // ⇒ So the choice is between naming an UNVERIFIABLE filter and omitting a possibly-
-    // true one. Naming it OVER-licenses: a caller does work that may not help, and the
-    // cost is whatever the false confidence prevents. Omitting it UNDER-licenses: the
-    // caller runs one extra query. Errors toward more constraint are self-limiting;
-    // errors toward less are not. Omit.
+    // ⭐ THE ARCHITECT AND THE ENGINEER BOTH FRAMED THIS AS BINARY — NAME IT (over-license,
+    // unbounded) vs OMIT IT (under-license, bounded) — argued opposite sides, and MISSED
+    // THE THIRD OPTION THAT DOMINATES BOTH, WHICH IS THIS ARC'S OWN CHARTER WORD FOR WORD:
+    // A QUERY STATES WHAT IT DOES NOT KNOW.
     //
-    // REVIVAL: if decisions ever approach 500, measure it — that single observation
-    // would also be the first bucket-prefixed pushdown measurement in the repo.
-    narrowBy: "status/class (registry-verified and drift-gated — these two ARE pushed to the substrate and genuinely narrow the scan)",
+    // Naming a filter WITH ITS UNCERTAINTY DISCLOSED does not over-license, because a
+    // caller told "may, unverified" who then finds the scan unchanged HAS NOT BEEN MISLED.
+    // ONLY AN UNQUALIFIED PRESCRIPTION OVER-LICENSES. And it does not under-license either,
+    // because a possibly-true filter is no longer withheld.
+    //
+    // 🔴 WHY BOTH OF US MISSED IT: we inherited bug-518's frame, where the defect was an
+    // UNQUALIFIED FALSE remedy — so we argued about WHETHER to prescribe and never about
+    // HOW. A DEFECT'S REMEDY CARRIES THE DEFECT'S FRAME, AND THE FRAME OUTLIVES THE FIX.
+    //
+    // ⚠️ THE ERGONOMIC OBJECTION (a truncation note is read by someone in trouble; this is
+    // 100 chars of epistemics) IS ANSWERED BY A RATIO AT THE MOMENT OF RENDER, NOT BY A
+    // RENDER COUNT. A caller reading this note is ALREADY IN TROUBLE and already about to
+    // spend a query; 100 characters of disclosed uncertainty against the cost of ACTING ON
+    // A FALSE REMEDY is not close — and bug-518 is the measured price of the other side: a
+    // filter that read entirely plausible, did not push down, and bought a wrong belief.
+    //
+    // 🔴 THE ARGUMENT I FIRST WROTE HERE WAS "it has rendered ZERO times, so the verbosity
+    // is free" — TRUE AND IRRELEVANT. Zero renders means the verbosity cost is zero AND THE
+    // HONESTY GAIN IS ZERO, in lockstep; the ratio, which is the whole question, is
+    // untouched by the count. Worse, it would INVERT the moment this collection passed the
+    // cap — exactly when the note starts mattering. AN ARGUMENT THAT FAILS PRECISELY WHEN
+    // ITS SUBJECT BECOMES RELEVANT IS WORSE THAN NO ARGUMENT. (Caught by the engineer; it
+    // is his own "zero consumers" error in my hands — a true measurement cited for a
+    // conclusion it does not bear on, same shape, opposite seat, four hours apart.)
+    //
+    // 🔴 THE STRING BELOW ONCE ENDED "...and unmeasurable while the collection sits below
+    // the cap". THAT CLAUSE WAS FALSE IN THE ONLY STATE THAT RENDERS IT: the truncationNote
+    // is emitted IFF scanCapped, and scanCapped is `items.length >= LIST_CAP` — so a reader
+    // meets that sentence ONLY when the collection is AT OR ABOVE the cap. Invisible at 36
+    // rows; WRONG THE FIRST TIME IT IS EVER READ. bug-497's family, FIFTH instance, inside
+    // the fix for the fourth. The qualifier was reasoned in TODAY's state and written into
+    // a string that only ever speaks in the FUTURE state — the join class in a wire string.
+    //
+    // FIXED BY SUBTRACTION. What remains is a fact about the REGISTRY and the GATE, not
+    // about collection size, so it cannot rot. The removed clause was the only part that
+    // could, and it did nothing for the caller: knowing WHY a filter is unverified does not
+    // change what they do about it. Guarded by kernel0-envelope-adoption-e2e.test.ts.
+    //
+    // REVIVAL: if decisions ever approach the cap, measure it — one observation would be
+    // the first bucket-prefixed pushdown measurement in the repo and would let this string
+    // drop its qualifier in EITHER direction.
+    narrowBy: "status/class — registry-verified and drift-gated, both genuinely pushed to the substrate scan (routedTarget MAY also narrow but is UNVERIFIED: it is bucket-prefixed and outside the conformance registry)",
   });
   // this surface names its rows `decisions`, not `items`
   const { items: pageItems, ...rest } = envelope;
