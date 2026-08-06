@@ -145,6 +145,18 @@ async function listBugs(args: Record<string, unknown>, ctx: IPolicyContext): Pro
         // ⇒ a tags-filtered `total` is itself a floor over an incomplete scan. Live at
         //   09:10Z on 835f35fe: tags:["workgraph"] -> total 72 WITH truncated:true.
         //
+        // 🔴 THE TAGS ROW IS ALSO THE CONTROL, AND WITHOUT IT THE OTHER THREE READINGS
+        // ARE UNLICENSED (greg, reviewing #747). "no flag ⇒ pushed down" has a second
+        // reading: the filter could run IN MEMORY over a capped scan with `truncated`
+        // recomputed POST-filter (233 < 500 ⇒ flag clears while the scan WAS capped) —
+        // that is bug-454's mechanism, i.e. exactly the false negative this family is
+        // about. THE TAGS ROW KILLS IT: 72 rows and the flag STAYED TRUE, so `truncated`
+        // is carried from the SCAN, not recomputed after filtering.
+        // CONFIRMED IN SOURCE, INDEPENDENTLY: bug-repository-substrate.listBugs()
+        // computes `const truncated = items.length >= LIST_CAP` BEFORE the client-side
+        // tags filter runs. Behavioural inference and source read agree, and they are
+        // different instruments — which is the only reason the agreement counts.
+        //
         // ⚠️ THE RENDER-STATE RULE (greg): this string is emitted IFF the scan hit the cap,
         // so every clause must be read with "the collection is >= cap" ASSUMED TRUE. A
         // clause that is only true below the cap is false at 100% of its renders and
