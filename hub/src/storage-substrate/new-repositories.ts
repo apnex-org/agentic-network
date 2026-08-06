@@ -74,6 +74,10 @@ export interface IDocumentStore {
   list(opts?: { category?: string }): Promise<Document[]>;
 }
 
+// legible0 item 3: the document scan bound, named so the scan and the envelope that
+// reports it cannot disagree.
+export const DOCUMENT_LIST_CAP = 100;
+
 export class DocumentRepository implements IDocumentStore {
   constructor(private readonly substrate: HubStorageSubstrate) {}
 
@@ -101,6 +105,16 @@ export class DocumentRepository implements IDocumentStore {
   // rows and the prefix filtered THAT WINDOW, so a document outside the window was
   // reported as non-existent. Pushing it down means the cap applies to MATCHING rows.
   // Sorted by `id` for a stable total order (entities_pkey; bug-343's reserved-id path).
+  // legible0 item 3: the cap is now EXPLICIT. It was previously IMPLICIT — no `limit`
+  // was passed, so the substrate default applied (Math.min(undefined ?? 100, 500) = 100)
+  // and NOTHING at any layer knew what the bound was, which is why the policy could not
+  // report it. DOCUMENT_LIST_CAP is exported so the envelope detects the cap against the
+  // SAME constant the scan uses, rather than by a second hard-coded number that can drift.
+  //
+  // \u26a0\uFE0F DELIBERATELY 100, NOT 500. That is the CURRENT effective value, preserved exactly.
+  // Its siblings (list_ideas, list_work) cap at 500, so documents is 5x tighter — a real
+  // asymmetry, REPORTED rather than silently changed, because the sealed cut authorises an
+  // honest envelope and not a wider scan.
   async list(opts: { category?: string; prefix?: string } = {}): Promise<Document[]> {
     const filter: Record<string, unknown> = {};
     if (opts.category) filter.category = opts.category;
@@ -108,6 +122,7 @@ export class DocumentRepository implements IDocumentStore {
     const { items } = await this.substrate.list<Document>("Document", {
       ...(Object.keys(filter).length > 0 ? { filter: filter as never } : {}),
       sort: [{ field: "id", order: "asc" }],
+      limit: DOCUMENT_LIST_CAP,
     });
     return items.map(decodeDocument);
   }

@@ -15,6 +15,7 @@
  * category for filtering.
  */
 
+import { DOCUMENT_LIST_CAP } from "../storage-substrate/new-repositories.js";
 import { z } from "zod";
 import type { PolicyRouter } from "./router.js";
 import type { IPolicyContext, PolicyResult } from "./types.js";
@@ -117,8 +118,30 @@ async function listDocs(args: Record<string, unknown>, ctx: IPolicyContext): Pro
       createdAt: d.createdAt,
       updatedAt: d.updatedAt,
     }));
+    // legible0 item 3: THE HONEST ENVELOPE. list_ideas and list_work both flag a capped
+    // scan; documents emitted a bare {documents, count} and NOTHING ELSE, so a TRUE zero
+    // and a CAPPED zero were indistinguishable on this surface even after bug-487 pushed
+    // the prefix down. Detected exactly as the sibling surfaces detect it — length >= the
+    // scan cap — rather than by a second mechanism that could drift from the scan.
+    const truncated = docs.length >= DOCUMENT_LIST_CAP;
     return {
-      content: [{ type: "text" as const, text: JSON.stringify({ documents: summary, count: summary.length }, null, 2) }],
+      content: [{ type: "text" as const, text: JSON.stringify({
+        documents: summary,
+        count: summary.length,
+        ...(truncated
+          ? {
+              truncated: true,
+              truncationNote:
+                `the document scan hit the ${DOCUMENT_LIST_CAP}-row cap — \u0060count\u0060 is a FLOOR, not exact, and rows beyond the cap were never seen. ` +
+                // \uD83D\uDD34 bug-497: this note names a remedy that ACTUALLY WORKS on this surface.
+                // The ideas note said "narrow with filter/tags" while filters did not push
+                // down, so narrowing could not reduce the scan and the advice was false.
+                // BOTH document axes ARE substrate-pushed (category since always, prefix
+                // since bug-487), so narrowing here genuinely shrinks the scan.
+                `Narrowing WORKS on this surface: both \u0060prefix\u0060 and \u0060category\u0060 are pushed into the query and reduce the scan itself.`,
+            }
+          : {}),
+      }, null, 2) }],
     };
   } catch (error) {
     return {
