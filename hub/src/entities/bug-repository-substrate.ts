@@ -43,7 +43,11 @@ const KIND = "Bug";
 // max (500) + return a truncation-honest flag, mirroring listWorkItems /
 // list_ready_work. The sibling list-all methods (listMissions/listTasks/
 // listIdeas/listEntries) already pass limit:500 — listBugs was the lone outlier.
-const LIST_CAP = 500;
+// notehonest0: EXPORTED so the honesty guard binds the SAME constant the scan uses.
+// kernel0 §9c: a test hardcoding 500 keeps passing after the cap moves — the divergence
+// class where the author of N copies cannot see them drift.
+export const BUG_LIST_CAP = 500;
+const LIST_CAP = BUG_LIST_CAP;
 const MAX_CAS_RETRIES = 50;
 
 function cloneBug(bug: Bug): Bug {
