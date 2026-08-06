@@ -26,6 +26,10 @@ jobs:
       # BR1 (steve): bridge-key auth is static credentials_json — no OIDC token mint — so
       # id-token:write is NOT granted here; it is reintroduced only for keyless WIF (idea-591).
       contents: read
+      # bug-107 alarm routing: the roll-confirm alarm already fires LOUD; it had
+      # nowhere to shout. issues:write lets a failed deploy reach a surface someone
+      # actually watches instead of a red X on a workflow run.
+      issues: write
     env:
       GCP_PROJECT: labops-389703
       GCP_REGION: australia-southeast1
@@ -89,13 +93,31 @@ jobs:
       # silent-skip failure mode (on-C3-thesis). All knobs are optional overrides:
       #   vars.HUB_HEALTH_URL          — public /health URL override (default: the
       #                                  prod Cloud Run endpoint below; env-portability)
-      #   vars.ROLL_CONFIRM_TIMEOUT_S  — overall budget  (default 600)
+      #   vars.ROLL_CONFIRM_TIMEOUT_S  — overall budget  (default 1200; was 600, which
+      #                                  MEASURABLY false-failed a successful deploy on
+      #                                  2026-08-06 — see the step's own note)
       #   vars.ROLL_CONFIRM_POLL_S     — poll cadence    (default 15)
       - name: Confirm roll (poll /health gitSha == github.sha)
         env:
           HEALTH_URL: ${{ vars.HUB_HEALTH_URL || 'https://hub-api-5muxctm3ta-ts.a.run.app/health' }}
           EXPECTED_SHA: ${{ github.sha }}
-          TIMEOUT_S: ${{ vars.ROLL_CONFIRM_TIMEOUT_S || '600' }}
+          # bug-107 / MEASURED 2026-08-06: 600s FALSE-FAILED A SUCCESSFUL DEPLOY.
+          # Run 31102927327 (612d0528) exhausted the full 600s budget and reported
+          # "did NOT roll"; production was serving that exact sha when checked
+          # afterwards. THE DEPLOY WORKED — THE CONFIRMATION GAVE UP.
+          #   835f35fe   ~6m16s   measured merge->serving
+          #   7efbac35   ~5m      measured merge->serving
+          #   612d0528  >10m18s   LOWER BOUND (still not rolled at budget end; the
+          #                       actual roll instant is UNMEASURED)
+          # 600s sits INSIDE the observed range, so it is guaranteed to false-fail on
+          # the tail. 1200s is >2x the longest measured lower bound. ⚠️ THE UPPER TAIL
+          # IS UNMEASURED — this is an ESTIMATE chosen to clear a known-exceeded bound,
+          # not a value derived from a characterised distribution.
+          # COST OF THE LONGER BUDGET: a genuine stall alarms 10 minutes later. That is
+          # cheap — the previous failure mode was a TRUE deploy reported as FAILED, which
+          # trains readers to ignore the alarm entirely (bug-437: an alarm that cries wolf
+          # is the same defect as one that is silent).
+          TIMEOUT_S: ${{ vars.ROLL_CONFIRM_TIMEOUT_S || '1200' }}
           POLL_S: ${{ vars.ROLL_CONFIRM_POLL_S || '15' }}
           BUILT_DIGEST: ${{ steps.digest.outputs.built_digest }}
         run: |
@@ -136,5 +158,81 @@ jobs:
             echo "  ...not yet rolled (gitSha=${got:-<unreachable>}); sleeping ${POLL_S}s"
             sleep "${POLL_S}"
           done
-          echo "::error title=roll-confirm FAILED::prod /health did not report gitSha >= ${EXPECTED_SHA} (this commit or a superseding deploy) within ${TIMEOUT_S}s (last seen: ${last}). Image built+pushed (digest ${BUILT_DIGEST:-<unknown>}) but did NOT roll — suspect a watchtower stall (bug-308 AR /v2 service= challenge; VM-side real-fix is Director-gated). No auto-revert (R1 is alarm-only)."
+          # REPORT WHAT WAS MEASURED; DO NOT DIAGNOSE. The previous wording asserted
+          # "did NOT roll — suspect a watchtower stall", which on 2026-08-06 was FALSE:
+          # the roll succeeded and merely outran the budget. An alarm that names a cause
+          # it has not established sends the reader to the wrong place.
+          echo "::error title=roll-confirm TIMED OUT::prod /health did not report gitSha >= ${EXPECTED_SHA} WITHIN THE ${TIMEOUT_S}s BUDGET (last seen: ${last:-<unreachable>}). Image built+pushed (digest ${BUILT_DIGEST:-<unknown>}). THIS IS A TIMEOUT, NOT A PROVEN STALL — two causes fit and this step cannot separate them: (a) a genuine roll failure (watchtower/credential stall, bug-308), or (b) a roll SLOWER than the budget (observed 2026-08-06: a successful roll exceeded 600s). FIRST ACTION IS ONE COMMAND: curl -s <hub>/health | jq .gitSha — if it now reports ${EXPECTED_SHA} or a descendant, this was (b) and nothing is broken. No auto-revert (R1 is alarm-only)."
           exit 1
+
+      # ─────────────────────────────────────────────────────────────────────────
+      # bug-107 / bug-354: THE ALARM EXISTED AND HAD NO ROUTE.
+      # `Confirm roll` above already ALARMS LOUD on a stalled roll — it fired on
+      # 4 of the last 5 deploys and image-CD was silently dead for ~35 HOURS,
+      # because the only surface it reached was a red X on a workflow nobody was
+      # watching. This step gives that alarm somewhere to shout.
+      #
+      # DELIBERATELY DUMB AND DISPOSABLE: no new secret (built-in GITHUB_TOKEN),
+      # no Hub dependency (CI holds no Hub credential), no infra coupling. It is
+      # NOT COS-specific, so it OUTLIVES the VM migration — it fires on ANY failed
+      # deploy step, not just a watchtower stall.
+      #
+      # ONE OPEN ISSUE AT A TIME, by design: a repeatedly-failing deploy appends
+      # comments rather than minting N issues, because an alarm that floods is the
+      # same defect as an alarm that is silent (bug-437).
+      - name: Route the alarm (open/update a deploy-failure issue)
+        if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -uo pipefail
+          MARKER="deploy-hub failure"
+          BODY="Deploy of \`${SHA}\` did not complete.
+
+          **Run:** ${RUN_URL}
+
+          The \`Confirm roll\` step polls production \`/health\` for this commit's
+          gitSha. A failure here means the image may have built and pushed but did
+          **not** roll — historically a watchtower/credential stall (bug-107, bug-308).
+          Production is likely still serving the PREVIOUS sha.
+
+          Check: \`curl -s https://<hub>/health | jq .gitSha\`
+          Interim remedy on the VM: \`sudo bash /var/lib/docker-creds/refresh.sh\` (one-shot, ~1h).
+
+          _Auto-filed because the roll alarm previously had no route (bug-107)._"
+
+          # bug-439's shape, caught in review by greg: `2>/dev/null || true` makes
+          # "the query FAILED" and "nothing was FOUND" the same empty value. On an auth
+          # blip / rate-limit / 5xx we would fall through to the else branch and open a
+          # NEW issue -- failing toward the exact flood the one-issue-at-a-time design
+          # exists to prevent. Separate the two conditions so a degraded lookup SAYS SO
+          # instead of looking like a clean zero.
+          if ! existing=$(gh issue list --state open --search "\"${MARKER}\" in:title" \
+                            --json number --jq '.[0].number'); then
+            echo "::error title=ALARM ROUTING DEGRADED::could not query existing issues; opening a new one may duplicate. The deploy failure at ${RUN_URL} is REAL."
+            existing=""
+          fi
+          # KNOWN LIMIT (greg, review of #744): GitHub code search is eventually
+          # consistent, so a lookup may not see an issue created seconds earlier and
+          # two rapid failures could both create. Accepted: deploys are not that fast,
+          # and it is inherent to search-by-title. A label-based key would index
+          # differently if this ever bites.
+          routed=no
+          if [ -n "${existing:-}" ] && [ "${existing}" != "null" ]; then
+            gh issue comment "${existing}" --body "${BODY}" \
+              && { routed=yes; echo "Alarm routed: commented on existing issue #${existing}"; }
+          else
+            gh issue create --title "${MARKER}: production may not be serving the latest sha" \
+              --body "${BODY}" && { routed=yes; echo "Alarm routed: opened a new issue"; }
+          fi
+
+          # THE ROUTER MUST NOT FAIL SILENTLY. Written after catching exactly that
+          # in the first draft of this step: `set -uo pipefail` has no -e, so a
+          # failing `gh` call would have exited 0 and reported nothing — an alarm
+          # router with the silent-failure defect it was added to remove.
+          if [ "${routed}" != "yes" ]; then
+            echo "::error title=ALARM ROUTING FAILED::the deploy failed AND this step could not open or update an issue. The deploy failure above is REAL and is now UNROUTED — check ${RUN_URL} manually."
+            exit 1
+          fi
