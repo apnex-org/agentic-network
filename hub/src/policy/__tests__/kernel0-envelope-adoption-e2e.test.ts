@@ -28,6 +28,8 @@ import { registerMissionPolicy } from "../mission-policy.js";
 import { createTestContext } from "../test-utils.js";
 import { LIST_PREFETCH_CAP } from "../../entities/thread-repository-substrate.js";
 import { MISSION_LIST_CAP } from "../../entities/mission-repository-substrate.js";
+import { BUG_LIST_CAP } from "../../entities/bug-repository-substrate.js";
+import { registerBugPolicy } from "../bug-policy.js";
 
 type Ctx = ReturnType<typeof createTestContext>;
 
@@ -52,6 +54,16 @@ async function seedMissions(n: number) {
   registerMissionPolicy(router);
   for (let i = 0; i < n; i++) {
     await ctx.stores.mission.createMission(`mission ${i}`, `d${i}`);
+  }
+  return { ctx, router };
+}
+
+async function seedBugs(n: number) {
+  const ctx = createTestContext();
+  const router = new PolicyRouter();
+  registerBugPolicy(router);
+  for (let i = 0; i < n; i++) {
+    await ctx.stores.bug.createBug(`bug ${i}`, `d${i}`, "minor", { tags: ["sweep"] });
   }
   return { ctx, router };
 }
@@ -321,5 +333,43 @@ describe("kernel0 — 🔴 a truncationNote is read ONLY when capped, so it must
         assertNoUncappedClaim(m[1], f);
       }
     }
+  });
+
+  // ── notehonest0: list_bugs (bug-522) ──────────────────────────────────────
+  //
+  // 🔴 RENDERED, NOT GREPPED. bug-policy builds its note by string CONCATENATION,
+  // which the narrowBy regex above CANNOT match — adding this file to the static
+  // leg would have produced a guard that silently covers nothing (bug-464's class,
+  // the very thing that leg was written to avoid). The harness wires a bug store,
+  // so the honest option is available: render it.
+  it("🔴 list_bugs: the RENDERED note does not prescribe narrowing that tags cannot do (bug-522)", async () => {
+    const { ctx, router } = await seedBugs(BUG_LIST_CAP + 5);
+
+    // positive control FIRST — if we are not actually capped, every assertion below
+    // passes vacuously by never rendering a note at all.
+    const env = await call(router, ctx, "list_bugs", { limit: 1 });
+    expect(env.truncated).toBe(true);
+    expect(typeof env.truncationNote).toBe("string");
+    const note = env.truncationNote as string;
+
+    // (a) the shared render-state denylist
+    assertNoUncappedClaim(note, "list_bugs");
+
+    // (b) THE DEFECT: the old string ended "— narrow with filters." A caller who has
+    // ALREADY filtered by tags is told to filter. Assert the note distinguishes the
+    // axes instead of issuing a blanket instruction.
+    expect(note).toMatch(/status, severity and class narrow the scan/i);
+    expect(note).toMatch(/tags does NOT/i);
+
+    // (c) SEMANTIC NEIGHBOURHOOD, not the bare numeral — kernel0's M5 passed under a
+    // mutant because the note independently contained the digits it asserted.
+    expect(note).toMatch(/500-row cap/);
+
+    // (d) the self-contradiction, rendered: a tags-narrowed query is STILL capped, so
+    // its total is a floor. This is the exact live case (tags:["workgraph"] -> 72 rows
+    // WITH truncated:true) that made the old advice contradict its own trigger.
+    const tagged = await call(router, ctx, "list_bugs", { limit: 1, tags: ["sweep"] });
+    expect(tagged.truncated).toBe(true);
+    expect(tagged.truncationNote).toMatch(/tags-filtered total is a floor/i);
   });
 });

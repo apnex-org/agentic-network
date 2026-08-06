@@ -131,7 +131,35 @@ async function listBugs(args: Record<string, unknown>, ctx: IPolicyContext): Pro
         ...(args.compact === true ? { compact: true } : {}),
         // bug-200: never a silent under-report — flag a scan that hit the 500 cap so
         // `total` is read as a floor, not the truth (mirror list_ready_work's truncated).
-        ...(truncated ? { truncated: true, truncationNote: "bug scan hit the 500-row cap; total is a floor, not exact — narrow with filters." } : {}),
+        //
+        // 🔴 bug-497 FAMILY / bug-522, notehonest0: the previous note ended "— narrow with
+        // filters." That advice was PARTIALLY true, which is harder to spot than wholly
+        // false, and it produced a self-contradicting render: a caller who passed
+        // tags:["workgraph"] got 72 rows AND was told to narrow with filters. THE NOTE
+        // PRESCRIBED AN ACTION TO SOMEONE WHO HAD JUST PERFORMED IT.
+        //
+        // MEASURED, and the mechanism is in bug-repository-substrate.listBugs():
+        //   status / severity / class -> go into `substrateFilter` -> NARROW THE SCAN
+        //   tags                      -> array-contains, unsupported by the substrate
+        //                                FilterValue, so filtered CLIENT-SIDE AFTER the cap
+        // ⇒ a tags-filtered `total` is itself a floor over an incomplete scan. Live at
+        //   09:10Z on 835f35fe: tags:["workgraph"] -> total 72 WITH truncated:true.
+        //
+        // ⚠️ THE RENDER-STATE RULE (greg): this string is emitted IFF the scan hit the cap,
+        // so every clause must be read with "the collection is >= cap" ASSUMED TRUE. A
+        // clause that is only true below the cap is false at 100% of its renders and
+        // invisible at 0% of them — that is exactly how kernel0 shipped this family's
+        // fifth instance INSIDE the fix for its fourth. No clause below mentions the
+        // below-cap state, because this note can never be read in it.
+        ...(truncated
+          ? {
+              truncated: true,
+              truncationNote:
+                "bug scan hit the 500-row cap; total is a floor, not exact. " +
+                "status, severity and class narrow the scan itself; tags does NOT — " +
+                "it filters the rows already scanned, so a tags-filtered total is a floor too.",
+            }
+          : {}),
         ...(queryUnmatched ? { _ois_query_unmatched: true } : {}),
       }, null, 2),
     }],
