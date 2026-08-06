@@ -132,7 +132,7 @@ async function listBugs(args: Record<string, unknown>, ctx: IPolicyContext): Pro
         // bug-200: never a silent under-report — flag a scan that hit the 500 cap so
         // `total` is read as a floor, not the truth (mirror list_ready_work's truncated).
         //
-        // 🔴 bug-497 FAMILY / bug-522, notehonest0: the previous note ended "— narrow with
+        // 🔴 bug-497 FAMILY / bug-523, notehonest0: the previous note ended "— narrow with
         // filters." That advice was PARTIALLY true, which is harder to spot than wholly
         // false, and it produced a self-contradicting render: a caller who passed
         // tags:["workgraph"] got 72 rows AND was told to narrow with filters. THE NOTE

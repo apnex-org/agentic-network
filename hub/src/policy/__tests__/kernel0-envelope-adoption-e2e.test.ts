@@ -345,14 +345,14 @@ describe("kernel0 — 🔴 a truncationNote is read ONLY when capped, so it must
     }
   });
 
-  // ── notehonest0: list_bugs (bug-522) ──────────────────────────────────────
+  // ── notehonest0: list_bugs (bug-523) ──────────────────────────────────────
   //
   // 🔴 RENDERED, NOT GREPPED. bug-policy builds its note by string CONCATENATION,
   // which the narrowBy regex above CANNOT match — adding this file to the static
   // leg would have produced a guard that silently covers nothing (bug-464's class,
   // the very thing that leg was written to avoid). The harness wires a bug store,
   // so the honest option is available: render it.
-  it("🔴 list_bugs: the RENDERED note does not prescribe narrowing that tags cannot do (bug-522)", async () => {
+  it("🔴 list_bugs: the RENDERED note does not prescribe narrowing that tags cannot do (bug-523)", async () => {
     const { ctx, router } = await seedBugs(BUG_LIST_CAP + 5);
 
     // positive control FIRST — if we are not actually capped, every assertion below
