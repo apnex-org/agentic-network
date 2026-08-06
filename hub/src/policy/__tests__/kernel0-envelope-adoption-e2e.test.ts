@@ -240,3 +240,50 @@ describe("kernel0 — 🔴 list_messages scans the NEWEST rows, not the oldest (
     expect(got).toEqual([...got].sort());
   });
 });
+
+// ── A NOTE MUST NOT ASSERT SOMETHING FALSE IN THE STATE THAT RENDERS IT ──────
+
+describe("kernel0 — 🔴 a truncationNote is read ONLY when capped, so it must not describe the UNCAPPED state", () => {
+  /**
+   * THE DEFECT THIS GUARDS, CAUGHT IN REVIEW BY greg AND FIXED BY SUBTRACTION:
+   * `list_decisions`' narrowBy once ended "...unmeasurable while the collection sits
+   * BELOW the cap". But `truncationNote` is emitted IFF scanCapped, and scanCapped is
+   * `items.length >= LIST_CAP` — so a reader meets that sentence ONLY when the
+   * collection is AT OR ABOVE the cap. Invisible at 36 rows. WRONG THE FIRST TIME IT
+   * IS EVER READ. bug-497's family, fifth instance, inside the fix for the fourth.
+   *
+   * ⭐ WHY THIS IS A TEST AND NOT A RESOLUTION TO BE CAREFUL: the same commit that
+   * shipped that clause ALSO contained a paragraph correctly reasoning that an argument
+   * "would INVERT the moment this collection passed the cap". THE IDENTICAL TEMPORAL
+   * ERROR, CAUGHT IN THE PROSE AND MISSED IN THE STRING, BY THE SAME AUTHOR, IN ONE
+   * COMMIT. Getting the reasoning right about a class does not transfer to the artifact
+   * unless something checks the artifact. Corpus for vocabulary; gates for enforcement.
+   *
+   * ASSERTS THE PROPERTY, NOT THE PHRASE: the note is rendered in the capped state, so
+   * no note may contain a claim scoped to the uncapped state. Adding a new surface with
+   * a new narrowBy that reintroduces the shape fails here without anyone remembering why.
+   */
+  const BELOW_CAP_CLAIMS = [
+    "below the cap",
+    "under the cap",
+    "beneath the cap",
+    "not yet capped",
+    "sits below",
+  ];
+
+  it("no rendered truncationNote describes the collection as being BELOW the cap", async () => {
+    const { ctx, router } = await seedThreads(LIST_PREFETCH_CAP + 5);
+    const env = await call(router, ctx, "list_threads", { limit: 1 });
+
+    // positive control: we are genuinely in the capped state, so a note MUST exist —
+    // otherwise this test passes vacuously by never rendering anything (bug-464's class).
+    expect(env.truncated).toBe(true);
+    expect(typeof env.truncationNote).toBe("string");
+    expect(env.truncationNote.length).toBeGreaterThan(0);
+
+    const note = (env.truncationNote as string).toLowerCase();
+    for (const claim of BELOW_CAP_CLAIMS) {
+      expect(note).not.toContain(claim);
+    }
+  });
+});

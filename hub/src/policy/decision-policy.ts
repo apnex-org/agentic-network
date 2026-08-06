@@ -216,10 +216,23 @@ async function listDecisions(args: Record<string, unknown>, ctx: IPolicyContext)
     // is his own "zero consumers" error in my hands — a true measurement cited for a
     // conclusion it does not bear on, same shape, opposite seat, four hours apart.)
     //
+    // 🔴 THE STRING BELOW ONCE ENDED "...and unmeasurable while the collection sits below
+    // the cap". THAT CLAUSE WAS FALSE IN THE ONLY STATE THAT RENDERS IT: the truncationNote
+    // is emitted IFF scanCapped, and scanCapped is `items.length >= LIST_CAP` — so a reader
+    // meets that sentence ONLY when the collection is AT OR ABOVE the cap. Invisible at 36
+    // rows; WRONG THE FIRST TIME IT IS EVER READ. bug-497's family, FIFTH instance, inside
+    // the fix for the fourth. The qualifier was reasoned in TODAY's state and written into
+    // a string that only ever speaks in the FUTURE state — the join class in a wire string.
+    //
+    // FIXED BY SUBTRACTION. What remains is a fact about the REGISTRY and the GATE, not
+    // about collection size, so it cannot rot. The removed clause was the only part that
+    // could, and it did nothing for the caller: knowing WHY a filter is unverified does not
+    // change what they do about it. Guarded by kernel0-envelope-adoption-e2e.test.ts.
+    //
     // REVIVAL: if decisions ever approach the cap, measure it — one observation would be
     // the first bucket-prefixed pushdown measurement in the repo and would let this string
     // drop its qualifier in EITHER direction.
-    narrowBy: "status/class — registry-verified and drift-gated, both genuinely pushed to the substrate scan (routedTarget MAY also narrow but is UNVERIFIED: it is bucket-prefixed, outside the conformance registry, and unmeasurable while the collection sits below the cap)",
+    narrowBy: "status/class — registry-verified and drift-gated, both genuinely pushed to the substrate scan (routedTarget MAY also narrow but is UNVERIFIED: it is bucket-prefixed and outside the conformance registry)",
   });
   // this surface names its rows `decisions`, not `items`
   const { items: pageItems, ...rest } = envelope;
