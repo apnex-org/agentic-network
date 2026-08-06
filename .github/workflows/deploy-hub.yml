@@ -93,13 +93,31 @@ jobs:
       # silent-skip failure mode (on-C3-thesis). All knobs are optional overrides:
       #   vars.HUB_HEALTH_URL          — public /health URL override (default: the
       #                                  prod Cloud Run endpoint below; env-portability)
-      #   vars.ROLL_CONFIRM_TIMEOUT_S  — overall budget  (default 600)
+      #   vars.ROLL_CONFIRM_TIMEOUT_S  — overall budget  (default 1200; was 600, which
+      #                                  MEASURABLY false-failed a successful deploy on
+      #                                  2026-08-06 — see the step's own note)
       #   vars.ROLL_CONFIRM_POLL_S     — poll cadence    (default 15)
       - name: Confirm roll (poll /health gitSha == github.sha)
         env:
           HEALTH_URL: ${{ vars.HUB_HEALTH_URL || 'https://hub-api-5muxctm3ta-ts.a.run.app/health' }}
           EXPECTED_SHA: ${{ github.sha }}
-          TIMEOUT_S: ${{ vars.ROLL_CONFIRM_TIMEOUT_S || '600' }}
+          # bug-107 / MEASURED 2026-08-06: 600s FALSE-FAILED A SUCCESSFUL DEPLOY.
+          # Run 31102927327 (612d0528) exhausted the full 600s budget and reported
+          # "did NOT roll"; production was serving that exact sha when checked
+          # afterwards. THE DEPLOY WORKED — THE CONFIRMATION GAVE UP.
+          #   835f35fe   ~6m16s   measured merge->serving
+          #   7efbac35   ~5m      measured merge->serving
+          #   612d0528  >10m18s   LOWER BOUND (still not rolled at budget end; the
+          #                       actual roll instant is UNMEASURED)
+          # 600s sits INSIDE the observed range, so it is guaranteed to false-fail on
+          # the tail. 1200s is >2x the longest measured lower bound. ⚠️ THE UPPER TAIL
+          # IS UNMEASURED — this is an ESTIMATE chosen to clear a known-exceeded bound,
+          # not a value derived from a characterised distribution.
+          # COST OF THE LONGER BUDGET: a genuine stall alarms 10 minutes later. That is
+          # cheap — the previous failure mode was a TRUE deploy reported as FAILED, which
+          # trains readers to ignore the alarm entirely (bug-437: an alarm that cries wolf
+          # is the same defect as one that is silent).
+          TIMEOUT_S: ${{ vars.ROLL_CONFIRM_TIMEOUT_S || '1200' }}
           POLL_S: ${{ vars.ROLL_CONFIRM_POLL_S || '15' }}
           BUILT_DIGEST: ${{ steps.digest.outputs.built_digest }}
         run: |
@@ -140,7 +158,11 @@ jobs:
             echo "  ...not yet rolled (gitSha=${got:-<unreachable>}); sleeping ${POLL_S}s"
             sleep "${POLL_S}"
           done
-          echo "::error title=roll-confirm FAILED::prod /health did not report gitSha >= ${EXPECTED_SHA} (this commit or a superseding deploy) within ${TIMEOUT_S}s (last seen: ${last}). Image built+pushed (digest ${BUILT_DIGEST:-<unknown>}) but did NOT roll — suspect a watchtower stall (bug-308 AR /v2 service= challenge; VM-side real-fix is Director-gated). No auto-revert (R1 is alarm-only)."
+          # REPORT WHAT WAS MEASURED; DO NOT DIAGNOSE. The previous wording asserted
+          # "did NOT roll — suspect a watchtower stall", which on 2026-08-06 was FALSE:
+          # the roll succeeded and merely outran the budget. An alarm that names a cause
+          # it has not established sends the reader to the wrong place.
+          echo "::error title=roll-confirm TIMED OUT::prod /health did not report gitSha >= ${EXPECTED_SHA} WITHIN THE ${TIMEOUT_S}s BUDGET (last seen: ${last:-<unreachable>}). Image built+pushed (digest ${BUILT_DIGEST:-<unknown>}). THIS IS A TIMEOUT, NOT A PROVEN STALL — two causes fit and this step cannot separate them: (a) a genuine roll failure (watchtower/credential stall, bug-308), or (b) a roll SLOWER than the budget (observed 2026-08-06: a successful roll exceeded 600s). FIRST ACTION IS ONE COMMAND: curl -s <hub>/health | jq .gitSha — if it now reports ${EXPECTED_SHA} or a descendant, this was (b) and nothing is broken. No auto-revert (R1 is alarm-only)."
           exit 1
 
       # ─────────────────────────────────────────────────────────────────────────
