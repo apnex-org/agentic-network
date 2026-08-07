@@ -1,0 +1,1463 @@
+#!/usr/bin/env bash
+#
+# ois — declarative fleet launcher for OIS agents (greg/lily/steve/pitest x claude/opencode/pi).
+#
+# DEPLOYMENT (work-132, Director-ratified structure): THIS FILE (ois/bin/ois in
+# apnex-org/agentic-network) is the SOURCE OF TRUTH. The live copy runs at ~/.config/apnex-agents/bin/ois on the
+# Director's workstation — future patches land HERE first (verifier-gated PR), then
+# deploy with ois/deploy.sh (pre-overwrite timestamped backup). The apnex-agents repo stays remote-less by
+# design (it sits adjacent to secrets/); do not add a remote there without a
+# Director-rail decision.
+#
+# Config model (see config/fleet.json _why):
+#   config/fleet.json + config/harnesses/<h>.json + config/agents/<a>.json  →  merged cell
+#   secrets/<ref>   one value per file, referenced by name, never inlined in config or renders
+#   state/<agent>/  lkg/ (pre-overwrite backups), launches.jsonl (launch journal)
+#
+# Commands:
+#   ois launch <agent> <harness> [args...]   render + env + exec (the only way to start a cell)
+#   ois up <agent> <harness>                 detached tmux launch + banner accept + handshake verify
+#   ois attach [agent] [harness]             attach to the agent's live session (Ctrl+b d detaches);
+#                                            no args = fleet status (same as ois ps)
+#   ois say <agent> <message...>             Director note via the hub (durable, turn-safe,
+#                                            audited; body prefixed [director])
+#   ois down <agent> [harness] / ois ps      graceful stop (harness optional) / fleet status
+#   ois render <agent> <harness>             print rendered artifacts to stdout
+#   ois check  [<agent> <harness>]           validate + parity-compare renders vs live (no writes)
+#   ois env    <agent> <harness>             print launch env (secret values as sha256:12)
+#   ois seed   <agent>                       idempotent claude sovereign-config seed only
+#   ois list                                 cell matrix
+#   ois doctor                               perms, secret presence, token expiry, hub probe
+#
+set -euo pipefail
+
+ROOT="$HOME/.config/apnex-agents"
+CFG="$ROOT/config"
+SEC="$ROOT/secrets"
+STATE="$ROOT/state"
+
+# bug-247: transport-neutral interactive-prompt handling. The pure resolver lib is deployed
+# beside this script (deploy.sh co-ships it); the handler table lives under config/. If the
+# lib is absent (un-migrated estate), cmd_up simply does no auto-handling — never a hard fail.
+_OIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -r "$_OIS_DIR/prompt-resolve.sh" ]]; then source "$_OIS_DIR/prompt-resolve.sh"; fi
+PROMPT_HANDLERS="${OIS_PROMPT_HANDLERS:-$CFG/prompt-handlers.json}"
+
+# npmdeliver0 (idea-492): the Claude agent-adapter plugin ships via the npm registry
+# (single channel; the Channel-2 GitHub-Release tarball is retired). EXACT pin — never
+# @latest (silent drift); deploy.sh can grep-guard this token.
+CLAUDE_PLUGIN_VERSION="0.1.15"
+_CLAUDE_PLUGIN_MP=""   # process-cached npm-installed marketplace dir (set by claude_npm_ensure)
+
+fatal() { echo "ois: FATAL: $*" >&2; exit 1; }
+expand() { local p="${1:-}"; [[ "$p" == "~/"* ]] && p="$HOME/${p#\~/}"; printf '%s' "$p"; }
+sha12() { sha256sum | cut -c1-12; }
+command -v jq >/dev/null 2>&1 || fatal "'jq' not found on PATH"
+
+# ---------- cell resolution ----------
+# merged cell JSON on stdout; layers: fleet.defaults < harness < agent-common < agent.harness[h]
+cell_json() {
+  local a="$1" h="$2" out
+  local af="$CFG/agents/$a.json" hf="$CFG/harnesses/$h.json" ff="$CFG/fleet.json"
+  [[ -f "$ff" ]] || fatal "missing $ff"
+  [[ -f "$af" ]] || fatal "unknown agent '$a' (no $af)"
+  [[ -f "$hf" ]] || fatal "unknown harness '$h' (no $hf)"
+  jq -e --arg h "$h" '.harness[$h]' "$af" >/dev/null 2>&1 || fatal "agent '$a' does not declare harness '$h'"
+  out=$(jq -s --arg h "$h" --arg a "$1" '
+    (.[0].defaults) as $d | (.[1]) as $hz | (.[2]) as $ag |
+    ($d * $hz * ($ag | del(.harness)) * ($ag.harness[$h] // {})) as $m |
+    $m + {
+      # labels REPLACE wholesale across layers (never deep-merge) — same rule the hub
+      # plugins apply to OIS_HUB_LABELS; deep-merging would leak fleet labels into
+      # deliberately-reduced label sets (pitest isolation).
+      # ois.io/github/login is DERIVED per-agent from gitIdentity.githubLogin (single
+      # source of truth; NOT a fleet default) — each seat registers its OWN gh identity
+      # so gh-login->role routing (pr-opened bilateral) resolves uniquely. Fixes bug-253
+      # identity-collision (all seats previously shared the fleet-wide "apnex" login).
+      labels: ((($ag.harness[$h] // {}).labels // $ag.labels // $d.labels // {})
+               + (if $ag.gitIdentity.githubLogin then {"ois.io/github/login": $ag.gitIdentity.githubLogin} else {} end)),
+      fleetHub: .[0].hub,
+      fleetCredentials: (.[0].credentials // {}),
+      cellAgent: $a,
+      cellHarness: $h,
+      secretEnv: ((($d.secretEnv // {}) | with_entries(.value |= gsub("\\{agent\\}"; $a))) * ($ag.secretEnv // {}))
+    }
+  ' "$ff" "$hf" "$af") || fatal "failed to merge cell '$a/$h'"
+  # Bootstrap/bug-296 guardrail: OIS_AGENT_NAME is the canonical identity and the
+  # merged fleet/seat cell must contain the fields every harness renders from. A
+  # missing identity/role/workspace/tag used to degrade into literal `null` env or
+  # render values; fail loud before any launch/check/env surface can launder it.
+  # Likewise, stale OIS_INSTANCE_ID is retired authority and may not be reintroduced
+  # by fleet, agent, harness, secret, or template config. bug-303 (oisfix3): OIS_SEAT_ID is the
+  # kill-ownership key the blast-safe reap (reap_seat) matches per-PID — a config/secret layer must
+  # NOT be able to AUTHOR (clobber) it, so reject it in every env layer too. Defense in depth
+  # alongside the canonical-wins stamp-AFTER-env_lines-replay ordering in do_launch.
+  jq -e --arg h "$h" '
+    def nonempty($x): (($x // "") | type == "string" and length > 0);
+    def lacks_instance_id($x): (($x // {}) | has("OIS_INSTANCE_ID") | not);
+    def lacks_seat_id($x): (($x // {}) | has("OIS_SEAT_ID") | not);
+    nonempty(.agentName)
+    and nonempty(.role)
+    and nonempty(.workspace)
+    and nonempty(.hubModelTag)
+    and ((.exec // []) | type == "array" and length > 0)
+    and ((.renders // []) | type == "array" and length > 0)
+    and (if ($h == "pi" or $h == "claude") then nonempty(.configDirTemplate) else true end)
+    and lacks_instance_id(.envTemplate)
+    and lacks_instance_id(.env)
+    and lacks_instance_id(.secretEnv)
+    and lacks_seat_id(.envTemplate)
+    and lacks_seat_id(.env)
+    and lacks_seat_id(.secretEnv)
+  ' <<<"$out" >/dev/null || fatal "invalid merged cell '$a/$h' (requires agentName/role/workspace/hubModelTag/exec/renders, per-seat configDirTemplate for pi/claude, and no OIS_INSTANCE_ID authority and no OIS_SEAT_ID authority)"
+  printf '%s\n' "$out"
+}
+
+cells_all() {
+  local af a h
+  for af in "$CFG"/agents/*.json; do
+    a=$(jq -r '.agent' "$af")
+    for h in $(jq -r '.harness | keys[]' "$af"); do echo "$a $h"; done
+  done
+}
+
+# ---------- renders ----------
+render_adapter_config() { # cell-json arg -> rendered adapter-config on stdout
+  # NON-SECRET by construction: the hub token is never rendered to the workspace.
+  # ois launch injects OIS_HUB_TOKEN as env; the kernel loadConfig gives env
+  # precedence over the file, so hubUrl/role/labels come from here and the
+  # credential from the environment — one on-disk copy (secrets/hub/fleet.token).
+  jq -n --argjson c "$1" '{hubUrl: $c.fleetHub.url, role: $c.role, labels: $c.labels}'
+}
+
+render_opencode_json() { # workspace opencode.json (compaction/permission fleet-invariant today)
+  jq -n --argjson c "$1" '
+    {"$schema": "https://opencode.ai/config.json",
+     compaction: {auto: true, prune: false, reserved: 100000},
+     permission: {task: "allow", edit: "allow", bash: "allow", webfetch: "allow"},
+     model: $c.model}
+    + (if $c.smallModel then {small_model: $c.smallModel} else {} end)
+    + {agent:
+        (if $c.agentVariant
+         then {build: {model: $c.model, variant: $c.agentVariant}, plan: {model: $c.model, variant: $c.agentVariant}}
+         else {build: {model: $c.model}, plan: {model: $c.model}} end),
+       plugin: [$c.opencodePlugin]}'
+}
+
+render_git_config() { # agent-level: directory-scoped git identity include
+  local ref; ref=$(jq -r '.gitIdentity.sshKeyRef' <<<"$1")
+  # -F /dev/null: ignore ~/.ssh/config — its default github.com block would add the
+  # operator's key to the identity list and can WIN over -i (observed; doctor caught it).
+  printf '[core]\n\tsshCommand = ssh -F /dev/null -i ~/.config/apnex-agents/secrets/%s -o IdentitiesOnly=yes\n' "$ref"
+}
+
+render_pi_settings() { # cell-json arg -> per-seat pi settings.json on stdout
+  # bug-272: seat-critical Pi UI/model defaults are OIS config, not implicit inheritance from
+  # ~/.pi/agent/settings.json or workspace .pi/settings.json. The source of truth is the
+  # merged cell's .piSettings (declared under config/, currently config/harnesses/pi.json).
+  # Per-cell compaction fields remain authoritative when present.
+  jq -e -n --argjson c "$1" '
+    ($c.piSettings) as $s |
+    $s
+    * (if $c.piReserveTokens
+       then {compaction: (($s.compaction // {}) * {enabled: true, reserveTokens: $c.piReserveTokens, keepRecentTokens: ($c.piKeepRecentTokens // 24000)})}
+       else {} end)'
+}
+
+artifact_targets() { # echo "<kind> <path>" lines for a cell
+  local c="$1" ws; ws=$(expand "$(jq -r '.workspace' <<<"$c")")
+  local r; for r in $(jq -r '.renders[]' <<<"$c"); do
+    case "$r" in
+      adapter-config) echo "adapter-config $ws/.ois/adapter-config.json" ;;
+      opencode-json)  echo "opencode-json $ws/opencode.json" ;;
+      pi-settings)    true ;; # retired for pi: per-seat settings are materialized by pi_seed (bug-272), never workspace .pi fallback
+    esac
+  done
+  # agent-level renders (harness-independent)
+  jq -e '.gitIdentity' <<<"$c" >/dev/null 2>&1 && echo "git-config $STATE/$(jq -r '.cellAgent' <<<"$c")/gitconfig" || true
+}
+
+render_kind() { # $1 kind, $2 cell-json -> stdout
+  case "$1" in
+    adapter-config) render_adapter_config "$2" ;;
+    opencode-json)  render_opencode_json "$2" ;;
+    pi-settings)    render_pi_settings "$2" ;;
+    git-config)     render_git_config "$2" ;;
+    *) fatal "unknown render kind $1" ;;
+  esac
+}
+
+# cell_configdir <cell-json> -> the cell's sovereign per-seat config dir, {agent}- and
+# ~-expanded, or EMPTY STRING if the cell declares none. The `// empty` is LOAD-BEARING:
+# `jq -r '.configDirTemplate'` on a missing/null key yields the literal string "null", which
+# must NEVER reach an exported *_CONFIG_DIR or a seeded skills path — a null/shared path
+# collides every seat on one dir and races the managed-skills ledger. Callers that REQUIRE a
+# per-seat dir (claude_seed/pi_seed) fail-closed on empty; env_lines simply omits the line.
+# (Sibling of seat_config_dir, which takes <agent> <harness> and resolves via cell_json.)
+cell_configdir() {
+  local c="$1" a cdir
+  a=$(jq -r '.cellAgent' <<<"$c")
+  cdir=$(jq -r '.configDirTemplate // empty' <<<"$c")
+  [[ -n "$cdir" ]] || return 0
+  expand "${cdir//\{agent\}/$a}"
+}
+
+# ---------- env assembly ----------
+# emits NAME=VALUE lines; secret values raw when $2=raw, sha256:12 otherwise
+env_lines() {
+  local c="$1" mode="${2:-masked}" harness="${3:-}" ws role tag name eager
+  ws=$(expand "$(jq -r '.workspace' <<<"$c")")
+  role=$(jq -r '.role' <<<"$c"); tag=$(jq -r '.hubModelTag' <<<"$c"); name=$(jq -r '.agentName' <<<"$c")
+  eager=$(jq -r '.eagerSessionClaim' <<<"$c")
+  echo "OIS_AGENT_NAME=$name"
+  # harness env template
+  local k v
+  while IFS=$'\t' read -r k v; do
+    v=${v//\{agentName\}/$name}; v=${v//\{hubModelTag\}/$tag}; v=${v//\{role\}/$role}; v=${v//\{workspace\}/$ws}
+    if [[ "$v" == *"{eagerFlag}"* ]]; then [[ "$eager" == "true" ]] && v="1" || continue; fi
+    echo "$k=$v"
+  done < <(jq -r '.envTemplate // {} | to_entries[] | .key + "\t" + (.value|tostring)' <<<"$c")
+  # agent plain env
+  while IFS=$'\t' read -r k v; do echo "$k=$v"; done \
+    < <(jq -r '.env // {} | to_entries[] | .key + "\t" + (.value|tostring)' <<<"$c")
+  # secret env
+  local ref val
+  while IFS=$'\t' read -r k ref; do
+    [[ -f "$SEC/$ref" ]] || fatal "secretEnv $k -> missing secret $ref"
+    if [[ "$mode" == raw ]]; then val=$(cat "$SEC/$ref"); else val="sha256:$(sha12 < "$SEC/$ref")"; fi
+    echo "$k=$val"
+  done < <(jq -r '.secretEnv // {} | to_entries[] | .key + "\t" + .value' <<<"$c")
+  # hub credential — env-injected, never rendered (adapter-config is non-secret)
+  ref=$(jq -r '.fleetHub.tokenRef' <<<"$c")
+  [[ -f "$SEC/$ref" ]] || fatal "hub token secret missing: $ref"
+  if [[ "$mode" == raw ]]; then val=$(cat "$SEC/$ref"); else val="sha256:$(sha12 < "$SEC/$ref")"; fi
+  echo "OIS_HUB_TOKEN=$val"
+  # litellm credential — injection-scoped: only cells whose resolved provider
+  # rides the LiteLLM proxy get the key (opencode model litellm-*/..., pi
+  # provider litellm-*). Harness configs hold env references, never the value.
+  if jq -e '((.model // "") | startswith("litellm-")) or ((.piProvider // "") | startswith("litellm"))' <<<"$c" >/dev/null; then
+    local lref lname
+    lref=$(jq -r '.fleetCredentials.litellm.secretRef // empty' <<<"$c")
+    lname=$(jq -r '.fleetCredentials.litellm.injectAs // "LITELLM_API_KEY"' <<<"$c")
+    [[ -n "$lref" && -f "$SEC/$lref" ]] || fatal "litellm credential missing (secretRef=$lref)"
+    if [[ "$mode" == raw ]]; then val=$(cat "$SEC/$lref"); else val="sha256:$(sha12 < "$SEC/$lref")"; fi
+    echo "$lname=$val"
+  fi
+  # harness credential imports (from fleet catalog)
+  local cred inj
+  while IFS=$'\t' read -r cred inj ref; do
+    [[ -f "$SEC/$ref" ]] || fatal "credential '$cred' -> missing secret $ref"
+    if [[ "$mode" == raw ]]; then val=$(cat "$SEC/$ref"); else val="sha256:$(sha12 < "$SEC/$ref")"; fi
+    echo "$inj=$val"
+  done < <(jq -r '.credentialImports // {} | to_entries[] | select(.value.inject=="env")
+                  | .key + "\t" + .value.name' <<<"$c" | while IFS=$'\t' read -r cred inj; do
+             ref=$(jq -r --arg cr "$cred" '.fleetCredentials[$cr].secretRef // empty' <<<"$c")
+             [[ -n "$ref" ]] && printf '%s\t%s\t%s\n' "$cred" "$inj" "$ref"
+           done)
+  # sovereign per-seat config dir — the env var NAME is harness-specific (piuplift0 p1):
+  # pi discovers skills from $PI_CODING_AGENT_DIR/skills, claude from $CLAUDE_CONFIG_DIR/skills.
+  local cdir; cdir=$(cell_configdir "$c")   # the load-bearing `// empty` null-guard lives in the helper
+  if [[ -n "$cdir" ]]; then
+    if [[ "$harness" == "pi" ]]; then
+      echo "PI_CODING_AGENT_DIR=$cdir"
+    else
+      echo "CLAUDE_CONFIG_DIR=$cdir"
+    fi
+  fi
+}
+
+# ---------- claude sovereign seed (ported from bin/claude-agent, behavior-identical) ----------
+
+# claude_npm_ensure — npmdeliver0: globally install the pinned agent-adapter plugin
+# from the npm registry ONCE per ois invocation + resolve its marketplace dir. The
+# npm-installed install.sh runs `npm install --no-save` inside the plugin dir so its
+# node_modules carry the bundled sovereign deps (na@0.1.11 etc.) — that is what makes
+# claude's plugin-cache copy able to require @apnex/network-adapter at launch. install.sh's
+# own marketplace-add + cache-wipe target $HOME/.claude (operator dir), NOT the sovereign
+# seats; the per-seat converge in claude_seed is what makes each SEAT live. Result path is
+# process-constant → cached in _CLAUDE_PLUGIN_MP (latch avoids re-running under `seed --all`).
+# bug-368 preflight: can the pinned plugin version actually be OBTAINED from the registry?
+# Returns 0 = resolves · 1 = DEFINITIVELY absent (E404) · 2 = INDETERMINATE (network/registry
+# trouble). The three-way split is deliberate: a definitive 404 is a permanent, actionable fact
+# worth failing on, whereas a transient registry outage must NOT brick seeding — treating "I
+# could not ask" as "the answer is no" would convert a network blip into a fleet-wide seed
+# failure, i.e. the very outage this guard exists to prevent.
+claude_plugin_version_resolves() { # <version> -> 0 resolves | 1 absent | 2 indeterminate
+  local ver="$1" out rc
+  out="$(npm view "@apnex/claude-plugin@$ver" version 2>&1)"; rc=$?
+  [[ $rc -eq 0 && -n "$out" ]] && return 0
+  grep -qiE 'E404|is not in this registry|no matching version' <<<"$out" && return 1
+  return 2
+}
+
+claude_npm_ensure() {
+  [[ -n "$_CLAUDE_PLUGIN_MP" ]] && return 0
+  command -v npm >/dev/null 2>&1 || fatal "'npm' not found on PATH (needed for @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION)"
+  local mp; mp="$(npm root -g)/@apnex/claude-plugin"   # <nvm prefix>/lib/node_modules/@apnex/claude-plugin
+  local installed_ver=""
+  if [[ -f "$mp/package.json" ]]; then
+    installed_ver="$(node -p "require('$mp/package.json').version" 2>/dev/null || true)"
+  fi
+  # bootstrap/bug-296: direct operator installs may carry a just-built local package before
+  # the npm registry has accepted the new pin. If the exact pinned version is already present,
+  # trust that installed artifact and converge the per-seat plugin cache from it instead of
+  # re-installing the older registry tarball over the repaired package.
+  if [[ "$installed_ver" == "$CLAUDE_PLUGIN_VERSION" ]]; then
+    echo "  seeding : using installed @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION at $mp"
+    # bug-368: this path works ONLY because a local copy happens to match the pin. If the pin is
+    # not obtainable from the registry, that local copy is the fleet's ONLY one and nothing can
+    # replace it — a box rebuild, `npm prune`, an nvm/node version change or a stray
+    # `npm uninstall -g` drops straight through to the install branch below and fatals every
+    # claude seat's next seed. WARN, never fatal: seeding demonstrably works right now, and
+    # turning a live working path into a hard failure would BE the outage this guard prevents.
+    if ! claude_plugin_version_resolves "$CLAUDE_PLUGIN_VERSION"; then
+      echo "  ⚠ bug-368: pinned @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION is NOT OBTAINABLE from the registry."
+      echo "  ⚠   Seeding survives only because $mp already holds it. That copy is IRREPLACEABLE:"
+      echo "  ⚠   if it is lost, NO claude seat can seed. Do NOT uninstall/prune it."
+      echo "  ⚠   Remedy is Director-gated (idea-584): publish the pinned version, or re-pin to a published one."
+    fi
+  else
+    # bug-368: PREFLIGHT BEFORE INSTALLING. Previously an unobtainable pin surfaced as a generic
+    # `npm install failed` at seed time, which names neither the version nor the remedy. Fail
+    # early and say exactly what is wrong. This is the check that would have caught the 0.1.16
+    # rider before it reached a seat.
+    claude_plugin_version_resolves "$CLAUDE_PLUGIN_VERSION"; local _pf=$?
+    if [[ $_pf -eq 1 ]]; then
+      echo "  ✖ bug-368: @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION does NOT EXIST on the registry (E404)." >&2
+      echo "  ✖   No local copy is present either (installed: ${installed_ver:-none}), so there is nothing to fall back to." >&2
+      echo "  ✖   NOT falling back to another version on purpose: a silent substitution would change which" >&2
+      echo "  ✖   artifact this seat runs without recording it, and you would not know what is deployed." >&2
+      echo "  ✖   Fix CLAUDE_PLUGIN_VERSION (ois:49) to a PUBLISHED version, or publish this one (idea-584)." >&2
+      echo "  ✖   Published versions: $(npm view @apnex/claude-plugin versions --json 2>/dev/null | tr -d ' \n' || echo '<registry unreachable>')" >&2
+      fatal "unobtainable pinned plugin version @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION (bug-368)"
+    elif [[ $_pf -eq 2 ]]; then
+      # Indeterminate: could not reach the registry to ask. Do NOT convert "I could not ask" into
+      # "the answer is no" — that would brick seeding on a transient blip. Warn and let the real
+      # install attempt below produce the authoritative error.
+      echo "  ⚠ bug-368 preflight: could not determine whether @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION exists (registry unreachable); attempting install anyway." >&2
+    fi
+    echo "  seeding : npm install -g @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION"
+    npm install -g "@apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION" >/dev/null || fatal "npm install -g @apnex/claude-plugin@$CLAUDE_PLUGIN_VERSION failed"
+  fi
+  [[ -d "$mp" ]] || fatal "npm-installed plugin dir missing at $mp after install"
+  [[ -x "$mp/install.sh" ]] && ( cd "$mp" && ./install.sh >/dev/null ) || echo "  · install.sh missing/failed at $mp — continuing (per-seat converge follows)"
+  _CLAUDE_PLUGIN_MP="$mp"
+}
+
+claude_seed() {
+  local c="$1" a ws cdir mp
+  a=$(jq -r '.cellAgent' <<<"$c"); ws=$(expand "$(jq -r '.workspace' <<<"$c")")
+  cdir=$(cell_configdir "$c")
+  [[ -n "$cdir" ]] || fatal "claude cell '$a' has no configDirTemplate — cannot resolve a sovereign CLAUDE_CONFIG_DIR (declare it in config/harnesses/claude.json); refusing to seed to a bogus/shared path"
+  # npmdeliver0 (idea-492): the marketplace is now the npm-installed plugin dir
+  # (Channel-2 directory marketplace retired). Config .marketplacePath is vestigial.
+  claude_npm_ensure
+  mp="$_CLAUDE_PLUGIN_MP"
+  export CLAUDE_CONFIG_DIR="$cdir"
+  mkdir -p "$cdir" && chmod 700 "$cdir"
+  if [[ ! -f "$cdir/.claude.json" ]]; then
+    echo "  seeding : $cdir/.claude.json (onboarding established, ${ws} pre-trusted)"
+    jq -n --arg ws "$ws" '{hasCompletedOnboarding: true, lastOnboardingVersion: "2.1.200",
+      hasSeenTasksHint: true, numStartups: 1,
+      projects: {($ws): {hasTrustDialogAccepted: true, projectOnboardingSeenCount: 1, allowedTools: []}}}' \
+      > "$cdir/.claude.json"
+  elif [[ "$(jq -r --arg ws "$ws" '.projects[$ws].hasTrustDialogAccepted // false' "$cdir/.claude.json")" != "true" ]]; then
+    echo "  seeding : re-flipping trust flag for ${ws}"
+    local tmp="$cdir/.claude.json.tmp.$$"
+    jq --arg ws "$ws" '.projects[$ws] = ((.projects[$ws] // {projectOnboardingSeenCount: 1, allowedTools: []}) + {hasTrustDialogAccepted: true})' \
+      "$cdir/.claude.json" > "$tmp" && mv "$tmp" "$cdir/.claude.json"
+  fi
+  local sl; sl=$(jq -r '.statusLine // empty' <<<"$c")
+  # work-160 (config-driven claude defaults — Director directive): the claude session
+  # defaults live DECLARATIVELY in the harness config (config/harnesses/claude.json
+  # .claudeSettings) and flow claude.json → merged cell $c → here, exactly like
+  # statusLine above. cell_json's deep-merge means an agent json can override
+  # .claudeSettings per-agent. Canonical set = {ultracode:true, enableWorkflows:true,
+  # model:"opus"}:
+  #   - ultracode + enableWorkflows: forces xhigh effort + dynamic workflow orchestration
+  #     (session-start reminder "ultracode is on for the session"); ultracode REQUIRES
+  #     enableWorkflows. Do NOT set CLAUDE_CODE_EFFORT_LEVEL — a non-xhigh value SUPPRESSES
+  #     ultracode. The account must ALSO hold the allow_workflows entitlement (no settings
+  #     key grants it — confirmed live in the settling check, else ultracode silently no-ops).
+  #   - model:"opus": VERIFIED load-bearing — the settings.json "model" key WINS over the
+  #     harness --model {hubModelTag} exec flag (greg/lily run claude-opus-4-8 from it);
+  #     "opus" auto-tracks latest Opus. hubModelTag is aligned to opus in claude.json so
+  #     --model / HUB_LLM_MODEL / the ois ps display all match.
+  local cs; cs=$(jq -c '.claudeSettings // {}' <<<"$c")
+  if [[ ! -f "$cdir/settings.json" ]]; then
+    echo "  seeding : $cdir/settings.json (marketplace + plugin + prompt skips + statusline + claudeSettings=$cs)"
+    jq -n --arg mp "$mp" --arg sl "$sl" --argjson cs "$cs" '{skipDangerousModePermissionPrompt: true,
+      extraKnownMarketplaces: {"agentic-network": {source: {source: "directory", path: $mp}}},
+      enabledPlugins: {"agent-adapter@agentic-network": true},
+      permissions: {allow: ["mcp__plugin_agent-adapter_proxy__*"]}}
+      + $cs
+      + (if $sl != "" then {statusLine: {type: "command", command: $sl}} else {} end)' > "$cdir/settings.json"
+  else
+    # Existing settings.json: UNCONDITIONAL idempotent merge of the declared claudeSettings
+    # (most agents are ALREADY seeded, so the fresh-create path never fires for them; the
+    # old statusLine-only elif never reached them), plus backfill statusLine only if absent.
+    # `. + $cs` is idempotent and leaves other keys untouched; a later change to
+    # .claudeSettings converges on the next re-seed.
+    echo "  seeding : merging claudeSettings ($cs) + forcing extraKnownMarketplaces→npm ($mp) into existing settings.json"
+    local tmp="$cdir/settings.json.tmp.$$"
+    # npmdeliver0: UNCONDITIONALLY rewrite extraKnownMarketplaces to the npm path. The old
+    # `. + $cs` never touched it, so a bare marketplacePath flip was a SILENT NO-OP on
+    # already-seeded seats (the whole cutover trap). Keep source type "directory" — an
+    # npm-installed filesystem path is a directory-source to claude.
+    jq --arg mp "$mp" --arg sl "$sl" --argjson cs "$cs" '. + $cs
+      + {extraKnownMarketplaces: ((.extraKnownMarketplaces // {}) + {"agentic-network": {source: {source: "directory", path: $mp}}})}
+      + (if $sl != "" and (.statusLine | not) then {statusLine: {type: "command", command: $sl}} else {} end)' \
+      "$cdir/settings.json" > "$tmp" && mv "$tmp" "$cdir/settings.json"
+  fi
+  # npmdeliver0: CONVERGE the marketplace SOURCE unconditionally. settings.json was
+  # force-rewritten to $mp above, but known_marketplaces.json / installed_plugins.json /
+  # the plugin cache can still point at a retired directory path — a bare flip is a SILENT
+  # NO-OP (the plugin keeps loading the stale cached extract). Uninstall → drop marketplace →
+  # wipe stale cache → re-add + install from the npm path. Runs under the exported
+  # CLAUDE_CONFIG_DIR=$cdir so every claude-CLI write lands on THIS seat. Idempotent on
+  # fresh seats (teardown steps are best-effort).
+  echo "  seeding : converging agent-adapter marketplace source → $mp"
+  claude plugin uninstall agent-adapter@agentic-network 2>/dev/null || true
+  claude plugin marketplace remove agentic-network 2>/dev/null || true
+  rm -rf "$cdir/plugins/cache/agentic-network" 2>/dev/null || true
+  claude plugin marketplace add "$mp"
+  claude plugin install agent-adapter@agentic-network
+  # fleetskills0 retire_legacy (idea-505): the HCAP skills-consumer is now the SOLE
+  # skill-delivery path. The legacy mission_kit_sync call and the HCAP_SKILLS_EMBED
+  # opt-in gate (the prior coexistence scaffolding) are RETIRED — the new consumer runs
+  # UNCONDITIONALLY for every claude seat, FAIL-CLOSED: a converge/gate failure aborts
+  # THIS seat's launch (no `|| true`, so the non-zero exit propagates under set -e)
+  # rather than exec claude with a partial baseline. Its LIVE set-diff gate
+  # (role_map ⊇ delivered) bounds what it unlinks. CLAUDE_CONFIG_DIR is exported above.
+  local na_bin="$_CLAUDE_PLUGIN_MP/node_modules/@apnex/network-adapter/dist/bin/seed-skills.js"
+  [[ -f "$na_bin" ]] || na_bin="$(npm root -g)/@apnex/network-adapter/dist/bin/seed-skills.js"
+  [[ -f "$na_bin" ]] || fatal "HCAP skills-consumer seed bin not found (plugin/npm-root)"
+  local srole; srole=$(jq -r '.role // "unknown"' <<<"$c")
+  echo "  seeding : HCAP skills embed (fail-closed, role=$srole) → $cdir/skills"
+  HCAP_SKILLS_MANIFEST="${HCAP_SKILLS_MANIFEST:-$ROOT/manifests/skill-sync/wanted-bundles.yaml}" \
+  OIS_ROLE="$srole" \
+    node "$na_bin" "$cdir/skills"
+}
+
+# ---------- pi sovereign seed (piuplift0 p1) ----------
+
+# pi_na_ensure — resolve the HCAP skills-consumer seed bin for pi. Unlike claude (whose
+# plugin install.sh bundles @apnex/network-adapter), pi loads its plugin at EXEC via
+# piPluginSpec, so there is no pre-exec na. Install @apnex/network-adapter GLOBALLY (just the
+# seed BIN pi needs) once per invocation. @latest tracks claude-plugin's floating na dep
+# ("@apnex/network-adapter":"*") so the seed bin stays byte-consistent across harnesses.
+# DEFERRED-CONVERGENCE (backport_synthesis / P3 npm-distribution / the D4 gap): pi resolves
+# the seed bin via direct global na-install, divergent from claude's bundled-via-plugin
+# resolution; the clean unified resolution (both harnesses on a pinned na) is the pi-delivery
+# / npm-unification work — NOT p1-skills scope.
+_PI_NA_MP=""
+pi_na_ensure() {
+  [[ -n "$_PI_NA_MP" ]] && return 0
+  command -v npm >/dev/null 2>&1 || fatal "'npm' not found on PATH (needed for the @apnex/network-adapter seed bin)"
+  echo "  seeding : npm install -g @apnex/network-adapter@latest (pi HCAP skills seed bin)"
+  npm install -g "@apnex/network-adapter@latest" >/dev/null || fatal "npm install -g @apnex/network-adapter@latest failed"
+  local mp; mp="$(npm root -g)/@apnex/network-adapter"
+  [[ -d "$mp" ]] || fatal "npm-installed network-adapter dir missing at $mp after install"
+  _PI_NA_MP="$mp"
+}
+
+# pi_auth_bridge — bug-268: per-seat PI_CODING_AGENT_DIR must carry working auth.
+# pi's AuthStorage writes through auth.json with writeFileSync/chmodSync after taking a
+# proper-lockfile lock on the path (realpath:false). On Linux, a symlinked auth.json therefore
+# writes to the target file while the lock stays scoped to the per-seat symlink path. That is
+# the current Director/verifier-approved credential posture for this rollout: share the existing
+# global pi auth file by SYMLINK, never by copying secret contents. This helper makes that bridge
+# reproducible and fail-closed without changing policy:
+#   - source defaults to pi's global ~/.pi/agent/auth.json (override: OIS_PI_AUTH_SOURCE)
+#   - existing correct symlink is accepted
+#   - missing or empty/{} per-seat auth.json is replaced with the symlink
+#   - non-empty non-symlink per-seat auth.json is preserved by refusing to launch
+# Nothing prints auth contents.
+pi_auth_bridge() { # <agent> <per-seat-cdir>
+  local a="$1" cdir="$2" src dst
+  src="${OIS_PI_AUTH_SOURCE:-$HOME/.pi/agent/auth.json}"
+  dst="$cdir/auth.json"
+  src=$(expand "$src")
+  [[ -n "$cdir" ]] || fatal "pi auth bridge called without a per-seat config dir"
+  [[ "$src" != "$dst" ]] || return 0  # default/non-sovereign pi dir; no bridge needed
+  [[ -e "$src" ]] || fatal "pi auth source missing for '$a': $src (run pi login on the operator/global profile or set OIS_PI_AUTH_SOURCE)"
+  [[ -f "$src" ]] || fatal "pi auth source is not a regular file for '$a': $src"
+  [[ -s "$src" ]] || fatal "pi auth source is empty for '$a': $src"
+  jq -e 'type == "object" and length > 0' "$src" >/dev/null 2>&1 || fatal "pi auth source is not a non-empty JSON object for '$a': $src"
+
+  mkdir -p "$cdir" && chmod 700 "$cdir"
+  if [[ -L "$dst" ]]; then
+    local resolved_src resolved_dst
+    resolved_src=$(readlink -f "$src") || fatal "cannot resolve pi auth source symlink for '$a': $src"
+    resolved_dst=$(readlink -f "$dst") || fatal "pi auth symlink for '$a' is dangling: $dst"
+    [[ "$resolved_dst" == "$resolved_src" ]] || fatal "pi auth symlink for '$a' points at $resolved_dst, expected $resolved_src; refusing to rewrite credential policy"
+    echo "  seeding : pi auth bridge already linked ($dst -> $src)"
+    return 0
+  fi
+  if [[ -e "$dst" ]]; then
+    if [[ -f "$dst" ]] && jq -e 'type == "object" and length == 0' "$dst" >/dev/null 2>&1; then
+      rm -f "$dst"
+    elif [[ -f "$dst" && ! -s "$dst" ]]; then
+      rm -f "$dst"
+    else
+      fatal "pi auth target exists and is not an empty placeholder for '$a': $dst; refusing to overwrite/copy credentials"
+    fi
+  fi
+  ln -s "$src" "$dst"
+  echo "  seeding : pi auth bridge linked ($dst -> $src)"
+}
+
+pi_models_400k_valid() { # <models.json>
+  jq -e '(.providers["openai-codex"].modelOverrides["gpt-5.5"].contextWindow == 400000) or (.providers["openai-codex"].modelOverrides["gpt-5.6-sol"].contextWindow == 400000)' "$1" >/dev/null 2>&1
+}
+
+pi_json_equiv() { # <json-a> <json-b> — canonical semantic equality
+  diff -q <(jq -S . "$1") <(jq -S . "$2") >/dev/null 2>&1
+}
+
+render_pi_models() { # cell-json arg -> per-seat pi models.json on stdout
+  # bug-271: the 400k gpt-5.5 model policy is part of the OIS fleet declaration/render
+  # contract, not an implicit inheritance from ~/.pi/agent or a workspace .pi fallback, and
+  # not a default embedded in this command script. The source of truth is the merged cell's
+  # .piModels config (declared under config/, currently config/harnesses/pi.json).
+  jq -e -n --argjson c "$1" '$c.piModels'
+}
+
+pi_settings_valid() { # <settings.json>
+  jq -e '
+    type == "object" and
+    .theme == "dark" and
+    .defaultProvider == "openai-codex" and
+    (.defaultModel == "gpt-5.5" or .defaultModel == "gpt-5.6-sol") and
+    .defaultThinkingLevel == "xhigh" and
+    .terminal.showTerminalProgress == true and
+    ((.packages // []) | index("npm:pi-tool-display")) != null and
+    ((.packages // []) | index("npm:pi-web-access")) != null and
+    .compaction.enabled == true and
+    (.compaction.reserveTokens | type == "number") and
+    (.compaction.keepRecentTokens | type == "number")
+  ' "$1" >/dev/null 2>&1
+}
+
+pi_settings_legacy_placeholder() { # <settings.json>
+  jq -e 'type == "object" and ((keys - ["lastChangelogVersion"]) | length == 0)' "$1" >/dev/null 2>&1
+}
+
+# pi_settings_seed — bug-272: per-seat PI_CODING_AGENT_DIR must receive an explicit,
+# fleet-rendered settings.json for UI/theme/model defaults. Existing valid symlink/global
+# mitigations are accepted only as predecessor state and replaced by the rendered file.
+# Empty or lastChangelogVersion-only per-seat placeholders are replaced; meaningful
+# non-equivalent local policy fails closed and is preserved.
+pi_settings_seed() { # <agent> <per-seat-cdir> <cell-json>
+  local a="$1" cdir="$2" c="$3" dst content tmp old_umask
+  dst="$cdir/settings.json"
+  [[ -n "$cdir" ]] || fatal "pi settings seed called without a per-seat config dir"
+  content=$(render_pi_settings "$c") || fatal "pi settings config missing for '$a': merged cell lacks .piSettings (declare it under config/harnesses/pi.json)"
+  tmp=$(mktemp)
+  printf '%s\n' "$content" > "$tmp"
+  [[ -s "$tmp" ]] && pi_settings_valid "$tmp" || { rm -f "$tmp"; fatal "rendered pi settings policy for '$a' lacks required dark/openai-codex/gpt-5.5/UI/compaction baseline"; }
+
+  mkdir -p "$cdir" && chmod 700 "$cdir"
+  if [[ -L "$dst" ]]; then
+    pi_settings_valid "$dst" || { rm -f "$tmp"; fatal "pi settings symlink for '$a' does not resolve to required fleet UI/settings policy: $dst"; }
+    rm -f "$dst"
+  elif [[ -e "$dst" ]]; then
+    if [[ -f "$dst" && ! -s "$dst" ]]; then
+      rm -f "$dst"
+    elif [[ -f "$dst" ]] && pi_settings_legacy_placeholder "$dst"; then
+      rm -f "$dst"
+    elif [[ -f "$dst" ]] && pi_json_equiv "$dst" "$tmp"; then
+      rm -f "$dst"
+    else
+      rm -f "$tmp"
+      fatal "pi settings target exists and is not an empty/legacy placeholder or exactly the rendered fleet policy for '$a': $dst; refusing to overwrite UI/settings policy"
+    fi
+  fi
+  old_umask=$(umask)
+  umask 077
+  mv "$tmp" "$dst"
+  chmod 600 "$dst"
+  umask "$old_umask"
+  echo "  seeding : pi settings policy rendered ($dst; theme=dark, provider=openai-codex, model=$(jq -r '.defaultModel' "$dst" 2>/dev/null))"
+}
+
+# pi_models_seed — bug-271: per-seat PI_CODING_AGENT_DIR must receive an explicit,
+# fleet-rendered models.json. Existing valid symlink mitigations are accepted only as a
+# compatible predecessor state: launch replaces them with the rendered file so the seat no
+# longer relies on ~/.pi/agent. Wrong symlinks or non-matching non-empty files fail closed.
+pi_models_seed() { # <agent> <per-seat-cdir> <cell-json>
+  local a="$1" cdir="$2" c="$3" dst content tmp
+  dst="$cdir/models.json"
+  [[ -n "$cdir" ]] || fatal "pi models seed called without a per-seat config dir"
+  content=$(render_pi_models "$c") || fatal "pi models config missing for '$a': merged cell lacks .piModels (declare it under config/harnesses/pi.json)"
+  tmp=$(mktemp)
+  printf '%s\n' "$content" > "$tmp"
+  [[ -s "$tmp" ]] && pi_models_400k_valid "$tmp" || { rm -f "$tmp"; fatal "rendered pi models policy for '$a' lacks providers.openai-codex.modelOverrides.gpt-5.5.contextWindow == 400000"; }
+
+  mkdir -p "$cdir" && chmod 700 "$cdir"
+  if [[ -L "$dst" ]]; then
+    pi_models_400k_valid "$dst" || { rm -f "$tmp"; fatal "pi models symlink for '$a' does not resolve to required gpt-5.5 400k policy: $dst"; }
+    rm -f "$dst"
+  elif [[ -e "$dst" ]]; then
+    if [[ -f "$dst" && ! -s "$dst" ]]; then
+      rm -f "$dst"
+    elif [[ -f "$dst" ]] && pi_json_equiv "$dst" "$tmp"; then
+      rm -f "$dst"
+    else
+      rm -f "$tmp"
+      fatal "pi models target exists and is not exactly the rendered gpt-5.5 400k policy for '$a': $dst; refusing to overwrite model policy"
+    fi
+  fi
+  local old_umask
+  old_umask=$(umask)
+  umask 077
+  mv "$tmp" "$dst"
+  chmod 600 "$dst"
+  umask "$old_umask"
+  echo "  seeding : pi models policy rendered ($dst; openai-codex/gpt-5.5 contextWindow=400000)"
+}
+
+# pi_seed — mirror of claude_seed's HCAP skills-consumer tail for the pi harness. Same
+# generalized seed bin, same fail-closed discipline (no `|| true`, under set -e). pi-native
+# discovery = the materialized $PI_CODING_AGENT_DIR/skills (default ~/.pi/agent/skills) that
+# the pi runtime reads at startup. Seed-time (pre-exec) materialization is race-free, exactly
+# like claude's pre-`exec claude` seed.
+pi_seed() {
+  local c="$1" a cdir na_bin srole
+  a=$(jq -r '.cellAgent' <<<"$c")
+  cdir=$(cell_configdir "$c")
+  [[ -n "$cdir" ]] || fatal "pi cell '$a' has no configDirTemplate — cannot resolve a sovereign PI_CODING_AGENT_DIR (declare it in config/harnesses/pi.json, mirroring claude's '{agent}.claude'); refusing to seed to a bogus/shared path"
+  pi_auth_bridge "$a" "$cdir"
+  pi_settings_seed "$a" "$cdir" "$c"
+  pi_models_seed "$a" "$cdir" "$c"
+  pi_na_ensure
+  na_bin="$_PI_NA_MP/dist/bin/seed-skills.js"
+  [[ -f "$na_bin" ]] || na_bin="$(npm root -g)/@apnex/network-adapter/dist/bin/seed-skills.js"
+  [[ -f "$na_bin" ]] || fatal "HCAP skills-consumer seed bin not found (npm-root)"
+  export PI_CODING_AGENT_DIR="$cdir"
+  mkdir -p "$cdir" && chmod 700 "$cdir"
+  srole=$(jq -r '.role // "unknown"' <<<"$c")
+  echo "  seeding : HCAP skills embed (fail-closed, role=$srole) → $cdir/skills"
+  # OIS_HARNESS=pi → the seed bin's harnessConfigDir selects PI_CODING_AGENT_DIR for the
+  # managed-ledger path; skillsDir is passed explicitly as the positional arg.
+  HCAP_SKILLS_MANIFEST="${HCAP_SKILLS_MANIFEST:-$ROOT/manifests/skill-sync/wanted-bundles.yaml}" \
+  OIS_HARNESS="pi" \
+  OIS_ROLE="$srole" \
+    node "$na_bin" "$cdir/skills"
+}
+
+# ---------- artifact write with LKG retention ----------
+write_artifact() { # $1 agent, $2 path, $3 content
+  local a="$1" path="$2" content="$3"
+  mkdir -p "$(dirname "$path")" "$STATE/$a/lkg"
+  if [[ -f "$path" ]] && ! diff -q <(printf '%s' "$content") "$path" >/dev/null 2>&1; then
+    cp -p "$path" "$STATE/$a/lkg/$(basename "$path").$(date +%Y%m%dT%H%M%S)"
+  fi
+  if [[ ! -f "$path" ]] || ! diff -q <(printf '%s' "$content") "$path" >/dev/null 2>&1; then
+    umask 077
+    printf '%s' "$content" > "$path"
+  fi
+}
+
+# ---------- commands ----------
+cmd_render() {
+  local c; c=$(cell_json "$1" "$2")
+  local kind path
+  while read -r kind path; do
+    echo "===== $kind -> $path ====="
+    render_kind "$kind" "$c"
+  done < <(artifact_targets "$c")
+}
+
+cmd_env() { local c; c=$(cell_json "$1" "$2"); env_lines "$c" masked "$2" | sort; }
+
+check_cell() { # returns nonzero on any mismatch
+  local a="$1" h="$2" rc=0 c kind path live rendered
+  c=$(cell_json "$a" "$h") || return 1
+  while read -r kind path; do
+    rendered=$(render_kind "$kind" "$c")
+    if [[ ! -f "$path" ]]; then echo "  [$a/$h] $kind: MISSING live file $path (would create)"; rc=1; continue; fi
+    if [[ "$kind" == "git-config" ]]; then
+      if diff -q <(printf '%s\n' "$rendered") "$path" >/dev/null 2>&1; then echo "  [$a/$h] $kind: BYTE-IDENTICAL"
+      else echo "  [$a/$h] $kind: CONTENT MISMATCH vs $path"; rc=1; fi
+      continue
+    fi
+    if diff -q <(jq -S . <<<"$rendered") <(jq -S . "$path") >/dev/null 2>&1; then
+      if diff -q <(printf '%s\n' "$rendered") "$path" >/dev/null 2>&1 || diff -q <(printf '%s' "$rendered") "$path" >/dev/null 2>&1; then
+        echo "  [$a/$h] $kind: BYTE-IDENTICAL"
+      else
+        echo "  [$a/$h] $kind: semantically identical (whitespace/key-order differs — normalizes at first launch)"
+      fi
+    else
+      echo "  [$a/$h] $kind: CONTENT MISMATCH vs $path"
+      diff <(jq -S . <<<"$rendered") <(jq -S . "$path") | head -15 | sed 's/^/    /'
+      rc=1
+    fi
+  done < <(artifact_targets "$c")
+  # secrets referenced must exist
+  local ref
+  while read -r ref; do
+    [[ -f "$SEC/$ref" ]] || { echo "  [$a/$h] secret MISSING: $ref"; rc=1; }
+  done < <(jq -r '(.secretEnv // {} | to_entries[].value), (.fleetHub.tokenRef)' <<<"$c")
+  return $rc
+}
+
+cmd_check() {
+  local rc=0
+  if [[ $# -ge 2 ]]; then check_cell "$1" "$2" || rc=1
+  else
+    while read -r a h; do check_cell "$a" "$h" || rc=1; done < <(cells_all)
+  fi
+  [[ $rc -eq 0 ]] && echo "ois check: ALL OK" || echo "ois check: MISMATCHES FOUND"
+  return $rc
+}
+
+cmd_list() {
+  # bug-228: ONE jq per row doing the whole layered merge (was cell_json's
+  # 3-file merge + 2 validation calls + 4 field extractions = ~7 spawns/row,
+  # rendering progressively) + buffered single-flush output — the cmd_ps cure.
+  local a h row out
+  out=$(printf '%-8s %-9s %-12s %-28s %-16s %s' AGENT HARNESS ROLE MODEL TAG EAGER)
+  while read -r a h; do
+    row=$(jq -rn --arg h "$h" '
+      (input.defaults) as $d | (input) as $hz | (input) as $ag |
+      ($d * $hz * ($ag | del(.harness)) * ($ag.harness[$h] // {})) as $m |
+      [ ($m.role // "?"),
+        (if $m.model then $m.model elif $m.piProvider then $m.piProvider + "/" + $m.piModel else ($m.hubModelTag // "?") end),
+        ($m.hubModelTag // "?"),
+        ($m.eagerSessionClaim | if . == null then "?" else tostring end) ] | @tsv' \
+      "$CFG/fleet.json" "$CFG/harnesses/$h.json" "$CFG/agents/$a.json" 2>/dev/null || printf '?\t?\t?\t?')
+    out+=$'\n'"$(IFS=$'\t' read -r r m t e <<<"$row"; printf '%-8s %-9s %-12s %-28s %-16s %s' "$a" "$h" "$r" "$m" "$t" "$e")"
+  done < <(cells_all)
+  printf '%s\n' "$out"
+}
+
+cmd_doctor() {
+  local rc=0
+  echo "— secrets perms —"
+  find "$SEC" -type f ! -perm 600 -exec echo "  BAD PERMS (want 600): {}" \; | grep . && rc=1 || echo "  all 600"
+  find "$SEC" -type d ! -perm 700 -exec echo "  BAD DIR PERMS (want 700): {}" \; | grep . && rc=1 || true
+  echo "— PATH —"
+  case ":$PATH:" in
+    *":$ROOT/bin:"*) echo "  $ROOT/bin on PATH" ;;
+    *) echo "  NOT on PATH — add to your shell rc:"; echo "    export PATH=\"\$HOME/.config/apnex-agents/bin:\$PATH\"" ;;
+  esac
+  echo "— anthropic token expiry —"
+  local exp; exp=$(jq -r '.credentials.anthropic.expiresAt // empty' "$CFG/fleet.json")
+  if [[ -n "$exp" ]]; then
+    local days=$(( ($(date -d "$exp" +%s) - $(date +%s)) / 86400 ))
+    echo "  expires $exp (${days}d)"; (( days < 30 )) && { echo "  WARNING: <30d — re-mint with 'claude setup-token'"; rc=1; }
+  fi
+  echo "— git identities —"
+  local af ag login ref inc
+  for af in "$CFG"/agents/*.json; do
+    jq -e '.gitIdentity' "$af" >/dev/null 2>&1 || continue
+    ag=$(jq -r '.agent' "$af"); login=$(jq -r '.gitIdentity.githubLogin' "$af"); ref=$(jq -r '.gitIdentity.sshKeyRef' "$af")
+    [[ -f "$SEC/$ref" ]] || { echo "  $ag: MISSING key $ref"; rc=1; continue; }
+    [[ -f "$STATE/$ag/gitconfig" ]] || { echo "  $ag: gitconfig not rendered"; rc=1; }
+    grep -q "state/$ag/gitconfig" "$HOME/.gitconfig" 2>/dev/null || { echo "  $ag: includeIf pointer missing from ~/.gitconfig"; rc=1; }
+    # ssh -T exits nonzero even on successful auth — || true keeps set -e/pipefail out of it
+    inc=$(ssh -F /dev/null -i "$SEC/$ref" -o IdentitiesOnly=yes -o StrictHostKeyChecking=accept-new -T git@github.com 2>&1 | grep -oE 'Hi [A-Za-z0-9-]+' | cut -d' ' -f2 || true)
+    if [[ "$inc" == "$login" ]]; then echo "  $ag: key authenticates as $login ✓"
+    else echo "  $ag: key authenticates as '${inc:-none}' (expected $login)"; rc=1; fi
+  done
+  echo "— hub reachability (fleet token) —"
+  local url tok code
+  url=$(jq -r '.hub.url' "$CFG/fleet.json"); tok=$(cat "$SEC/$(jq -r '.hub.tokenRef' "$CFG/fleet.json")")
+  code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$url" -H "Authorization: Bearer $tok" \
+    -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' --max-time 15 \
+    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ois-doctor","version":"1"}}}') || code=ERR
+  echo "  $url -> HTTP $code"; [[ "$code" == "200" ]] || rc=1
+  return $rc
+}
+
+do_launch() {
+  local a="$1" h="$2"; shift 2
+  # bug-303 (oisfix3): validate the seat tokens BEFORE cell_json — a delimiter-ambiguous token must hit
+  # THIS fail-closed check (unownable OIS_SEAT_ID), NOT cell_json's 'unknown agent'. ois-<agent>-<harness>.
+  [[ "$a" =~ ^[A-Za-z0-9_]+$ && "$h" =~ ^[A-Za-z0-9_]+$ ]] \
+    || fatal "seat tokens must match [A-Za-z0-9_]+ (agent='$a' harness='$h') — OIS_SEAT_ID would be ambiguous"
+  local c ws; c=$(cell_json "$a" "$h"); ws=$(expand "$(jq -r '.workspace' <<<"$c")")
+  [[ -d "$ws" ]] || fatal "missing workspace $ws"
+  # render + write artifacts
+  local kind path content shas=""
+  while read -r kind path; do
+    content=$(render_kind "$kind" "$c")
+    write_artifact "$a" "$path" "$content"$'\n'
+    shas+="$kind:$(printf '%s\n' "$content" | sha12) "
+  done < <(artifact_targets "$c")
+  # claude: sovereign seed. fleetskills0 retire_legacy (idea-505): the per-cell
+  # .hcapSkillsEmbed opt-in export is retired — claude_seed's HCAP consumer now runs
+  # unconditionally as the sole skill-delivery path. The .hcapSkillsEmbed cell field is
+  # vestigial after this and can be dropped from the estate configs in a follow-up sweep.
+  if [[ "$h" == "claude" ]]; then
+    claude_seed "$c"
+  elif [[ "$h" == "pi" ]]; then
+    pi_seed "$c"
+  fi
+  # env
+  # bug-296/bootstrap: OIS_AGENT_NAME is first-class identity; a caller's stale
+  # legacy OIS_INSTANCE_ID must never leak into a launched harness as ambient
+  # authority. env_lines also rejects any config layer that tries to render it.
+  unset OIS_INSTANCE_ID
+  # bug-303: replay the cell env, THEN stamp the canonical per-seat identity OIS_SEAT_ID. oisfix3:
+  # the stamp lands AFTER the env_lines replay so the kill-ownership key is CANONICAL-WINS — no
+  # config/secret layer (.envTemplate/.env/.secretEnv) can clobber it (cell_json also REJECTS a
+  # config-authored OIS_SEAT_ID; defense in depth). It OVERWRITES any inherited value so a peer-spawned
+  # seat never carries the spawner's id. The key MUST include the harness (OIS_AGENT_NAME is NOT
+  # seat-unique; the one-live-session-per-agent guard is advisory). Token grammar is validated at
+  # do_launch entry (before cell_json).
+  local line
+  while IFS= read -r line; do export "${line%%=*}=${line#*=}"; done < <(env_lines "$c" raw "$h")
+  export OIS_SEAT_ID="$(session_name "$a" "$h")"
+  # opencode plugin cache refresh (npm channel only — github: specs are retired)
+  if [[ "$h" == "opencode" ]]; then
+    local plug; plug=$(jq -r '.opencodePlugin' <<<"$c")
+    [[ "$plug" == github:* ]] && fatal "github: opencode plugin specs are retired (0004) — use the npm channel"
+    if [[ "${OIS_PLUGIN_REFRESH:-1}" == "1" ]]; then
+      local cachepath; cachepath=$(expand "$(jq -r '.pluginCache' <<<"$c")")
+      echo "  plugin  : refreshing cache ($cachepath) — OIS_PLUGIN_REFRESH=0 to skip"
+      rm -rf "$cachepath" 2>/dev/null || true
+    fi
+  fi
+  # exec line from harness template (+ per-cell extraExecArgs, e.g. permission mode)
+  local -a argv=()
+  local tok tag name prov model pspec
+  tag=$(jq -r '.hubModelTag' <<<"$c"); pspec=$(jq -r '.pluginSpec // .piPluginSpec // empty' <<<"$c")
+  prov=$(jq -r '.piProvider // empty' <<<"$c"); model=$(jq -r '.piModel // empty' <<<"$c")
+  while IFS= read -r tok; do
+    tok=${tok//\{hubModelTag\}/$tag}; tok=${tok//\{pluginSpec\}/$pspec}
+    tok=${tok//\{piPluginSpec\}/${PI_PLUGIN_SPEC:-$pspec}}; tok=${tok//\{piProvider\}/${PI_PROVIDER:-$prov}}; tok=${tok//\{piModel\}/${PI_MODEL:-$model}}
+    argv+=("$tok")
+  done < <(jq -r '.exec[]' <<<"$c")
+  while IFS= read -r tok; do argv+=("$tok"); done < <(jq -r '.extraExecArgs[]? // empty' <<<"$c")
+  # journal
+  mkdir -p "$STATE/$a"
+  jq -cn --arg ts "$(date -Is)" --arg a "$a" --arg h "$h" --arg exec "${argv[*]} $*" --arg shas "$shas" \
+    '{ts:$ts, agent:$a, harness:$h, exec:$exec, renders:$shas}' >> "$STATE/$a/launches.jsonl"
+  echo "→ ois launch $a/$h as '$(jq -r '.agentName' <<<"$c")' (role $(jq -r '.role' <<<"$c"), tag $tag)"
+  echo "  workspace : $ws"
+  cd "$ws"
+  exec "${argv[@]}" "$@"
+}
+
+# ---------- fleet session ops (tmux) ----------
+session_name() { echo "ois-$1-$2"; }
+
+# bug-248/idea-512 — PER-SEAT tmux isolation. Every ois seat runs on its OWN tmux server,
+# selected by `-L <socket>` where the socket name == the session name (ois-<agent>-<harness>).
+# A `tmux kill-server` (or any signal) on one seat's socket therefore reaches ONLY that seat —
+# never another seat, never the operator's shared DEFAULT server (the cleanslate0 blast radius) —
+# and it is the down-payment on containerization (one server per seat). stmux runs a tmux
+# command against a seat's per-seat socket; `-L` must precede the tmux subcommand.
+stmux() { local sk="$1"; shift; tmux -L "$sk" "$@"; }
+
+# bug-259 — create a seat session size-PINNED so a later raw `tmux attach` never
+# implicitly resizes it. Root cause: tmux's default `window-size latest` resizes a
+# detached window to whatever terminal attaches; the harness TUI sees SIGWINCH and
+# can full-repaint/replay scrollback. Setting `window-size manual` freezes the
+# window unless OIS explicitly resizes it.
+#
+# bug-273 — keep tmux's final status row, but never size the pane to the FULL
+# client height when status is on. A 53-row pane + a 1-row tmux status in a 53-row
+# client makes tmux enter viewport mode (`[0,0]` in status-right), producing the
+# bottom horizontal/dot artifact under the Pi footer. Treat OIS_TMUX_ROWS as the
+# CLIENT height and create/fit the PANE height as rows - OIS_TMUX_STATUS_ROWS.
+# Defaults: client 220x50, status rows 1 => pane/window 220x49. Operators may
+# override exact pane rows with OIS_TMUX_PANE_ROWS.
+_tty_size() { # stdout: "<cols> <rows>" or nothing
+  local r c
+  if [[ -t 0 ]] && read -r r c < <(stty size 2>/dev/null); then
+    [[ "$r" =~ ^[0-9]+$ && "$c" =~ ^[0-9]+$ ]] && echo "$c $r"
+  fi
+}
+
+_tmux_pane_dims() { # stdout: "<cols> <pane-rows>"; OIS_TMUX_ROWS means CLIENT rows
+  local tty cols client_rows status_rows pane_rows
+  tty=$(_tty_size || true)
+  cols="${OIS_TMUX_COLS:-${tty%% *}}"
+  [[ -n "$cols" && "$cols" != "$tty" ]] || cols=220
+  client_rows="${OIS_TMUX_ROWS:-${tty##* }}"
+  [[ -n "$client_rows" && "$client_rows" != "$tty" ]] || client_rows=50
+  status_rows="${OIS_TMUX_STATUS_ROWS:-1}"
+  pane_rows="${OIS_TMUX_PANE_ROWS:-}"
+  if [[ -z "$pane_rows" ]]; then
+    pane_rows=$(( client_rows - status_rows ))
+    (( pane_rows > 0 )) || pane_rows=1
+  fi
+  echo "$cols $pane_rows"
+}
+
+_seat_fit_window_to_tty() { # <session/socket> — explicit pre-attach fit; preserves manual mode
+  local s="$1" dims cols rows
+  [[ "${OIS_TMUX_ATTACH_FIT:-1}" != "0" ]] || return 0
+  dims=$(_tmux_pane_dims || true)
+  [[ -n "$dims" ]] || return 0
+  read -r cols rows <<<"$dims"
+  stmux "$s" resize-window -t "$s:0" -x "$cols" -y "$rows" 2>/dev/null || true
+}
+
+_seat_new_session() { # <session/socket> <command-string> — same target for -L and -s (per-seat)
+  local s="$1" cols rows; shift
+  read -r cols rows <<<"$(_tmux_pane_dims)"
+  # bug-303: spawn the seat's tmux server in its OWN session, provably severed from the caller's
+  # process group. tmux self-daemonization is NOT sufficient — when `ois up` runs from INSIDE a
+  # live seat's pane (peer-spawn), the new seat inherited the SPAWNER's pgid, so a later
+  # `ois reset <spawner>` group-kill (the old pgid-based reap) swept every co-resident sibling
+  # (the bug-303 fleet detonation: one `ois reset lily` killed greg+ruby+lily). `setsid -w` forks
+  # into a fresh session leader (group-leader-safe) and WAITS, so the exit status + the set-option
+  # below stay correct; `env -u TMUX -u TMUX_PANE` stops the new `-L` client from binding to the
+  # OUTER server when ois is invoked inside tmux. Harness-agnostic (protects claude/pi/opencode);
+  # paired with the exact-OIS_SEAT_ID reap (reap_seat) for defense in depth.
+  # bug-363: ALSO scrub OIS_SEAT_ID. #641 re-keys the seat's canonical id inside do_launch — i.e.
+  # INSIDE the new session — but THIS tmux server is forked BEFORE that export, from the CALLER's
+  # environment. Peer-spawning (`ois up <peer>` from inside a live seat's pane) therefore left the
+  # new seat's tmux SERVER carrying the SPAWNER's OIS_SEAT_ID for its entire life, and the
+  # exact-id reap (which has no argv filter, by design) would then signal it during a teardown of
+  # the SPAWNER — killing the server that hosts a co-resident seat. That is bug-303's blast radius
+  # returning through the ENV vector after setsid closed the pgid one: same failure, different
+  # inherited attribute. Measured 2026-07-25 (reap set for one seat contained two other seats'
+  # tmux servers); scrubbing here means a forked server can never carry a foreign seat's identity.
+  env -u TMUX -u TMUX_PANE -u OIS_SEAT_ID setsid -w tmux -L "$s" new-session -d -s "$s" -x "$cols" -y "$rows" "$@" || return 1
+  stmux "$s" set-option -g window-size manual 2>/dev/null || true
+}
+
+# live_harness <agent> -> the harness of the agent's currently-live seat (probing each declared
+# harness's OWN per-seat socket), empty if none. Replaces the old shared-server
+# `tmux ls | grep ^ois-<agent>-` scan — there is no shared server to scan under -L isolation.
+# MIGRATION NOTE: a seat launched by a PRE-idea-512 ois is on the DEFAULT server + INVISIBLE
+# here; the live-fleet rollout (driver-coordinated, within-spine) relaunches each seat onto its
+# own socket. That relaunch is NOT part of this change.
+live_harness() {
+  local a="$1" h s
+  for h in $(jq -r '.harness | keys[]' "$CFG/agents/$a.json" 2>/dev/null); do
+    s="ois-$a-$h"
+    stmux "$s" has-session -t "$s" 2>/dev/null && { echo "$h"; return 0; }
+  done
+  # No live seat found is a VALID result (empty output) — return success, else the last
+  # `stmux has-session` non-zero propagates out and a caller's `x=$(live_harness ..)` trips
+  # `set -e` (silent rc=1 in cmd_up/ois-up before any output). bug: broke `ois up` on a
+  # fresh launch (the agent's normal pre-launch state).
+  return 0
+}
+harness_log_marker() { # $1 harness -> "logfile-rel|marker-regex"
+  case "$1" in
+    claude)   echo ".ois/shim.log|Sync complete" ;;
+    opencode) echo ".ois/hub-plugin.log|registered" ;;
+    pi)       echo ".ois/pi-plugin.log|registered" ;;
+    *) fatal "no log marker for harness $1" ;;
+  esac
+}
+
+# bug-247: thin TMUX transport adapter over the transport-neutral resolver (prompt-resolve.sh).
+# Captures the pane, asks prompt_resolve for the first not-yet-fired handler whose guard AND
+# detect fully match, and maps its abstract respond tokens to keystrokes. The ONLY transport
+# verbs (capture-pane/send-keys) live HERE; every matching decision is in the pure lib (also
+# exercised by test/test-prompt-resolve.sh through a mock stdout adapter). Fail-safe: no lib,
+# empty pane, or no confident match => does nothing. $4 is a nameref to the fire-once CSV.
+_pane_handle_prompts() {
+  local sess="$1" harness="$2" largs="$3"; local -n _fired="$4"
+  declare -F prompt_resolve >/dev/null || return 0
+  local pane resp id tok
+  pane=$(stmux "$sess" capture-pane -pt "$sess" 2>/dev/null || true)
+  [[ -n "$pane" ]] || return 0
+  resp=$(prompt_resolve "$PROMPT_HANDLERS" "$harness" "$largs" "$_fired" "$pane")
+  id=$(printf '%s\n' "$resp" | sed -n '1p')
+  [[ -n "$id" ]] || return 0                                # no confident match -> fall through
+  while IFS= read -r tok; do
+    [[ -n "$tok" ]] && stmux "$sess" send-keys -t "$sess" "$tok"
+  done < <(printf '%s\n' "$resp" | tail -n +2)
+  _fired="${_fired:+$_fired,}$id"
+  echo "  · prompt handled: $id"
+}
+
+cmd_up() {
+  local a="$1" h="$2" c ws s lm logf marker pre fired="" ok=0 new i
+  # work-157 (bug-235): trailing args after <agent> <harness> are harness launch
+  # passthrough (e.g. `ois up lily claude -c` to resume). do_launch already execs
+  # them onto the harness command; here we thread them through the tmux launch
+  # string. Fresh-start is the default; the one exception is a claude seat with a prior
+  # session, which auto-resumes (idea-494, just below).
+  shift 2; local -a largs=("$@")
+  c=$(cell_json "$a" "$h"); ws=$(expand "$(jq -r '.workspace' <<<"$c")"); s=$(session_name "$a" "$h")
+  # resfix0/idea-494 (Director Option A — durable roll-forward): a claude seat launched with
+  # NO explicit args AND a prior session for its workspace gets `-c` injected into largs, so
+  # (a) bug-247's resume-menu handler fires (guard = launchArgsContains:"-c") and a compacted
+  # seat auto-answers the summary/full menu, and (b) fresh/no-session seats are SKIPPED —
+  # `claude -c` errors 'No conversation found to continue' with no prior session (unlike pi).
+  # Detection = claude's OWN -c criterion: a *.jsonl under the seat's
+  # CLAUDE_CONFIG_DIR/projects/<workspace-slug>/ (claude keys sessions by cwd=workspace,
+  # '/'->'-'). A false detection can only mis-miss (safe fresh start), never mis-fire, because
+  # it reads the same store claude does. Explicit largs are always respected.
+  if [[ "$h" == "claude" && ${#largs[@]} -eq 0 ]]; then
+    local cdir slug
+    cdir=$(jq -r '.configDirTemplate // empty' <<<"$c"); cdir=${cdir//\{agent\}/$a}; cdir=$(expand "$cdir")
+    slug=${ws//\//-}
+    if [[ -n "$cdir" ]] && compgen -G "$cdir/projects/$slug/*.jsonl" >/dev/null 2>&1; then
+      largs=(-c)
+      echo "  · prior claude session for $ws → auto-resume (-c)"
+    fi
+  fi
+  command -v tmux >/dev/null 2>&1 || fatal "'tmux' required for ois up"
+  # bug-303 (oisfix2): setsid is load-bearing — _seat_new_session uses it to give each seat its OWN
+  # session/pgid (spawn isolation). Fail LOUD rather than silently launch without isolation on a box
+  # lacking util-linux.
+  command -v setsid >/dev/null 2>&1 || fatal "'setsid' (util-linux) required for ois up — seat spawn-isolation depends on it"
+  stmux "$s" has-session -t "$s" 2>/dev/null && fatal "session $s already running (ois down $a $h first)"
+  # displacement guard: one live harness per agent (hub allows one session per identity).
+  # idea-512: check the agent's OWN per-seat sockets (no shared server to `tmux ls`).
+  local other
+  other=$(live_harness "$a")
+  [[ -n "$other" ]] && fatal "agent '$a' already has a live session (ois-$a-$other) — hub would displace it; ois down first"
+  lm=$(harness_log_marker "$h"); logf="$ws/${lm%%|*}"; marker="${lm##*|}"
+  pre=0; [[ -f "$logf" ]] && pre=$(wc -l < "$logf")
+  echo "→ ois up $a/$h  (session: $s)${largs:+  [launch args: ${largs[*]}]}"
+  # Append passthrough args %q-quoted so flags/values survive the tmux shell-string parse.
+  local ltail=""; ((${#largs[@]})) && ltail=" $(printf '%q ' "${largs[@]}")"
+  _seat_new_session "$s" "$ROOT/bin/ois launch $a $h$ltail"
+  for i in $(seq 1 60); do
+    sleep 2
+    stmux "$s" has-session -t "$s" 2>/dev/null || { echo "  ✗ session exited during startup — check $logf"; return 1; }
+    # bug-247: table-driven interactive-prompt handling (dev-channels banner, resume-mode, …)
+    # via the transport-neutral resolver. Guards/detect/respond are DATA in prompt-handlers.json.
+    _pane_handle_prompts "$s" "$h" "${largs[*]-}" fired
+    new=$(tail -n +$((pre+1)) "$logf" 2>/dev/null || true)
+    echo "$new" | grep -q "FATAL" && { echo "  ✗ harness FATAL:"; echo "$new" | grep FATAL | head -2 | sed 's/^/    /'; return 1; }
+    echo "$new" | grep -qiE "$marker" && { ok=1; break; }
+  done
+  if [[ $ok -eq 1 ]]; then
+    echo "  ✓ hub handshake confirmed ($(basename "$logf"): '$marker' at $((i*2))s)"
+    tail -n +$((pre+1)) "$logf" | grep -E "Registered as|Session claimed" | head -2 | sed 's/^/    /'
+    echo "  session stays up — attach: ois attach $a $h ; stop: ois down $a $h"
+  else
+    echo "  ✗ no handshake within 120s — session left up for debugging (ois attach $a $h)"; return 1
+  fi
+}
+
+# ---------- bug-256/idea-511 + bug-303 (oisfix2): blast-safe per-seat reap by exact OIS_SEAT_ID ----------
+# `tmux kill-session` frees the pane, but a seat's process tree (its harness + bg-pty-host/bg-spare
+# children, and any DETACHED straggler) can survive and ACCRETE across restarts (bug-256: the
+# cleanslate0 incident wiped greg+lily off the SHARED default tmux server). We reap ONLY the target
+# seat, keyed on its canonical per-seat identity OIS_SEAT_ID (stamped by do_launch on the seat root,
+# inherited by every descendant). We NEVER do a process-GROUP kill (`kill -- -<pgid>`) and NEVER
+# `tmux kill-server` / broad `pkill`:
+#   - A userspace membership scan can NOT be atomic with a group signal, so a group-kill can never be
+#     PROVEN single-seat (a foreign proc can fork/join the group in the scan→kill gap). That
+#     unprovable race WAS the bug-303 fleet detonation (one `ois reset lily` group-killed
+#     greg+ruby+lily via a shared pgid). Removing the group-kill eliminates the blast BY CONSTRUCTION.
+#   - Exact-OIS_SEAT_ID matching signals each PID individually, only after confirming it belongs to
+#     the target seat. FAIL-CLOSED: any PID whose environ is unreadable, or whose OIS_SEAT_ID is
+#     absent/empty/non-matching, is NOT signalled. No group snapshot → no cross-seat blast.
+# COVERAGE is honest, not absolute: complete for descendants that RETAIN the inherited OIS_SEAT_ID
+# (proven for the bug-256 detached tree in reap-scope.test.sh); a descendant that env-SCRUBS/REPLACES
+# its environment MAY survive — a deliberate safety-over-completeness residual, absent a kernel
+# ownership primitive (cgroup / pidfd). Repeat-to-quiescence re-reaps stragglers/children spawned
+# during teardown (it does NOT heal a mis-signal). The per-PID read→signal window is bounded by a
+# start-time recheck but is non-zero (no atomicity without pidfd).
+
+seat_config_dir() { # <agent> <harness> -> expanded CLAUDE_CONFIG_DIR ("" if none)
+  local c cdir
+  c=$(cell_json "$1" "$2" 2>/dev/null) || return 0
+  cdir=$(jq -r '.configDirTemplate // empty' <<<"$c"); [[ -n "$cdir" ]] || return 0
+  expand "${cdir//\{agent\}/$1}"
+}
+
+# _seat_id_of_pid <pid> -> exact OIS_SEAT_ID from the proc's environ ("" if none/unreadable/vanished).
+# `cat … 2>/dev/null` (not `tr < …`) so an unreadable (privileged/vanished) proc is a SILENT
+# fail-closed skip — no shell redirection-open error leaks to stderr as we scan every own-user PID.
+_seat_id_of_pid() {
+  cat "/proc/$1/environ" 2>/dev/null | tr '\0' '\n' | grep -m1 '^OIS_SEAT_ID=' | cut -d= -f2-
+}
+
+# _seat_pid_starttime <pid> -> field 22 (starttime) of /proc/<pid>/stat ("" if unreadable). With the
+# PID this is a start-identity token that bounds reuse between the ownership read and the signal.
+# comm (field 2) may contain spaces/parens, so parse the fields AFTER the last ') '.
+_seat_pid_starttime() {
+  local stat rest; stat=$(cat "/proc/$1/stat" 2>/dev/null) || return 0
+  rest=${stat##*') '}                  # fields from state(3) onward
+  local -a f=($rest); echo "${f[19]}"  # 0-based: f[19] == stat field 22 (starttime)
+}
+
+# _seat_pid_foreign_socket <pid> <seat_id> -> 0 (TRUE) when the proc's argv positively names a
+# DIFFERENT seat's tmux socket (`-L ois-…` / `-Lois-…` != seat_id); 1 otherwise (incl. unreadable
+# argv or no -L at all). bug-363 defence-in-depth.
+_seat_pid_foreign_socket() {
+  local pid="$1" seat_id="$2" tok want=0 sock=""
+  while IFS= read -r -d '' tok; do
+    if [[ "$want" == 1 ]]; then sock="$tok"; want=0
+    elif [[ "$tok" == "-L" ]]; then want=1
+    elif [[ "$tok" == -L?* ]]; then sock="${tok#-L}"; fi
+    [[ -n "$sock" ]] && break
+  done < "/proc/$pid/cmdline" 2>/dev/null
+  [[ -n "$sock" && "$sock" == ois-* && "$sock" != "$seat_id" ]]
+}
+
+# _reap_seat_signal <seat_id> <sig>: send <sig> to every own-user PID whose environ OIS_SEAT_ID
+# EXACTLY == <seat_id>, re-validating ownership + start-identity IMMEDIATELY before the signal — this
+# BOUNDS (does NOT eliminate) PID reuse; the residual read→signal window is non-zero (no atomicity
+# without pidfd). Excludes self/parent. FAIL-CLOSED: no id / mismatch / unreadable environ → skip.
+# The exact-environ id remains the ONLY INCLUSION gate: nothing is reaped on the strength of its
+# argv, so no descendant is missed for want of a recognisable command line.
+# bug-363 F3 — stating the limit precisely, because the earlier wording ("coverage unchanged
+# whatever its argv says") was FALSE: for the excluded class, reaping DOES depend on argv. An
+# env-carrying descendant is reaped whatever its argv says UNLESS that argv positively names a
+# DIFFERENT seat's `-L ois-…` socket, which is the one deliberate exception below.
+# bug-363 adds one argv-based EXCLUSION, which is not the same thing as a prefilter: a proc that
+# POSITIVELY names another seat's `-L ois-…` socket is provably foreign infrastructure, and no
+# correct reap of THIS seat ever needs to signal it. An exclusion can only ever shrink the blast
+# radius; a prefilter would have shrunk COVERAGE, which is what bug-303's design note rightly
+# refused. This is belt-and-braces behind the `env -u OIS_SEAT_ID` root-cause fix in
+# _seat_new_session: if a foreign id ever leaks in again by some other path, one wrong identifier
+# still cannot authorise killing another seat's tmux server.
+_reap_seat_signal() {
+  local seat_id="$1" sig="$2" pid st1 st2
+  [[ -n "$seat_id" ]] || return 0
+  for pid in $(pgrep -u "$(id -u)" 2>/dev/null); do
+    [[ "$pid" == "$$" || "$pid" == "${PPID:-}" ]] && continue
+    [[ "$(_seat_id_of_pid "$pid")" == "$seat_id" ]] || continue          # exact ownership
+    _seat_pid_foreign_socket "$pid" "$seat_id" && continue               # bug-363: never another seat's socket
+    st1=$(_seat_pid_starttime "$pid"); [[ -n "$st1" ]] || continue
+    [[ "$(_seat_id_of_pid "$pid")" == "$seat_id" ]] || continue          # re-validate id just before signal
+    st2=$(_seat_pid_starttime "$pid"); [[ "$st1" == "$st2" ]] || continue # start-identity unchanged (PID-reuse bound)
+    kill "-$sig" "$pid" 2>/dev/null || true
+  done
+  return 0
+}
+
+# _seat_live_count <seat_id> -> number of own-user PIDs currently carrying OIS_SEAT_ID==<seat_id>.
+#
+# bug-363 F1 — DELIBERATELY UNFILTERED, and this was ruled after being implemented the other way.
+# It is tempting to subtract the policy-excluded procs here so the count agrees with what
+# _reap_seat_signal will actually signal, making reap_seat converge instead of burning its 6
+# rounds. That was REJECTED, and the reasoning matters more than the outcome:
+#   _seat_live_count answers "what still EXISTS carrying this seat's id" — a statement about the
+#   world. _reap_seat_signal answers "what may I SIGNAL" — a statement about policy. Collapsing
+#   them makes the count report POLICY WHILE APPEARING TO REPORT REALITY, and the next operator
+#   debugging a genuine straggler loses the only honest number available.
+# The 6-round burn is NOT a spurious alarm: something really is alive that the reap will not
+# kill. The alarm was CORRECT AND MISLABELLED, so the fix is to label it accurately (see the
+# straggler message in reap_seat) — not to silence it by making the count agree.
+# Keeping the divergence VISIBLE is the point; papering it would manufacture exactly the
+# surface-disagrees-with-predicate defect this arc has filed repeatedly.
+_seat_live_count() {
+  local seat_id="$1" pid n=0
+  [[ -n "$seat_id" ]] || { echo 0; return 0; }
+  for pid in $(pgrep -u "$(id -u)" 2>/dev/null); do
+    [[ "$pid" == "$$" || "$pid" == "${PPID:-}" ]] && continue
+    [[ "$(_seat_id_of_pid "$pid")" == "$seat_id" ]] && n=$((n+1))
+  done
+  echo "$n"
+}
+
+# _seat_excluded_count <seat_id> -> PIDs carrying the id but DELIBERATELY excluded from the reap
+# (they positively name another seat's `-L ois-…` socket). Diagnostic only — never a predicate.
+# Exists so the exclusion is VISIBLE rather than silently subtracted from the pending count.
+_seat_excluded_count() {
+  local seat_id="$1" pid n=0
+  [[ -n "$seat_id" ]] || { echo 0; return 0; }
+  for pid in $(pgrep -u "$(id -u)" 2>/dev/null); do
+    [[ "$pid" == "$$" || "$pid" == "${PPID:-}" ]] && continue
+    [[ "$(_seat_id_of_pid "$pid")" == "$seat_id" ]] || continue
+    _seat_pid_foreign_socket "$pid" "$seat_id" && n=$((n+1))
+  done
+  echo "$n"
+}
+
+# reap_seat <seat_id>: blast-safe exact-OIS_SEAT_ID per-PID reap to bounded quiescence. TERM first
+# (graceful), then KILL survivors, RE-ENUMERATING before EACH round; repeat until no owned PID
+# remains or the round cap is hit. NEVER a group signal. Empty/absent seat_id is a safe no-op.
+# Quiescence re-reaps stragglers/children spawned during teardown — it does NOT heal a mis-signal.
+reap_seat() {
+  local seat_id="${1:-}" round sig
+  [[ -n "$seat_id" ]] || return 0
+  for round in 1 2 3 4 5 6; do
+    [[ "$round" -le 2 ]] && sig=TERM || sig=KILL
+    _reap_seat_signal "$seat_id" "$sig"
+    [[ "$(_seat_live_count "$seat_id")" -eq 0 ]] && { echo "  · reaped seat $seat_id (quiescent after $round round(s))"; return 0; }
+    sleep 1
+  done
+  # bug-363 F1: name the ACTUAL cause, and SPLIT THE TWO CLASSES. The old text blamed
+  # "env-scrubbed/unkillable" for every survivor, which is the wrong class for a policy-excluded
+  # proc: that proc carries the id and is perfectly killable — it is spared DELIBERATELY because
+  # its argv names another seat's socket. An operator reading the old message at 3am would go
+  # hunting a scrubbed environment that was never there. The count itself stays honest (see
+  # _seat_live_count); only the explanation is corrected.
+  local _live _excl; _live=$(_seat_live_count "$seat_id"); _excl=$(_seat_excluded_count "$seat_id")
+  if [[ "$_excl" -gt 0 ]]; then
+    echo "  · reap_seat $seat_id: $_live proc(s) still live after 6 rounds — of which $_excl SPARED BY POLICY (argv names another seat's -L ois-… socket; killable, deliberately not killed — bug-363), remainder env-scrubbed/replaced or unkillable. Never a cross-seat kill."
+  else
+    echo "  · reap_seat $seat_id: $_live proc(s) still live after 6 rounds — left as stragglers (safety-over-completeness: environment scrubbed/replaced, or unkillable; never a cross-seat kill)"
+  fi
+  return 0
+}
+
+cmd_down() { # <agent> [harness] — harness optional: at most one live session per agent
+  local a="$1" h="${2:-}" s
+  if [[ -n "$h" ]]; then
+    s=$(session_name "$a" "$h")
+  else
+    h=$(live_harness "$a")
+    [[ -n "$h" ]] || { echo "no live session for agent '$a'"; return 0; }
+    s=$(session_name "$a" "$h")
+  fi
+  stmux "$s" has-session -t "$s" 2>/dev/null || { echo "no session $s"; return 0; }
+  # bug-256/bug-303: the seat's canonical identity ($s == session_name == the seat's OIS_SEAT_ID)
+  # lets us blast-safely reap its whole process tree — including the detached bg-pty-host straggler
+  # that survives kill-session — by EXACT OIS_SEAT_ID, never by process group (see reap_seat).
+  if [[ "$h" == "claude" ]]; then stmux "$s" send-keys -t "$s" "/exit" Enter; else stmux "$s" send-keys -t "$s" C-c; fi
+  sleep 5; stmux "$s" kill-session -t "$s" 2>/dev/null || true
+  reap_seat "$s"
+  echo "session $s stopped"
+}
+
+cmd_reset() { # <agent> [harness] [--force] — bug-298: CONVERGE a seat to a running session on the CURRENT tool schema (IDEMPOTENT)
+  # THE reset PRIMITIVE (work-274, Director-scoped). = safe-point `ois down` (if live) + `ois up`:
+  # a claude seat with a prior session auto-resumes via `-c` (idea-494, cmd_up:910-918), so the agent
+  # comes back on the LIVE tool schema (the fresh process re-snapshots MCP ListTools — clearing the
+  # bug-298 freeze) with its conversation (-c) + WorkGraph lease/state intact (the lease persists
+  # through process death). This formalizes the manual `ois down/up <seat> claude -c` reload proven
+  # twice in the refresh-spike receipts. Invocable manually AND WorkGraph-orchestrated.
+  # HARD SCOPE: this is JUST the reset action. The automatic staleness-detection + convergence ENGINE
+  # (SessionFreshnessReconciler / actuator / substrate-truth-resume / lease-recovery / durable episode
+  # ledger / admission fence) is DEFERRED to idea-587 — NOT built here. staleness->reset is a plain
+  # operator/orchestration decision, not auto-detection.
+  local a="" h="" force=0 arg
+  for arg in "$@"; do
+    case "$arg" in
+      --force) force=1 ;;
+      *) if [[ -z "$a" ]]; then a="$arg"; elif [[ -z "$h" ]]; then h="$arg"; fi ;;
+    esac
+  done
+  [[ -n "$a" ]] || fatal "usage: ois reset <agent> [harness] [--force]"
+  # resolve harness: explicit -> the agent's live one -> default 'claude' (the bug-298 target; needed
+  # to `up` a DEAD seat, which has no live harness to infer). Pass the harness explicitly for non-claude.
+  [[ -n "$h" ]] || h=$(live_harness "$a")
+  [[ -n "$h" ]] || h="claude"
+  local s; s=$(session_name "$a" "$h")
+  # IDEMPOTENT converge-to-running (Director): if a session is LIVE, restart it (down); if NOT, just
+  # start it (up). Repeated `reset <seat>` converges to the same end state — a running interactive
+  # tmux claude on the CURRENT tool schema — so an operator/orchestrator can fire it WITHOUT first
+  # checking whether the seat is up.
+  if stmux "$s" has-session -t "$s" 2>/dev/null; then
+    # SIMPLE safe-point idle check (NOT the deferred admission fence, idea-587). Local + BEST-EFFORT:
+    # refuse if the pane shows the harness actively working (claude renders an 'esc to interrupt' hint
+    # mid turn/tool-call), so a manual reset never kills a live tool call. Fail-open (the -c resume +
+    # lease-persistence make a reset safe regardless); --force overrides. NOTE: the authoritative idle
+    # signal is the Hub activityState==online_idle (activity FSM) — the WorkGraph-orchestrated trigger
+    # should gate on THAT (it has the Hub view); this local pane check is the operator-CLI convenience.
+    if [[ "$force" -eq 0 ]] && stmux "$s" capture-pane -t "$s" -p 2>/dev/null | grep -qiE "esc to interrupt"; then
+      fatal "seat $s looks BUSY (mid turn/tool-call) — reset could interrupt a live call. Re-run when idle, or 'ois reset $a $h --force'."
+    fi
+    echo "→ ois reset $a/$h  (live: restart onto current schema; -c resume; WorkGraph state intact)"
+    cmd_down "$a" "$h"
+  else
+    echo "→ ois reset $a/$h  (no live session: starting fresh onto current schema)"
+  fi
+  # cmd_up injects `-c` ONLY when a prior conversation exists (idea-494, cmd_up:910-918); with no prior
+  # session it starts fresh GRACEFULLY (never the `-c: No conversation found` error). POSTCONDITION
+  # (always, regardless of prior state): a running interactive tmux claude on the current tool schema.
+  cmd_up "$a" "$h"
+}
+
+cmd_attach() { # <agent> [harness] — harness optional: at most one live session per agent
+  local a="$1" h="${2:-}" s
+  command -v tmux >/dev/null 2>&1 || fatal "'tmux' required"
+  if [[ -n "$h" ]]; then
+    s=$(session_name "$a" "$h")
+  else
+    h=$(live_harness "$a")
+    [[ -n "$h" ]] || fatal "no live session for agent '$a' — ois up $a <harness> first"
+    s=$(session_name "$a" "$h")
+  fi
+  stmux "$s" has-session -t "$s" 2>/dev/null || fatal "no session $s (ois ps to list)"
+  # bug-259: keep tmux in manual-size mode so attach itself never implicitly resizes.
+  # bug-273: OIS may explicitly pre-fit the pane to this terminal minus the tmux
+  # status row, preserving the final status row while avoiding viewport `[0,0]`
+  # artifacts under the Pi footer. Set OIS_TMUX_ATTACH_FIT=0 to skip this.
+  stmux "$s" set-option -g window-size manual 2>/dev/null || true
+  _seat_fit_window_to_tty "$s"
+  echo "attaching to $s — detach with Ctrl+b d (leaves the agent running)"
+  exec tmux -L "$s" attach -t "$s"
+}
+
+
+_register_director_identity() { # $1=url $2=token $3=session-id — B4 director messaging identity (provenance, not a seat)
+  local hn; hn=$(hostname)
+  curl -s -o /dev/null -X POST "$1" -H "Authorization: Bearer $2" -H "mcp-session-id: $3" \
+    -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' --max-time 20 \
+    -d "$(jq -cn --arg hn "$hn" '{jsonrpc:"2.0",id:9,method:"tools/call",params:{name:"register_role",arguments:{role:"director",name:"apnex",labels:{env:"prod"},clientMetadata:{clientName:"ois-cli",clientVersion:"1",proxyName:"ois-say",proxyVersion:"1",transport:"streamable-http",hostname:$hn,platform:"linux",pid:0,sdkVersion:"raw",sdkCommitSha:"none",proxyCommitSha:"none",sdkDirty:false,proxyDirty:false}}}}')"
+}
+
+
+_hub_session() { # sets HUB_URL, HUB_TOK, HUB_SID (registered director identity)
+  HUB_URL=$(jq -r '.hub.url' "$CFG/fleet.json"); HUB_TOK=$(cat "$SEC/$(jq -r '.hub.tokenRef' "$CFG/fleet.json")")
+  local hdr; hdr=$(mktemp)
+  curl -s -D "$hdr" -o /dev/null -X POST "$HUB_URL" -H "Authorization: Bearer $HUB_TOK" \
+    -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' --max-time 20 \
+    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ois-director","version":"1"}}}'
+  HUB_SID=$(grep -i '^mcp-session-id:' "$hdr" | tr -d '\r' | awk '{print $2}'); rm -f "$hdr"
+  [[ -n "$HUB_SID" ]] || fatal "hub initialize failed (no session id) — check network/token (ois doctor)"
+  _register_director_identity "$HUB_URL" "$HUB_TOK" "$HUB_SID"
+}
+
+_hub_call() { # $1=json-rpc body → prints the tool result text
+  curl -s -X POST "$HUB_URL" -H "Authorization: Bearer $HUB_TOK" -H "mcp-session-id: $HUB_SID" \
+    -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' --max-time 25 -d "$1" \
+    | sed 's/^data: //' | grep -o '{.*}' | jq -r '.result.content[0].text // empty' 2>/dev/null
+}
+
+cmd_decisions() { # list the Director-relevant decision queue from the hub (default: routed)
+  local st="${1:-routed}"
+  [[ "$st" == "list" ]] && st="all"
+  case "$st" in raised|curated|routed|resolved|executed|merged|disposed|withdrawn|all) ;; *) fatal "usage: ois decisions [raised|curated|routed|resolved|executed|merged|disposed|withdrawn|all]  (default: routed)" ;; esac
+  _hub_session
+  local out; out=$(_hub_call "$(jq -cn --arg st "$st" '{jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"list_decisions",arguments:(if $st == "all" then {} else {status:$st} end)}}')")
+  [[ -n "$out" ]] || fatal "list_decisions failed"
+  echo "$out" | jq -e '.decisions' >/dev/null 2>&1 || { echo "hub error: $out" >&2; exit 1; }
+  echo "$out" | jq -r '(.decisions // [])[] | [.id, .status, .class, ((.routedTo.target // (if .routedTo.selfDisposal then "self-disposal" else "-" end)) // "-"), .title] | @tsv' \
+    | awk -F'\t' 'BEGIN{printf "%-12s %-10s %-18s %-14s %s\n","ID","STATUS","CLASS","ROUTED","TITLE"} {printf "%-12s %-10s %-18s %-14s %s\n",$1,$2,$3,$4,substr($5,1,70)}'
+  [[ "$(echo "$out" | jq '(.decisions // []) | length')" != "0" ]] || echo "(no decisions with status: $st — try: ois decisions all)"
+}
+
+cmd_nodes() { # work-161: list workgraph arc nodes (missions) from the hub — Director-facing (list only)
+  local sub="${1:-}"
+  [[ "$sub" == "list" ]] && shift || fatal "usage: ois nodes list [active|proposed|completed|abandoned|all]"
+  local st="${1:-}"   # empty = default recent frontier
+  case "$st" in ""|all|active|proposed|completed|abandoned) ;; *) fatal "usage: ois nodes list [active|proposed|completed|abandoned|all]" ;; esac
+  _hub_session
+  # Default (no status) + `all`: the 25 most-recent missions by createdAt desc across ALL
+  # statuses — the live arc frontier at a glance (active is often empty between arcs). A
+  # concrete status arg filters. list_missions is [Any], so the director session can read it.
+  local body; body=$(jq -cn --arg st "$st" '{jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"list_missions",
+    arguments:({sort:[{field:"createdAt",order:"desc"}], limit:25, compact:true}
+      + (if ($st|length)>0 and $st!="all" then {filter:{status:$st}} else {} end))}}')
+  local out; out=$(_hub_call "$body")
+  [[ -n "$out" ]] || fatal "list_missions failed"
+  echo "$out" | jq -e '.missions' >/dev/null 2>&1 || { echo "hub error: $out" >&2; exit 1; }
+  echo "$out" | jq -r '(.missions // [])[] | [.id, .status, (.missionClass // "-"), .title] | @tsv' \
+    | awk -F'\t' 'BEGIN{printf "%-12s %-11s %-22s %s\n","ID","STATUS","CLASS","TITLE"} {printf "%-12s %-11s %-22s %s\n",$1,$2,$3,substr($4,1,60)}'
+  local n total; n=$(echo "$out" | jq '(.missions // []) | length'); total=$(echo "$out" | jq '.total // 0')
+  if [[ "$n" == "0" ]]; then echo "(no missions${st:+ with status: $st})"; else echo "  ($n of $total shown${st:+, status=$st})"; fi
+}
+
+cmd_show() { # render one decision in full — what you would be confirming
+  local id="$1"; [[ -n "$id" ]] || fatal "usage: ois show <decision-id>"
+  _hub_session
+  local out; out=$(_hub_call "$(jq -cn --arg id "$id" '{jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"get_decision",arguments:{decisionId:$id}}}')")
+  [[ -n "$out" ]] || fatal "get_decision failed"
+  echo "$out" | jq -r '
+    (.decision // .) |
+    "\u001b[1m" + .id + " — " + .title + "\u001b[0m",
+    "status: " + .status + "   class: " + .class + "   routed: " + ((.routedTo.target // (if .routedTo.selfDisposal then ("self-disposal via " + .routedTo.selfDisposal.classGrantRef) else "-" end)) // "-"),
+    "", .context, "",
+    "OPTIONS:",
+    ((.options // [])[] | "  [" + .id + "] " + .label + " — " + .description),
+    (if .resolution then "", "RESOLVED: " + (.resolution.answer.chosenOptionId // .resolution.answer.customAnswer // "?") + "  (authority: " + (.resolution.authorityMode // "?") + " via " + (.resolution.authorityRef // "?") + ")" else empty end),
+    (if .executionPlan then "", "EXECUTION PLAN: " + (.executionPlan | tojson) else empty end)
+  '
+}
+
+cmd_confirm() { # answer a DirectorConfirmation: capture_director_signal via the REGISTERED director identity (B4 proof path)
+  local cid="$1"; shift; local msg="$*"
+  [[ -n "$cid" && -n "$msg" ]] || fatal "usage: ois confirm <decision-N|dconf-N> <answer...>  (prefer the DECISION id — ois decisions to list, ois show <decision-id> to inspect; dconf ids remain for presenter-driven flows)"
+  local idkey="confirmationId"; [[ "$cid" == decision-* ]] && idkey="decisionId"  # PR #491: decisions-only surface
+  _hub_session  # shared bootstrap: initialize + director-identity registration (papercut fix: was a duplicated inline bootstrap)
+  local resp
+  resp=$(curl -s -X POST "$HUB_URL" -H "Authorization: Bearer $HUB_TOK" -H "mcp-session-id: $HUB_SID" \
+    -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' --max-time 30 \
+    -d "$(jq -cn --arg k "$idkey" --arg cid "$cid" --arg a "$msg" '{jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"capture_director_signal",arguments:({channel:"ois-say",answer:$a,capturedBySurface:"ois-cli",confidence:"authenticated",replyable:true} + {($k):$cid})}}')" \
+    | sed 's/^data: //' | grep -o '{.*}' | jq -r '.result.content[0].text // empty' 2>/dev/null)
+  [[ -n "$resp" ]] || fatal "capture_director_signal failed"
+  if echo "$resp" | jq -e '.signal' >/dev/null 2>&1; then
+    echo "$resp" | jq -r '"✓ answered — DirectorSignal " + .signal.id + " bound to " + (.signal.confirmationId // "?") + " (answer: " + .signal.answer + ")"'
+    echo "next: ois decisions   (anything else waiting in the queue?)"
+  else
+    echo "$resp"
+  fi
+}
+
+cmd_say() { # send a Director note to an agent via the hub (create_message -> channel push)
+  local a="$1"; shift; local msg="$*"
+  [[ -n "$msg" ]] || fatal "usage: ois say <agent> <message...>"
+  local name; name=$(jq -r '.agentName' "$CFG/agents/$a.json" 2>/dev/null) || fatal "unknown agent '$a'"
+  local url tok; url=$(jq -r '.hub.url' "$CFG/fleet.json"); tok=$(cat "$SEC/$(jq -r '.hub.tokenRef' "$CFG/fleet.json")")
+  local hdr sid; hdr=$(mktemp)
+  curl -s -D "$hdr" -o /dev/null -X POST "$url" -H "Authorization: Bearer $tok"     -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' --max-time 20     -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"ois-director","version":"1"}}}'
+  sid=$(grep -i '^mcp-session-id:' "$hdr" | tr -d '\r' | awk '{print $2}'); rm -f "$hdr"
+  [[ -n "$sid" ]] || fatal "hub initialize failed (no session id) — check network/token (ois doctor)"
+  _register_director_identity "$url" "$tok" "$sid"
+  # resolve agentId from the hub registry (hub truth — never duplicated locally)
+  local reg aid
+  reg=$(curl -s -X POST "$url" -H "Authorization: Bearer $tok" -H "mcp-session-id: $sid"     -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' --max-time 20     -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"get_agents","arguments":{}}}'     | sed 's/^data: //' | grep -o '{.*}' | jq -r '.result.content[0].text' 2>/dev/null)
+  aid=$(jq -r --arg n "$name" '(.agents // .) | .[]? | select(.name == $n) | .agentId // .id // empty' <<<"$reg" 2>/dev/null | head -1)
+  [[ -n "$aid" ]] || fatal "agent '$name' not in hub registry (known: $(jq -r '(.agents // .) | [.[]?.name] | join(", ")' <<<"$reg" 2>/dev/null))"
+  # send — body prefixed [director]: the fleet token is not a per-sender identity (yet)
+  local resp
+  resp=$(curl -s -X POST "$url" -H "Authorization: Bearer $tok" -H "mcp-session-id: $sid"     -H 'Content-Type: application/json' -H 'Accept: application/json, text/event-stream' --max-time 30     -d "$(jq -cn --arg aid "$aid" --arg b "[director] $msg" '{jsonrpc:"2.0",id:3,method:"tools/call",params:{name:"create_message",arguments:{kind:"note",target:{agentId:$aid},payload:{body:$b}}}}')"     | sed 's/^data: //' | grep -o '{.*}' | jq -r '.result.content[0].text // empty' 2>/dev/null)
+  [[ -n "$resp" ]] || fatal "create_message failed"
+  jq -r --arg n "$name" --arg aid "$aid" '"→ note " + .messageId + " to " + $n + " (" + $aid + ")  status=" + .status' <<<"$resp"
+}
+
+cmd_ps() {
+  local out s a h m j any=0
+  out=$(printf '%-8s %-9s %-20s %-22s %-6s %s\n' AGENT HARNESS MODEL SESSION STATE "LAST LAUNCH")
+  # idea-512: no shared server to `tmux ls` — probe each declared cell's OWN per-seat socket.
+  while read -r a h; do
+    s=$(session_name "$a" "$h")
+    stmux "$s" has-session -t "$s" 2>/dev/null || continue
+    any=1
+    # one targeted jq: agent-cell override, else harness default (skip the full merge)
+    m=$(jq -rn --arg h "$h" '(input.harness[$h].hubModelTag) // (input.hubModelTag) // "?"' \
+        "$CFG/agents/$a.json" "$CFG/harnesses/$h.json" 2>/dev/null || echo "?")
+    j=$(tail -1 "$STATE/$a/launches.jsonl" 2>/dev/null | jq -r '.ts' 2>/dev/null || echo "?")
+    out+=$'\n'"$(printf '%-8s %-9s %-20s %-22s %-6s %s' "$a" "$h" "$m" "$s" up "$j")"
+  done < <(cells_all)
+  [[ $any -eq 0 ]] && out+=$'\n(no ois sessions)'
+  printf '%s\n' "$out"
+  return 0
+}
+
+# ---------- dispatch ----------
+# Source-guard (idea-511/bug-256 testability): SKIP the CLI dispatch when this file is
+# SOURCED — the reap-scope test sources it to exercise reap_seat / the exact-id reap helpers
+# directly and gets every function def without running a command. The exec path is unchanged.
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+sub="${1:-}"; shift || true
+case "$sub" in
+  launch) [[ $# -ge 2 ]] || fatal "usage: ois launch <agent> <harness> [args...]"; do_launch "$@" ;;
+  up)     [[ $# -ge 2 ]] || fatal "usage: ois up <agent> <harness> [launch-args…]"; cmd_up "$@" ;;
+  attach) if [[ $# -eq 0 ]]; then cmd_ps; else cmd_attach "$@"; fi ;;
+  down)   [[ $# -ge 1 ]] || fatal "usage: ois down <agent> [harness]"; cmd_down "$@" ;;
+  reset)  [[ $# -ge 1 ]] || fatal "usage: ois reset <agent> [harness] [--force]"; cmd_reset "$@" ;;
+  say)    [[ $# -ge 2 ]] || fatal "usage: ois say <agent> <message...>"; cmd_say "$@" ;;
+  decisions) cmd_decisions "$@" ;;
+  nodes)  cmd_nodes "$@" ;;
+  show)   [[ $# -ge 1 ]] || fatal "usage: ois show <decision-id>"; cmd_show "$@" ;;
+  confirm) [[ $# -ge 2 ]] || fatal "usage: ois confirm <decision-N|dconf-N> <answer...>"; cmd_confirm "$@" ;;
+  ps)     cmd_ps ;;
+  render) [[ $# -eq 2 ]] || fatal "usage: ois render <agent> <harness>"; cmd_render "$@" ;;
+  env)    [[ $# -eq 2 ]] || fatal "usage: ois env <agent> <harness>"; cmd_env "$@" ;;
+  check)  cmd_check "$@" ;;
+  seed)
+    if [[ "${1:-}" == "--all" ]]; then
+      # work-160: re-seed EVERY claude agent so a settings change (e.g. new
+      # claudeSettings) lands immediately, not only when each agent next cycles.
+      # Skip agents that do not declare the claude harness (cell_json would fatal).
+      seed_n=0
+      for seed_f in "$CFG"/agents/*.json; do
+        [[ -e "$seed_f" ]] || fatal "no agents found in $CFG/agents"
+        seed_a=$(basename "$seed_f" .json)
+        jq -e '.harness.claude' "$seed_f" >/dev/null 2>&1 || { echo "  skip $seed_a (no claude harness)"; continue; }
+        echo "seed $seed_a:"; claude_seed "$(cell_json "$seed_a" claude)"; seed_n=$((seed_n+1))
+      done
+      echo "seed --all OK ($seed_n claude agents)"
+    else
+      [[ $# -ge 1 ]] || fatal "usage: ois seed <agent> | ois seed --all"
+      c=$(cell_json "$1" claude); claude_seed "$c"; echo "seed OK"
+    fi
+    ;;
+  list)   cmd_list ;;
+  doctor) cmd_doctor ;;
+  *) fatal "usage: ois {launch|up|attach|say|confirm|decisions|nodes|show|down|reset|ps|render|env|check|seed|list|doctor}" ;;
+esac
+fi

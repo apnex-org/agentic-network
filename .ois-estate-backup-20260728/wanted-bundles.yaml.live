@@ -1,0 +1,57 @@
+# wanted-bundles.yaml — HCAP skill-sync manifest (Arc-1 S4 / idea-453; harness-agnostic per piuplift0/p1).
+#
+# Declares which mission-kit skills the fleet carries. The HCAP skills-consumer seed bin
+# (ois/bin/ois::claude_seed AND ::pi_seed — fleetskills0/idea-505 + piuplift0/p1, sole path)
+# resolves these against apnex/mission-kit and copies the SKILL.md trees into the agent's
+# sovereign per-seat skills dir ($CLAUDE_CONFIG_DIR/skills for claude, $PI_CODING_AGENT_DIR/skills
+# for pi), ALONGSIDE the local-repo skills (per-skill merge, never a wipe). Mirrors
+# hermes/manifests/skill-sync/wanted-bundles.yaml — same format, same apnex/mission-kit source —
+# and extends the mission-103 constitution-sync pattern (mission-kit canonical, synced fleet-wide)
+# from axioms to SKILLS. The SAME manifest drives every harness's consumer unmodified.
+#
+# Format:
+#   bundles:      - <name>   resolved via mission-kit bundles/<name>.yaml (`skills:` list)
+#   extra_skills: - <name>   individual skill, resolved via mission-kit skills/<name>/SKILL.md
+#
+# BASELINE NOTE (fleetskills0, 2026-07-13): the uniform fleet baseline is the workgraph-arc bundle
+# declared below — arc-lifecycle + survey (operator sensemaking), the
+# workgraph-arc-operator + workgraph-arc-closeout pair (WorkGraph arc execution + its
+# terminal closeout), and workgraph-arc-participant (node-level WorkGraph behavior).
+# substrate-audit + research-artefacts were the earlier M2-sidecar
+# set and were DROPPED from the fleet baseline here (they remain in mission-kit for
+# ad-hoc use, not fleet-synced). K1/K2 flat rule-cards + O1-convene-council remain
+# Director-owned mission-kit promotions; add them here once promoted.
+#
+# SOURCE IS A LIVING UPSTREAM — NOT SHA-PINNED. Director ruling 2026-07-25.
+#
+# mission-kit is OWNED upstream, so this is a living pointer: the fleet tracks
+# `main` and improvements reach every seat without a manual bump. This mirrors
+# the constitution-sync path, which has always tracked main.
+#
+# WHY THE PREVIOUS PIN WAS REMOVED (do not reinstate without reading this):
+# `source_ref` was pinned to bd4117d for REVIEW-BEFORE-ADOPT. The gate was real
+# and the sync was FAITHFUL — all 14 seats measured byte-identical to the pin.
+# But the bump was a manual step with NO OWNER AND NO TRIGGER, so the fleet sat
+# SIX DAYS behind: every seat missing the blueprint/evidence-contract guidance,
+# including the rule that owned upstream must not be SHA-pinned. The pin
+# suppressed the rule that would have removed the pin.
+#
+# CORRECT-BUT-UNSCHEDULED IS NOT THE SAME FAILURE AS BROKEN, and it is harder to
+# see: every instrument reports health, because a staleness check that compares
+# against the pin can never notice the pin is old. Detecting it required
+# comparing against something OUTSIDE the pin, and nothing did.
+#
+# The review obligation does not disappear — it moves upstream, to the PR into
+# apnex/mission-kit, where it is a reviewable diff with an owner, rather than a
+# config bump nobody is scheduled to perform. Reserve immutable content-addressed
+# pins for IRREVERSIBLE EXTERNAL artifacts (npm publishes, releases, deploy
+# images), never for owned fleet guidance.
+#
+# Env vars SKILL_SYNC_REPO / SKILL_SYNC_REF override at runtime (testing only).
+source_repo: https://github.com/apnex/mission-kit.git
+source_ref: main
+
+bundles:
+  - workgraph-arc
+
+extra_skills: []
