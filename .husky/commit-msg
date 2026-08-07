@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+# Zero AI attribution (Director-ruled 2026-08-07; apnex-agents migration 0013).
+# Strips Claude attribution lines from commit messages. Human co-authors are
+# untouched (pattern requires "Claude"). Companion to the operator-global
+# core.hooksPath hook, which this repo's husky hooksPath shadows.
+sed -i \
+  -e '/^[Cc]o-[Aa]uthored-[Bb]y:.*[Cc]laude/d' \
+  -e '/[Gg]enerated with.*[Cc]laude [Cc]ode/d' \
+  -e '/^🤖 Generated with/d' \
+  "$1"
+exit 0
